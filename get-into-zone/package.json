@@ -29,7 +29,9 @@
     "host_permissions": [
       "<all_urls>",
       "https://www.midjourney.com/*",
-      "https://suno.com/*"
+      "https://suno.com/*",
+      "http://localhost:3000/*",
+      "https://*/*"
     ],
     "permissions": [
       "scripting",

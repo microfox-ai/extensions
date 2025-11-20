@@ -35,10 +35,21 @@ function IndexPopup() {
   const [apiKey, setApiKey] = useState("")
   const [isButtonEnabled, setIsButtonEnabled] = useState(true)
   const [useLastImage, setUseLastImage] = useState(false)
+  
+  // AI Agents tab state
+  const [agents, setAgents] = useState([])
+  const [selectedAgent, setSelectedAgent] = useState(null)
+  const [agentInput, setAgentInput] = useState("")
+  const [agentInputMode, setAgentInputMode] = useState<"simple" | "json">("simple")
+  const [agentResult, setAgentResult] = useState("")
+  const [isLoadingAgents, setIsLoadingAgents] = useState(false)
+  const [isExecutingAgent, setIsExecutingAgent] = useState(false)
+  const [agentApiUrl, setAgentApiUrl] = useState("http://localhost:3000")
+  const [jsonError, setJsonError] = useState("")
 
   useEffect(() => {
     chrome.storage.local.get(
-      ["apiEndpoint", "tags", "apiKey", "isButtonEnabled", "useLastImage"],
+      ["apiEndpoint", "tags", "apiKey", "isButtonEnabled", "useLastImage", "agentApiUrl"],
       (result) => {
         if (result.apiEndpoint) {
           setApiEndpoint(result.apiEndpoint)
@@ -54,6 +65,9 @@ function IndexPopup() {
         }
         if (result.useLastImage !== undefined) {
           setUseLastImage(result.useLastImage)
+        }
+        if (result.agentApiUrl) {
+          setAgentApiUrl(result.agentApiUrl)
         }
       }
     )
@@ -76,6 +90,128 @@ function IndexPopup() {
       chrome.runtime.onMessage.removeListener(messageListener)
     }
   }, [])
+
+  useEffect(() => {
+    if (activeTab === "agents" && agentApiUrl) {
+      loadAgents()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab])
+
+  const loadAgents = async () => {
+    setIsLoadingAgents(true)
+    try {
+      const headers: HeadersInit = {
+        "Content-Type": "application/json"
+      }
+      
+      // Add API key if available
+      if (apiKey) {
+        headers["Authorization"] = `Bearer ${apiKey}`
+      }
+      
+      const response = await fetch(`${agentApiUrl}/api/agents`, {
+        headers
+      })
+      const data = await response.json()
+      if (data.success) {
+        setAgents(data.agents)
+        if (data.agents.length > 0) {
+          setSelectedAgent(data.agents[0])
+        }
+      } else {
+        alert("Failed to load agents. Check API URL and key.")
+      }
+    } catch (error) {
+      console.error("Error loading agents:", error)
+      alert(`Failed to load agents. Make sure the API server is running at ${agentApiUrl}`)
+    } finally {
+      setIsLoadingAgents(false)
+    }
+  }
+
+  const executeAgent = async () => {
+    if (!selectedAgent || !agentInput) {
+      alert("Please select an agent and enter input")
+      return
+    }
+
+    setIsExecutingAgent(true)
+    setAgentResult("Processing...")
+
+    try {
+      const headers: HeadersInit = {
+        "Content-Type": "application/json"
+      }
+      
+      // Add API key if available
+      if (apiKey) {
+        headers["Authorization"] = `Bearer ${apiKey}`
+      }
+      
+      let requestBody: any
+      
+      if (agentInputMode === "json") {
+        // Parse JSON input
+        try {
+          requestBody = JSON.parse(agentInput)
+          setJsonError("")
+        } catch (e) {
+          setJsonError("Invalid JSON format")
+          setAgentResult("Error: Invalid JSON format")
+          setIsExecutingAgent(false)
+          return
+        }
+      } else {
+        // Simple text mode - wrap in messages array
+        requestBody = {
+          messages: [
+            {
+              role: "user",
+              content: agentInput
+            }
+          ]
+        }
+      }
+      
+      const response = await fetch(
+        `${agentApiUrl}/api/studio/chat/agent${selectedAgent.path}`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify(requestBody)
+        }
+      )
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+      }
+
+      // Handle streaming response
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let result = ""
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        result += decoder.decode(value, { stream: true })
+        setAgentResult(result)
+      }
+    } catch (error) {
+      console.error("Error executing agent:", error)
+      setAgentResult(`Error: ${error.message}`)
+    } finally {
+      setIsExecutingAgent(false)
+    }
+  }
+
+  const saveAgentApiUrl = () => {
+    chrome.storage.local.set({ agentApiUrl }, () => {
+      alert("API URL saved!")
+    })
+  }
 
   const saveSettings = () => {
     chrome.storage.local.set(
@@ -154,40 +290,60 @@ function IndexPopup() {
         padding: 16,
         width: 400
       }}>
-      <div style={{ display: "flex", marginBottom: 16 }}>
+      <div style={{ display: "flex", marginBottom: 16, flexWrap: "wrap", gap: 4 }}>
         <button
           onClick={() => setActiveTab("midjourney")}
           style={{
-            padding: "8px 16px",
+            padding: "8px 12px",
             border: "none",
             backgroundColor: activeTab === "midjourney" ? "#4285F4" : "#E0E0E0",
             color: activeTab === "midjourney" ? "white" : "black",
             cursor: "pointer",
-            flex: 1
+            flex: 1,
+            minWidth: "80px",
+            fontSize: "12px"
           }}>
           Midjourney
         </button>
         <button
           onClick={() => setActiveTab("suno")}
           style={{
-            padding: "8px 16px",
+            padding: "8px 12px",
             border: "none",
             backgroundColor: activeTab === "suno" ? "#4285F4" : "#E0E0E0",
             color: activeTab === "suno" ? "white" : "black",
             cursor: "pointer",
-            flex: 1
+            flex: 1,
+            minWidth: "80px",
+            fontSize: "12px"
           }}>
-          Suno Extractor
+          Suno
+        </button>
+        <button
+          onClick={() => setActiveTab("agents")}
+          style={{
+            padding: "8px 12px",
+            border: "none",
+            backgroundColor: activeTab === "agents" ? "#4285F4" : "#E0E0E0",
+            color: activeTab === "agents" ? "white" : "black",
+            cursor: "pointer",
+            flex: 1,
+            minWidth: "80px",
+            fontSize: "12px"
+          }}>
+          AI Agents
         </button>
         <button
           onClick={() => setActiveTab("settings")}
           style={{
-            padding: "8px 16px",
+            padding: "8px 12px",
             border: "none",
             backgroundColor: activeTab === "settings" ? "#4285F4" : "#E0E0E0",
             color: activeTab === "settings" ? "white" : "black",
             cursor: "pointer",
-            flex: 1
+            flex: 1,
+            minWidth: "80px",
+            fontSize: "12px"
           }}>
           Settings
         </button>
@@ -363,6 +519,289 @@ function IndexPopup() {
                 }}
               />
             </div>
+          )}
+        </div>
+      )}
+      {activeTab === "agents" && (
+        <div>
+          <h2>🤖 AI Agents</h2>
+          
+          {/* API URL Configuration */}
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontSize: "12px", color: "#666" }}>API Server URL:</label>
+            <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+              <input
+                type="text"
+                value={agentApiUrl}
+                onChange={(e) => setAgentApiUrl(e.target.value)}
+                placeholder="http://localhost:3000"
+                style={{
+                  flex: 1,
+                  padding: "6px 8px",
+                  fontSize: "12px",
+                  border: "1px solid #ccc",
+                  borderRadius: "4px"
+                }}
+              />
+              <button
+                onClick={saveAgentApiUrl}
+                style={{
+                  padding: "6px 12px",
+                  fontSize: "12px",
+                  background: "#28a745",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "4px",
+                  cursor: "pointer"
+                }}>
+                Save
+              </button>
+              <button
+                onClick={loadAgents}
+                style={{
+                  padding: "6px 12px",
+                  fontSize: "12px",
+                  background: "#007bff",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "4px",
+                  cursor: "pointer"
+                }}>
+                Refresh
+              </button>
+            </div>
+          </div>
+
+          {/* Agent Selector */}
+          {isLoadingAgents ? (
+            <p>Loading agents...</p>
+          ) : agents.length === 0 ? (
+            <p style={{ color: "#666", fontSize: "14px" }}>
+              No agents available. Check your API server.
+            </p>
+          ) : (
+            <>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: "12px", fontWeight: "bold" }}>
+                  Select Agent:
+                </label>
+                <select
+                  value={selectedAgent?.path || ""}
+                  onChange={(e) => {
+                    const agent = agents.find((a) => a.path === e.target.value)
+                    setSelectedAgent(agent)
+                  }}
+                  style={{
+                    width: "100%",
+                    padding: "8px",
+                    marginTop: "4px",
+                    border: "1px solid #ccc",
+                    borderRadius: "4px"
+                  }}>
+                  {agents.map((agent) => (
+                    <option key={agent.path} value={agent.path}>
+                      {agent.metadata?.icon || "🤖"} {agent.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Agent Description */}
+              {selectedAgent && (
+                <div
+                  style={{
+                    padding: "8px",
+                    background: "#f5f5f5",
+                    borderRadius: "4px",
+                    marginBottom: 12,
+                    fontSize: "12px"
+                  }}>
+                  <strong>Description:</strong> {selectedAgent.description}
+                </div>
+              )}
+
+              {/* Input Mode Toggle */}
+              <div style={{ marginBottom: 12, display: "flex", gap: 8 }}>
+                <button
+                  onClick={() => {
+                    setAgentInputMode("simple")
+                    setJsonError("")
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: "6px 12px",
+                    fontSize: "12px",
+                    background: agentInputMode === "simple" ? "#4285F4" : "#E0E0E0",
+                    color: agentInputMode === "simple" ? "white" : "black",
+                    border: "none",
+                    borderRadius: "4px",
+                    cursor: "pointer"
+                  }}>
+                  Simple Text
+                </button>
+                <button
+                  onClick={() => {
+                    setAgentInputMode("json")
+                    if (agentInputMode === "simple" && agentInput) {
+                      // Convert simple text to JSON template
+                      setAgentInput(JSON.stringify({
+                        messages: [
+                          {
+                            role: "user",
+                            content: agentInput
+                          }
+                        ]
+                      }, null, 2))
+                    }
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: "6px 12px",
+                    fontSize: "12px",
+                    background: agentInputMode === "json" ? "#4285F4" : "#E0E0E0",
+                    color: agentInputMode === "json" ? "white" : "black",
+                    border: "none",
+                    borderRadius: "4px",
+                    cursor: "pointer"
+                  }}>
+                  JSON Input
+                </button>
+                {agentInputMode === "json" && (
+                  <button
+                    onClick={() => {
+                      setAgentInput(JSON.stringify({
+                        messages: [
+                          {
+                            role: "user",
+                            content: "Your prompt here"
+                          }
+                        ],
+                        param1: "value1",
+                        param2: "value2"
+                      }, null, 2))
+                      setJsonError("")
+                    }}
+                    style={{
+                      padding: "6px 12px",
+                      fontSize: "12px",
+                      background: "#28a745",
+                      color: "white",
+                      border: "none",
+                      borderRadius: "4px",
+                      cursor: "pointer",
+                      whiteSpace: "nowrap"
+                    }}>
+                    📋 Example
+                  </button>
+                )}
+              </div>
+
+              {/* Input Area */}
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: "12px", fontWeight: "bold" }}>
+                  {agentInputMode === "simple" ? "Input:" : "JSON Input:"}
+                </label>
+                <textarea
+                  value={agentInput}
+                  onChange={(e) => {
+                    setAgentInput(e.target.value)
+                    if (agentInputMode === "json") {
+                      try {
+                        JSON.parse(e.target.value)
+                        setJsonError("")
+                      } catch (err) {
+                        setJsonError("Invalid JSON")
+                      }
+                    }
+                  }}
+                  placeholder={
+                    agentInputMode === "simple"
+                      ? "Enter your prompt or query..."
+                      : '{\n  "messages": [\n    {\n      "role": "user",\n      "content": "Your text here"\n    }\n  ],\n  "param1": "value1"\n}'
+                  }
+                  rows={agentInputMode === "json" ? 10 : 5}
+                  style={{
+                    width: "100%",
+                    padding: "8px",
+                    marginTop: "4px",
+                    boxSizing: "border-box",
+                    border: jsonError ? "1px solid #dc3545" : "1px solid #ccc",
+                    borderRadius: "4px",
+                    fontFamily: agentInputMode === "json" ? "monospace" : "inherit",
+                    fontSize: agentInputMode === "json" ? "11px" : "14px"
+                  }}
+                />
+                {jsonError && agentInputMode === "json" && (
+                  <div style={{ color: "#dc3545", fontSize: "11px", marginTop: "4px" }}>
+                    ⚠️ {jsonError}
+                  </div>
+                )}
+                {agentInputMode === "json" && !jsonError && agentInput && (
+                  <div style={{ color: "#28a745", fontSize: "11px", marginTop: "4px" }}>
+                    ✓ Valid JSON
+                  </div>
+                )}
+              </div>
+
+              {/* Execute Button */}
+              <button
+                onClick={executeAgent}
+                disabled={isExecutingAgent}
+                style={{
+                  width: "100%",
+                  padding: "10px",
+                  background: isExecutingAgent ? "#ccc" : "#4285F4",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "4px",
+                  cursor: isExecutingAgent ? "not-allowed" : "pointer",
+                  fontWeight: "bold"
+                }}>
+                {isExecutingAgent ? "Processing..." : "Execute Agent"}
+              </button>
+
+              {/* Result Area */}
+              {agentResult && (
+                <div style={{ marginTop: 16 }}>
+                  <label style={{ fontSize: "12px", fontWeight: "bold" }}>
+                    Result:
+                  </label>
+                  <textarea
+                    value={agentResult}
+                    readOnly
+                    rows={10}
+                    style={{
+                      width: "100%",
+                      padding: "8px",
+                      marginTop: "4px",
+                      boxSizing: "border-box",
+                      background: "#f9f9f9",
+                      border: "1px solid #ccc",
+                      borderRadius: "4px",
+                      fontSize: "12px",
+                      fontFamily: "monospace"
+                    }}
+                  />
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(agentResult)
+                      alert("Copied to clipboard!")
+                    }}
+                    style={{
+                      marginTop: "8px",
+                      padding: "6px 12px",
+                      fontSize: "12px",
+                      background: "#28a745",
+                      color: "white",
+                      border: "none",
+                      borderRadius: "4px",
+                      cursor: "pointer"
+                    }}>
+                    Copy Result
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
