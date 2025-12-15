@@ -38,12 +38,37 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   } else if (request.action === "startMidjourneyJsonWorkflow") {
     chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
       if (tabs.length > 0) {
-        const { prompts, delay, folderTag, maxQueueSize } = request
+        const { prompts, delay, folderTag, maxQueueSize, promptSuffix } =
+          request
         const threshold =
           typeof maxQueueSize === "number" && maxQueueSize > 0
             ? maxQueueSize
             : 8
         let currentIndex = 0
+
+        const markPromptProcessed = (recordId: string, promptIndex: number) => {
+          if (!recordId || promptIndex < 0) return
+          chrome.storage.local.get(["agentApiUrl"], (result) => {
+            const baseUrl = result.agentApiUrl
+            if (!baseUrl || typeof baseUrl !== "string") {
+              return
+            }
+            fetch(
+              `${baseUrl}/api/midjourney-prompts/${encodeURIComponent(
+                recordId
+              )}/mark-processed`,
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json"
+                },
+                body: JSON.stringify({ promptIndex })
+              }
+            ).catch((err) => {
+              console.error("Failed to mark prompt as processed:", err)
+            })
+          })
+        }
 
         const processNextPrompt = () => {
           if (currentIndex < prompts.length) {
@@ -51,6 +76,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             const promptText = typeof item === "string" ? item : item?.prompt
 
             if (promptText) {
+              const fullPrompt =
+                typeof promptSuffix === "string" &&
+                promptSuffix.trim().length > 0
+                  ? `${promptText} ${promptSuffix.trim()}`
+                  : promptText
+
               // First, check the Midjourney queue size in the current tab
               getMidjourneyQueueSize((queueSize) => {
                 // If queue is at or above the threshold, do NOT advance the index.
@@ -74,11 +105,28 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                   effectiveFolderTag = folderTag.trim()
                 }
 
+                const recordId =
+                  typeof item === "object" &&
+                  item !== null &&
+                  typeof item.recordId === "string"
+                    ? item.recordId
+                    : null
+                const pIndex =
+                  typeof item === "object" &&
+                  item !== null &&
+                  typeof item.pIndex === "number"
+                    ? item.pIndex
+                    : null
+
                 startMidjourneyWorkflow(
-                  promptText,
+                  fullPrompt,
                   request.useLastImage || false,
                   effectiveFolderTag || ""
                 )
+
+                if (recordId && pIndex !== null) {
+                  markPromptProcessed(recordId, pIndex)
+                }
 
                 currentIndex++
                 if (currentIndex < prompts.length) {
