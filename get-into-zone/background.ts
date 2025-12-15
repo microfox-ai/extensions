@@ -1,4 +1,5 @@
 import {
+  getMidjourneyQueueSize,
   scrapeMidjourney,
   startMidjourneyWorkflow
 } from "./workflows/midjourney"
@@ -8,7 +9,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "startWorkflow") {
     chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
       if (tabs.length > 0) {
-        startMidjourneyWorkflow(request.prompt, request.useLastImage || false)
+        startMidjourneyWorkflow(
+          request.prompt,
+          request.useLastImage || false,
+          request.folderTag || ""
+        )
         sendResponse({ status: "Midjourney workflow started" })
       }
     })
@@ -33,7 +38,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   } else if (request.action === "startMidjourneyJsonWorkflow") {
     chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
       if (tabs.length > 0) {
-        const { prompts, delay } = request
+        const { prompts, delay, folderTag, maxQueueSize } = request
+        const threshold =
+          typeof maxQueueSize === "number" && maxQueueSize > 0
+            ? maxQueueSize
+            : 8
         let currentIndex = 0
 
         const processNextPrompt = () => {
@@ -42,11 +51,40 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             const promptText = typeof item === "string" ? item : item?.prompt
 
             if (promptText) {
-              startMidjourneyWorkflow(promptText, request.useLastImage || false)
-            }
-            currentIndex++
-            if (currentIndex < prompts.length) {
-              setTimeout(processNextPrompt, delay)
+              // First, check the Midjourney queue size in the current tab
+              getMidjourneyQueueSize((queueSize) => {
+                // If queue is at or above the threshold, do NOT advance the index.
+                // Just wait for the delay and try the same prompt again.
+                if (queueSize !== null && queueSize >= threshold) {
+                  setTimeout(processNextPrompt, delay)
+                  return
+                }
+
+                // Queue is acceptable (or cannot be read) — proceed with this prompt.
+                // Allow per-prompt folder tag, falling back to the global folderTag.
+                let effectiveFolderTag = ""
+                if (
+                  typeof item === "object" &&
+                  item !== null &&
+                  typeof item.tag === "string"
+                ) {
+                  effectiveFolderTag = item.tag.trim()
+                }
+                if (!effectiveFolderTag && typeof folderTag === "string") {
+                  effectiveFolderTag = folderTag.trim()
+                }
+
+                startMidjourneyWorkflow(
+                  promptText,
+                  request.useLastImage || false,
+                  effectiveFolderTag || ""
+                )
+
+                currentIndex++
+                if (currentIndex < prompts.length) {
+                  setTimeout(processNextPrompt, delay)
+                }
+              })
             }
           }
         }

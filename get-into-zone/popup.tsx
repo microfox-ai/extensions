@@ -6,14 +6,14 @@ const exampleJson = {
     {
       captionIndex: 0,
       captionText: "The taste of iron's in my mouth,",
-      prompt:
-        "Muhammad Ali, mid-fight, grimacing, blood slightly visible on his lip, sweat dripping, close-up shot of his exhausted yet determined face, boxing ring ropes blurred in the background, dramatic cinematic lighting, photographic black and white, high contrast photojournalism, gritty and raw, a moment of profound struggle."
+      prompt: "perfect cell digital art full body shot",
+      tag: "animezone"
     },
     {
       captionIndex: 1,
       captionText: "the roar is turning low.",
-      prompt:
-        "Muhammad Ali, dazed and momentarily unfocused, looking slightly disoriented in the boxing ring, the crowd in the background blurred and indistinct, a sense of fading awareness, cinematic wide shot, photographic black and white, subtle light, high contrast, capturing a moment of vulnerability before resolve."
+      prompt: "epic anime background, detailed environment, studio quality",
+      tag: "animezone"
     }
   ]
 }
@@ -30,12 +30,14 @@ function IndexPopup() {
     JSON.stringify(exampleJson, null, 2)
   )
   const [delay, setDelay] = useState(15000)
+  const [folderTag, setFolderTag] = useState("animezone")
+  const [maxQueueSize, setMaxQueueSize] = useState(8)
   const [apiEndpoint, setApiEndpoint] = useState("")
   const [tags, setTags] = useState("")
   const [apiKey, setApiKey] = useState("")
   const [isButtonEnabled, setIsButtonEnabled] = useState(true)
   const [useLastImage, setUseLastImage] = useState(false)
-  
+
   // AI Agents tab state
   const [agents, setAgents] = useState([])
   const [selectedAgent, setSelectedAgent] = useState(null)
@@ -49,7 +51,15 @@ function IndexPopup() {
 
   useEffect(() => {
     chrome.storage.local.get(
-      ["apiEndpoint", "tags", "apiKey", "isButtonEnabled", "useLastImage", "agentApiUrl"],
+      [
+        "apiEndpoint",
+        "tags",
+        "apiKey",
+        "isButtonEnabled",
+        "useLastImage",
+        "agentApiUrl",
+        "maxQueueSize"
+      ],
       (result) => {
         if (result.apiEndpoint) {
           setApiEndpoint(result.apiEndpoint)
@@ -68,6 +78,9 @@ function IndexPopup() {
         }
         if (result.agentApiUrl) {
           setAgentApiUrl(result.agentApiUrl)
+        }
+        if (typeof result.maxQueueSize === "number") {
+          setMaxQueueSize(result.maxQueueSize)
         }
       }
     )
@@ -104,12 +117,12 @@ function IndexPopup() {
       const headers: HeadersInit = {
         "Content-Type": "application/json"
       }
-      
+
       // Add API key if available
       if (apiKey) {
         headers["Authorization"] = `Bearer ${apiKey}`
       }
-      
+
       const response = await fetch(`${agentApiUrl}/api/agents`, {
         headers
       })
@@ -143,14 +156,14 @@ function IndexPopup() {
       const headers: HeadersInit = {
         "Content-Type": "application/json"
       }
-      
+
       // Add API key if available
       if (apiKey) {
         headers["Authorization"] = `Bearer ${apiKey}`
       }
-      
+
       let requestBody: any
-      
+
       if (agentInputMode === "json") {
         // Parse JSON input
         try {
@@ -173,7 +186,7 @@ function IndexPopup() {
           ]
         }
       }
-      
+
       const response = await fetch(
         `${agentApiUrl}/api/studio/chat/agent${selectedAgent.path}`,
         {
@@ -215,10 +228,9 @@ function IndexPopup() {
 
   const saveSettings = () => {
     chrome.storage.local.set(
-      { apiEndpoint, tags, apiKey, isButtonEnabled },
+      { apiEndpoint, tags, apiKey, isButtonEnabled, maxQueueSize },
       () => {
         console.log("Settings saved")
-        // Optionally, provide user feedback that settings have been saved
       }
     )
   }
@@ -228,7 +240,8 @@ function IndexPopup() {
       chrome.runtime.sendMessage({
         action: "startWorkflow",
         prompt: prompt,
-        useLastImage: useLastImage
+        useLastImage: useLastImage,
+        folderTag: folderTag
       })
     })
   }
@@ -250,7 +263,9 @@ function IndexPopup() {
             action: "startMidjourneyJsonWorkflow",
             prompts: prompts,
             delay: delay,
-            useLastImage: useLastImage
+            useLastImage: useLastImage,
+            folderTag: folderTag,
+            maxQueueSize: maxQueueSize
           })
         })
       }
@@ -407,6 +422,21 @@ function IndexPopup() {
                   boxSizing: "border-box"
                 }}
               />
+              <div style={{ marginTop: 10 }}>
+                <label>Folder tag (optional):</label>
+                <input
+                  type="text"
+                  value={folderTag}
+                  onChange={(e) => setFolderTag(e.target.value)}
+                  placeholder="e.g., kidtales"
+                  style={{
+                    width: "100%",
+                    padding: "8px",
+                    boxSizing: "border-box",
+                    marginTop: "4px"
+                  }}
+                />
+              </div>
               <div style={{ marginTop: 10, display: "flex", alignItems: "center" }}>
                 <input
                   type="checkbox"
@@ -439,6 +469,21 @@ function IndexPopup() {
                 }}
               />
               <div style={{ marginTop: 10 }}>
+                <label>Folder tag (optional):</label>
+                <input
+                  type="text"
+                  value={folderTag}
+                  onChange={(e) => setFolderTag(e.target.value)}
+                  placeholder="e.g., kidtales"
+                  style={{
+                    width: "100%",
+                    padding: "8px",
+                    boxSizing: "border-box",
+                    marginTop: "4px"
+                  }}
+                />
+              </div>
+              <div style={{ marginTop: 10 }}>
                 <label>Delay (ms):</label>
                 <input
                   type="number"
@@ -446,6 +491,21 @@ function IndexPopup() {
                   onChange={(e) => setDelay(Number(e.target.value))}
                   style={{ marginLeft: 10, padding: "4px" }}
                 />
+              </div>
+              <div style={{ marginTop: 10 }}>
+                <label>Max queued jobs before pausing:</label>
+                <input
+                  type="number"
+                  value={maxQueueSize}
+                  onChange={(e) =>
+                    setMaxQueueSize(Math.max(1, Number(e.target.value) || 1))
+                  }
+                  style={{ marginLeft: 10, padding: "4px", width: "60px" }}
+                />
+                <span style={{ marginLeft: 6, fontSize: "11px", color: "#666" }}>
+                  When Midjourney shows this many or more queued jobs, the next prompt
+                  waits for the delay instead of running.
+                </span>
               </div>
               <div style={{ marginTop: 10, display: "flex", alignItems: "center" }}>
                 <input
@@ -525,7 +585,7 @@ function IndexPopup() {
       {activeTab === "agents" && (
         <div>
           <h2>🤖 AI Agents</h2>
-          
+
           {/* API URL Configuration */}
           <div style={{ marginBottom: 16 }}>
             <label style={{ fontSize: "12px", color: "#666" }}>API Server URL:</label>
