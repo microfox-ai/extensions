@@ -172,7 +172,9 @@ function createOverlayButton(
           }
         }
       }
-      const tagsArray = tags ? tags.split(",").map((tag) => tag.trim()) : []
+      const tagsArray = tags
+        ? tags.split(",").map((tag: string) => tag.trim())
+        : []
 
       fetch(mediaUrl)
         .then((response) => response.blob())
