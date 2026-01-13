@@ -36,6 +36,7 @@ export function MidjourneyTab() {
     const [scrapedData, setScrapedData] = useState("")
     const [agentApiUrl, setAgentApiUrl] = useState("http://localhost:3000")
     const [isLoadingDb, setIsLoadingDb] = useState(false)
+    const [apiKey, setApiKey] = useState("")
 
     useEffect(() => {
         chrome.storage.local.get(
@@ -48,7 +49,8 @@ export function MidjourneyTab() {
                 "dbRecordId",
                 "useLastImage",
                 "maxQueueSize",
-                "agentApiUrl"
+                "agentApiUrl",
+                "apiKey"
             ],
             (result) => {
                 if (typeof result.prompt === "string") {
@@ -77,6 +79,9 @@ export function MidjourneyTab() {
                 }
                 if (typeof result.agentApiUrl === "string") {
                     setAgentApiUrl(result.agentApiUrl)
+                }
+                if (typeof result.apiKey === "string") {
+                    setApiKey(result.apiKey)
                 }
             }
         )
@@ -150,10 +155,15 @@ export function MidjourneyTab() {
             const url = `${agentApiUrl}/api/midjourney-prompts/${encodeURIComponent(
                 id
             )}/prompts?includeTag=true`
-            const res = await fetch(url)
+            const headers: HeadersInit = {}
+            if (apiKey) {
+                headers["Authorization"] = `Bearer ${apiKey}`
+            }
+            const res = await fetch(url, { headers })
             if (!res.ok) {
                 throw new Error(`HTTP ${res.status}: ${res.statusText}`)
             }
+
             const data = await res.json()
             if (!data || !Array.isArray(data.prompts)) {
                 alert("No prompts found in response")
@@ -199,7 +209,11 @@ export function MidjourneyTab() {
             const url = `${agentApiUrl}/api/midjourney-prompts/${encodeURIComponent(
                 id
             )}/prompts?includeTag=true`
-            const res = await fetch(url)
+            const headers: HeadersInit = {}
+            if (apiKey) {
+                headers["Authorization"] = `Bearer ${apiKey}`
+            }
+            const res = await fetch(url, { headers })
             if (!res.ok) {
                 throw new Error(`HTTP ${res.status}: ${res.statusText}`)
             }
