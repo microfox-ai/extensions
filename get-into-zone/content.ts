@@ -24,6 +24,255 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
   }
 })
 
+/**
+ * Find the *sidebar* Remix/Edit button only (track detail panel), not list items.
+ * - In the ref HTML it sits in a div.relative whose previous sibling is "Add a Caption".
+ * - Fallback: sidebar button is the full-width pill (w-full / py-[13px]); list items are icon-only.
+ */
+function findSidebarRemixEditButton(): HTMLButtonElement | null {
+  const buttons = Array.from(
+    document.querySelectorAll("button")
+  ) as HTMLButtonElement[]
+  for (const btn of buttons) {
+    const text = btn.textContent?.trim().toLowerCase() ?? ""
+    if (!text.includes("remix/edit")) continue
+    const wrapperDiv = btn.closest("div.relative")
+    if (!wrapperDiv) continue
+    const prev = wrapperDiv.previousElementSibling
+    const prevText = (prev?.textContent?.trim() ?? "").toLowerCase()
+    const isNextToAddCaption = prev != null && prevText.includes("add a caption")
+    const isFullWidthPill =
+      btn.classList.contains("w-full") ||
+      /\bpy-\[13px\]\b/.test(btn.className) ||
+      /\brounded-\[16px\]\b/.test(btn.className)
+    if (isNextToAddCaption || isFullWidthPill) return btn
+  }
+  return null
+}
+
+function injectSunoUploadUI() {
+  try {
+    const remixButton = findSidebarRemixEditButton()
+    if (!remixButton) return
+
+    const wrapperDiv = remixButton.closest("div.relative")
+    if (!wrapperDiv) return
+    // Avoid double inject: check if we already added our block after this div
+    if (wrapperDiv.nextElementSibling?.hasAttribute?.("data-mediamake-suno-upload")) {
+      return
+    }
+
+    const wrapper = document.createElement("div")
+    wrapper.setAttribute("data-mediamake-suno-upload", "true")
+    Object.assign(wrapper.style, {
+      marginTop: "12px",
+      padding: "12px",
+      display: "flex",
+      flexDirection: "column",
+      gap: "10px",
+      background: "rgba(30, 30, 30, 0.95)",
+      borderRadius: "12px",
+      border: "1px solid rgba(255,255,255,0.08)",
+      fontFamily: "inherit"
+    })
+
+    const tagLabel = document.createElement("label")
+    tagLabel.textContent = "Tag"
+    Object.assign(tagLabel.style, { fontSize: "11px", color: "rgba(255,255,255,0.6)", fontWeight: "500" })
+
+    const tagInput = document.createElement("input")
+    tagInput.type = "text"
+    tagInput.placeholder = "e.g. suno-remix"
+    Object.assign(tagInput.style, {
+      padding: "8px 10px",
+      fontSize: "12px",
+      borderRadius: "8px",
+      border: "1px solid rgba(255,255,255,0.15)",
+      background: "rgba(0,0,0,0.3)",
+      color: "#fff",
+      outline: "none",
+      width: "100%",
+      boxSizing: "border-box"
+    })
+
+    const langLabel = document.createElement("label")
+    langLabel.textContent = "Language"
+    Object.assign(langLabel.style, { fontSize: "11px", color: "rgba(255,255,255,0.6)", fontWeight: "500" })
+
+    const langInput = document.createElement("input")
+    langInput.type = "text"
+    langInput.placeholder = "en"
+    langInput.value = "en"
+    Object.assign(langInput.style, {
+      padding: "8px 10px",
+      fontSize: "12px",
+      borderRadius: "8px",
+      border: "1px solid rgba(255,255,255,0.15)",
+      background: "rgba(0,0,0,0.3)",
+      color: "#fff",
+      outline: "none",
+      width: "100%",
+      boxSizing: "border-box"
+    })
+
+    const uploadButton = document.createElement("button")
+    uploadButton.textContent = "Upload to Mediamake"
+    Object.assign(uploadButton.style, {
+      padding: "10px 14px",
+      fontSize: "12px",
+      fontWeight: "600",
+      cursor: "pointer",
+      borderRadius: "10px",
+      border: "none",
+      background: "linear-gradient(180deg, #6366f1 0%, #4f46e5 100%)",
+      color: "#fff",
+      marginTop: "4px"
+    })
+    uploadButton.addEventListener("mouseenter", () => {
+      if (!uploadButton.disabled) uploadButton.style.background = "linear-gradient(180deg, #818cf8 0%, #6366f1 100%)"
+    })
+    uploadButton.addEventListener("mouseleave", () => {
+      if (!uploadButton.disabled) uploadButton.style.background = "linear-gradient(180deg, #6366f1 0%, #4f46e5 100%)"
+    })
+
+    uploadButton.addEventListener("click", () => {
+      uploadButton.disabled = true
+      uploadButton.textContent = "Preparing upload..."
+
+      const remixButton = findSidebarRemixEditButton()
+      if (!remixButton) {
+        uploadButton.disabled = false
+        uploadButton.textContent = "Upload to Mediamake"
+        alert("Open a track in the right sidebar first.")
+        return
+      }
+
+      const wrapperDiv = remixButton.closest("div.relative") as HTMLElement | null
+      if (!wrapperDiv) {
+        uploadButton.disabled = false
+        uploadButton.textContent = "Upload to Mediamake"
+        alert("Could not locate track section.")
+        return
+      }
+
+      // Walk up from the Remix/Edit container to find the nearest /song/ link
+      let current: HTMLElement | null = wrapperDiv
+      let songLink: HTMLAnchorElement | null = null
+      while (current && current !== document.body) {
+        const candidate = current.querySelector(
+          'a[href*="/song/"]'
+        ) as HTMLAnchorElement | null
+        if (candidate) {
+          songLink = candidate
+          break
+        }
+        current = current.parentElement
+      }
+
+      const href = songLink?.getAttribute("href") || ""
+      const lastSegment = href.split("/").filter(Boolean).pop() || ""
+      const songId = lastSegment.split("?")[0]?.trim() || null
+      const audioUrl = songId
+        ? `https://cdn1.suno.ai/${songId}.m4a`
+        : null
+      const audioScope =
+        (wrapperDiv.closest("aside") as HTMLElement | null) ||
+        (wrapperDiv.closest("div") as HTMLElement | null) ||
+        document.body
+      const audioEl = audioScope.querySelector("audio") as
+        | HTMLAudioElement
+        | null
+      const finalAudioUrl = audioUrl || audioEl?.src || null
+
+      if (!finalAudioUrl) {
+        uploadButton.disabled = false
+        uploadButton.textContent = "Upload to Mediamake"
+        alert("Could not find audio URL for this track.")
+        return
+      }
+
+      uploadButton.textContent = "Triggering worker..."
+
+      chrome.runtime.sendMessage(
+        {
+          action: "uploadSunoTrackToMediamake",
+          audioUrl: finalAudioUrl,
+          language: langInput.value.trim() || "en",
+          tag: tagInput.value.trim() || undefined
+        },
+        (response) => {
+          uploadButton.disabled = false
+          if (!response) {
+            uploadButton.textContent = "Upload to Mediamake"
+            alert("No response from extension. Check API Endpoint in Settings.")
+            return
+          }
+          if (!response.success) {
+            uploadButton.textContent = "Upload to Mediamake"
+            alert(response.message || "Failed to queue worker.")
+            return
+          }
+          uploadButton.textContent = "Worker queued!"
+          setTimeout(() => {
+            uploadButton.textContent = "Upload to Mediamake"
+          }, 3000)
+        }
+      )
+    })
+
+    wrapper.appendChild(tagLabel)
+    wrapper.appendChild(tagInput)
+    wrapper.appendChild(langLabel)
+    wrapper.appendChild(langInput)
+    wrapper.appendChild(uploadButton)
+
+    wrapperDiv.after(wrapper)
+  } catch (e) {
+    console.error("Failed to inject Suno upload UI:", e)
+  }
+}
+
+if (window.location.hostname === "suno.com") {
+  const observer = new MutationObserver(() => {
+    injectSunoUploadUI()
+  })
+  observer.observe(document.documentElement, {
+    childList: true,
+    subtree: true
+  })
+  injectSunoUploadUI()
+}
+
+// Listen for Midjourney job submit results from the page context
+window.addEventListener("message", (event) => {
+  try {
+    const data = event.data
+    if (
+      !data ||
+      typeof data !== "object" ||
+      data.type !== "MIDJOURNEY_SUBMIT_JOB_RESULT"
+    ) {
+      return
+    }
+    const { jobId, folderTag, queueItemId } = data
+    console.log(
+      "[get-into-zone] MIDJOURNEY_SUBMIT_JOB_RESULT in content script",
+      { jobId, folderTag, queueItemId }
+    )
+    if (!jobId || typeof jobId !== "string") return
+    if (!queueItemId || typeof queueItemId !== "string") return
+
+    chrome.runtime.sendMessage({
+      action: "midjourneyJobSubmitted",
+      jobId,
+      folderTag: typeof folderTag === "string" ? folderTag : null,
+      queueItemId
+    })
+  } catch (e) {
+    console.error("Failed to handle MIDJOURNEY_SUBMIT_JOB_RESULT message:", e)
+  }
+})
+
 function createOverlayButton(
   mediaElement: HTMLImageElement | HTMLVideoElement
 ) {
