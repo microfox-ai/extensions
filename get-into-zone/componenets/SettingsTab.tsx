@@ -5,10 +5,13 @@ export function SettingsTab() {
   const [tags, setTags] = useState("")
   const [apiKey, setApiKey] = useState("")
   const [isButtonEnabled, setIsButtonEnabled] = useState(true)
+  const [projects, setProjects] = useState<{ id: string; displayName: string }[]>([])
+  const [projectsLoading, setProjectsLoading] = useState(false)
+  const [selectedProjectId, setSelectedProjectId] = useState<string>("default")
 
   useEffect(() => {
     chrome.storage.local.get(
-      ["apiEndpoint", "tags", "apiKey", "isButtonEnabled"],
+      ["apiEndpoint", "tags", "apiKey", "isButtonEnabled", "selectedProjectId"],
       (result) => {
         if (typeof result.apiEndpoint === "string") {
           setApiEndpoint(result.apiEndpoint)
@@ -22,13 +25,48 @@ export function SettingsTab() {
         if (typeof result.isButtonEnabled === "boolean") {
           setIsButtonEnabled(result.isButtonEnabled)
         }
+        if (typeof result.selectedProjectId === "string") {
+          setSelectedProjectId(result.selectedProjectId)
+        }
       }
     )
   }, [])
 
+  useEffect(() => {
+    if (!apiEndpoint || typeof apiEndpoint !== "string") return
+
+    setProjectsLoading(true)
+    const headers: HeadersInit = {}
+    if (apiKey) {
+      headers["Authorization"] = `Bearer ${apiKey}`
+    }
+
+    fetch(`${apiEndpoint}/api/project`, { headers })
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setProjects(
+            data.map((p: any) => ({
+              id: p.id,
+              displayName: p.displayName
+            }))
+          )
+        } else {
+          setProjects([])
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to load projects:", err)
+        setProjects([])
+      })
+      .finally(() => {
+        setProjectsLoading(false)
+      })
+  }, [apiEndpoint, apiKey])
+
   const saveSettings = () => {
     chrome.storage.local.set(
-      { apiEndpoint, tags, apiKey, isButtonEnabled },
+      { apiEndpoint, tags, apiKey, isButtonEnabled, selectedProjectId },
       () => {
         console.log("Settings saved")
       }
@@ -88,6 +126,35 @@ export function SettingsTab() {
         style={{ marginTop: "10px", width: "100%", padding: "10px" }}>
         Save Settings
       </button>
+      <div style={{ marginTop: 10 }}>
+        <label>Default Project:</label>
+        <select
+          value={selectedProjectId}
+          onChange={(e) => {
+            const value = e.target.value
+            setSelectedProjectId(value)
+            chrome.storage.local.set({ selectedProjectId: value })
+          }}
+          disabled={projectsLoading}
+          style={{
+            width: "100%",
+            padding: "8px",
+            boxSizing: "border-box",
+            marginTop: "4px"
+          }}>
+          {projectsLoading ? (
+            <option>Loading projects...</option>
+          ) : projects.length === 0 ? (
+            <option value="default">No projects found</option>
+          ) : (
+            projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.displayName}
+              </option>
+            ))
+          )}
+        </select>
+      </div>
       <div style={{ marginTop: 10, display: "flex", alignItems: "center" }}>
         <input
           type="checkbox"

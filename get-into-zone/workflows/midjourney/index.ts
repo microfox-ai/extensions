@@ -3,7 +3,8 @@ import { config } from "../../config"
 export function startMidjourneyWorkflow(
   prompt: string,
   useLastImage: boolean = false,
-  folderTag: string = ""
+  folderTag: string = "",
+  queueItemId?: string
 ) {
   const baseUrl = config.midjourneyUrl
   const normalizedTag = (folderTag || "").trim()
@@ -22,7 +23,7 @@ export function startMidjourneyWorkflow(
         if (!tab.id) return
 
         chrome.tabs.update(tab.id, { active: true }, () => {
-          executeWorkflow(tab.id!, prompt, useLastImage, "")
+          executeWorkflow(tab.id!, prompt, useLastImage, "", queueItemId)
         })
         return
       }
@@ -34,7 +35,7 @@ export function startMidjourneyWorkflow(
         ) => {
           if (updatedTabId === tab.id && changeInfo.status === "complete") {
             if (tab.id !== undefined) {
-              executeWorkflow(tab.id, prompt, useLastImage, "")
+              executeWorkflow(tab.id, prompt, useLastImage, "", queueItemId)
             }
             chrome.tabs.onUpdated.removeListener(listener)
           }
@@ -70,7 +71,16 @@ export function startMidjourneyWorkflow(
     // Case 1: reuse tab already on the correct folder
     if (sameFolderTab && sameFolderTab.id) {
       chrome.tabs.update(sameFolderTab.id, { active: true }, () => {
-        executeWorkflow(sameFolderTab.id!, prompt, useLastImage, normalizedTag)
+        // Tab is already on the correct folder; tiny delay to let UI settle
+        setTimeout(() => {
+          executeWorkflow(
+            sameFolderTab.id!,
+            prompt,
+            useLastImage,
+            normalizedTag,
+            queueItemId
+          )
+        }, 1000)
       })
       return
     }
@@ -92,12 +102,16 @@ export function startMidjourneyWorkflow(
               changeInfo.status === "complete"
             ) {
               if (anyImagineTab.id !== undefined) {
-                executeWorkflow(
-                  anyImagineTab.id,
-                  prompt,
-                  useLastImage,
-                  normalizedTag
-                )
+                // Wait a bit after navigation so the folder filter applies
+                setTimeout(() => {
+                  executeWorkflow(
+                    anyImagineTab.id!,
+                    prompt,
+                    useLastImage,
+                    normalizedTag,
+                    queueItemId
+                  )
+                }, 2000)
               }
               chrome.tabs.onUpdated.removeListener(listener)
             }
@@ -116,7 +130,16 @@ export function startMidjourneyWorkflow(
       ) => {
         if (updatedTabId === tab.id && changeInfo.status === "complete") {
           if (tab.id !== undefined) {
-            executeWorkflow(tab.id, prompt, useLastImage, normalizedTag)
+            // New tab: also wait a bit so the page finishes folder initialization
+            setTimeout(() => {
+              executeWorkflow(
+                tab.id!,
+                prompt,
+                useLastImage,
+                normalizedTag,
+                queueItemId
+              )
+            }, 2000)
           }
           chrome.tabs.onUpdated.removeListener(listener)
         }
@@ -130,11 +153,12 @@ function executeWorkflow(
   tabId: number,
   prompt: string,
   useLastImage: boolean = false,
-  folderTag: string = ""
+  folderTag: string = "",
+  queueItemId?: string
 ) {
   chrome.scripting.executeScript({
     target: { tabId: tabId },
-    func: (prompt, useLastImage, folderTag) => {
+    func: (prompt, useLastImage, folderTag, queueItemId) => {
       // Function to click the Use button on the first container
       const clickUseButton = (): Promise<void> => {
         return new Promise((resolve) => {
@@ -245,6 +269,198 @@ function executeWorkflow(
         })
       }
 
+      const startDomWatcherForJobId = (
+        originalPrompt: string,
+        folderTagForWatcher: string,
+        queueItemIdForWatcher: string | undefined
+      ) => {
+        if (!queueItemIdForWatcher || typeof queueItemIdForWatcher !== "string") {
+          return
+        }
+
+        const startedAt = Date.now()
+        // DOM can take a long time to move from "Starting..." to showing images.
+        // Allow up to 10 minutes for the job card + image URLs to appear.
+        const timeoutMs = 10 * 60 * 1000 // 10 minutes
+        const pollIntervalMs = 5000 // 5 seconds
+
+        let targetGrid: HTMLElement | null = null
+
+        const normalizePrompt = (value: string | null | undefined): string => {
+          return (value || "")
+            .toLowerCase()
+            .replace(/\s+/g, " ")
+            .trim()
+        }
+
+        const checkOnce = () => {
+          const now = Date.now()
+          if (now - startedAt > timeoutMs) {
+            return
+          }
+
+          // Step 1: if we don't have a target grid yet, find the job card
+          // whose prompt matches the originalPrompt, then grab its mediaGrid.
+          if (!targetGrid) {
+            const containers = document.querySelectorAll<HTMLElement>(
+              'div[class*="grid-cols-[minmax(0,8fr)_minmax(0,3fr)]"]'
+            )
+
+            const normalizedOriginal = normalizePrompt(originalPrompt)
+
+            for (const container of Array.from(containers)) {
+              let promptText = ""
+              try {
+                const promptEl =
+                  container.querySelector<HTMLElement>(
+                    'div[class*="group/promptText"] span.relative'
+                  ) ||
+                  container.querySelector<HTMLElement>(
+                    'div.break-word div.min-w-0 > div'
+                  ) ||
+                  container.querySelector<HTMLElement>('div.break-word')
+
+                if (promptEl && promptEl.textContent) {
+                  promptText = promptEl.textContent
+                }
+              } catch {
+                // ignore
+              }
+
+              const normalizedPromptText = normalizePrompt(promptText)
+              if (
+                normalizedOriginal &&
+                normalizedPromptText &&
+                (normalizedOriginal === normalizedPromptText ||
+                  normalizedPromptText.includes(normalizedOriginal) ||
+                  normalizedOriginal.includes(normalizedPromptText))
+              ) {
+                const grid = container.querySelector<HTMLElement>(
+                  'div[class*="group/mediaGrid"]'
+                )
+                if (grid) {
+                  targetGrid = grid
+                  break
+                }
+              }
+            }
+
+            // If still none, wait for next poll
+            setTimeout(checkOnce, pollIntervalMs)
+            return
+          }
+
+          // Step 2: we have a target grid; ensure it is still in the DOM
+          if (!document.contains(targetGrid)) {
+            targetGrid = null
+            setTimeout(checkOnce, pollIntervalMs)
+            return
+          }
+
+          // Step 3: once the grid has job links or images, extract jobId
+          let jobId: string | null = null
+
+          const link = targetGrid.querySelector<HTMLAnchorElement>(
+            'a[href*="/jobs/"]'
+          )
+          if (link && link.href) {
+            try {
+              const url = new URL(link.href)
+              const parts = url.pathname.split("/").filter(Boolean)
+              const jobsIndex = parts.indexOf("jobs")
+              if (jobsIndex >= 0 && parts.length > jobsIndex + 1) {
+                jobId = parts[jobsIndex + 1]
+              }
+            } catch {
+              // ignore
+            }
+          }
+
+          if (!jobId) {
+            const img = targetGrid.querySelector<HTMLImageElement>("img")
+            if (img && img.src) {
+              try {
+                const imgUrl = new URL(img.src)
+                const segments = imgUrl.pathname.split("/").filter(Boolean)
+                if (segments.length > 0) {
+                  jobId = segments[0]
+                }
+              } catch {
+                // ignore
+              }
+            }
+          }
+
+          if (jobId) {
+            // Extra safety: verify that the prompt text shown for this grid
+            // matches the originalPrompt we submitted. This prevents us from
+            // accidentally associating a job_id from another request.
+            let gridPromptText = ""
+            try {
+              // The grid sits inside a larger "job card" container. Walk up to it.
+              const jobContainer =
+                targetGrid.closest<HTMLElement>(
+                  'div[class*="grid-cols-[minmax(0,8fr)_minmax(0,3fr)]"]'
+                ) || targetGrid.closest<HTMLElement>('div.group')
+
+              if (jobContainer) {
+                // Try modern prompt container first (if present)
+                const promptEl =
+                  jobContainer.querySelector<HTMLElement>(
+                    'div[class*="group/promptText"] span.relative'
+                  ) ||
+                  jobContainer.querySelector<HTMLElement>(
+                    'div.break-word div.min-w-0 > div'
+                  ) ||
+                  jobContainer.querySelector<HTMLElement>('div.break-word')
+
+                if (promptEl && promptEl.textContent) {
+                  gridPromptText = promptEl.textContent
+                }
+              }
+            } catch {
+              // ignore DOM traversal issues; we'll fall back to not matching
+            }
+
+            const normalizedOriginal = normalizePrompt(originalPrompt)
+            const normalizedGrid = normalizePrompt(gridPromptText)
+
+            // Require a strong match between the submitted prompt and the
+            // prompt rendered next to this grid. If it doesn't match, keep
+            // polling instead of emitting a possibly wrong jobId.
+            if (
+              !normalizedOriginal ||
+              !normalizedGrid ||
+              (
+                normalizedOriginal !== normalizedGrid &&
+                !normalizedGrid.includes(normalizedOriginal) &&
+                !normalizedOriginal.includes(normalizedGrid)
+              )
+            ) {
+              setTimeout(checkOnce, pollIntervalMs)
+              return
+            }
+
+            window.postMessage(
+              {
+                type: "MIDJOURNEY_SUBMIT_JOB_RESULT",
+                jobId,
+                prompt: originalPrompt,
+                folderTag: folderTagForWatcher,
+                queueItemId: queueItemIdForWatcher
+              },
+              "*"
+            )
+            return
+          }
+
+          // Schedule next poll
+          setTimeout(checkOnce, pollIntervalMs)
+        }
+
+        setTimeout(checkOnce, 2000)
+      }
+
       // Main workflow execution
       const runWorkflow = async () => {
         if (useLastImage) {
@@ -261,6 +477,59 @@ function executeWorkflow(
         ) as HTMLTextAreaElement
 
         if (textarea) {
+          try {
+            const w = window as any
+            if (!w.__mjOriginalFetch) {
+              w.__mjOriginalFetch = window.fetch.bind(window)
+              window.fetch = async (...args: [input: RequestInfo | URL, init?: RequestInit]) => {
+                const url =
+                  typeof args[0] === "string" || args[0] instanceof URL
+                    ? args[0].toString()
+                    : (args[0] as Request)?.url
+                const isSubmitJobs =
+                  typeof url === "string" &&
+                  url.includes("/api/submit-jobs")
+                const originalFetch: typeof fetch = w.__mjOriginalFetch
+                const response = await originalFetch(...args)
+                if (isSubmitJobs) {
+                  try {
+                    const cloned = response.clone()
+                    cloned
+                      .json()
+                      .then((data: any) => {
+                        const jobId =
+                          data?.success &&
+                          Array.isArray(data.success) &&
+                          data.success[0]?.job_id
+                            ? data.success[0].job_id
+                            : null
+                        if (jobId) {
+                          window.postMessage(
+                            {
+                              type: "MIDJOURNEY_SUBMIT_JOB_RESULT",
+                              jobId,
+                              prompt,
+                              folderTag,
+                              queueItemId: queueItemId || null
+                            },
+                            "*"
+                          )
+                        }
+                      })
+                      .catch(() => {
+                        // ignore JSON parse errors
+                      })
+                  } catch {
+                    // ignore clone/parse issues
+                  }
+                }
+                return response
+              }
+            }
+          } catch (e) {
+            console.error("Failed to patch fetch for Midjourney:", e)
+          }
+
           // Clear any existing content first
           const descriptor = Object.getOwnPropertyDescriptor(
             window.HTMLTextAreaElement.prototype,
@@ -291,6 +560,14 @@ function executeWorkflow(
                   })
                 )
                 console.log("Workflow completed: prompt submitted.")
+
+                // After submitting the prompt, start watching the DOM
+                // for the corresponding job card and extract its job_id.
+                startDomWatcherForJobId(
+                  String(prompt),
+                  String(folderTag),
+                  typeof queueItemId === "string" ? queueItemId : undefined
+                )
               }, 500)
             },
             useLastImage ? 500 : 0
@@ -304,7 +581,7 @@ function executeWorkflow(
 
       runWorkflow()
     },
-    args: [prompt, useLastImage, folderTag]
+    args: [prompt, useLastImage, folderTag, queueItemId ?? null]
   })
 }
 
