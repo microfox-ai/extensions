@@ -17,7 +17,7 @@ const exampleJson = {
     ]
 }
 
-type MidjourneySubTab = "plain" | "json" | "database" | "scrape"
+type MidjourneySubTab = "plain" | "json" | "database" | "scrape" | "queue"
 
 export function MidjourneyTab() {
     const [midjourneyTab, setMidjourneyTab] = useState<MidjourneySubTab>("plain")
@@ -37,6 +37,12 @@ export function MidjourneyTab() {
     const [agentApiUrl, setAgentApiUrl] = useState("http://localhost:3000")
     const [isLoadingDb, setIsLoadingDb] = useState(false)
     const [apiKey, setApiKey] = useState("")
+    const [selectedProjectId, setSelectedProjectId] = useState<string>("default")
+
+    const [queuedRequests, setQueuedRequests] = useState<any[]>([])
+    const [isLoadingQueue, setIsLoadingQueue] = useState(false)
+    // Accept a positive integer or the string "all"
+    const [requestsToTrigger, setRequestsToTrigger] = useState<string>("10")
 
     useEffect(() => {
         chrome.storage.local.get(
@@ -50,7 +56,8 @@ export function MidjourneyTab() {
                 "useLastImage",
                 "maxQueueSize",
                 "agentApiUrl",
-                "apiKey"
+                "apiKey",
+                "selectedProjectId"
             ],
             (result) => {
                 if (typeof result.prompt === "string") {
@@ -83,9 +90,26 @@ export function MidjourneyTab() {
                 if (typeof result.apiKey === "string") {
                     setApiKey(result.apiKey)
                 }
+                if (typeof result.selectedProjectId === "string") {
+                    setSelectedProjectId(result.selectedProjectId)
+                }
             }
         )
     }, [])
+
+    // Refresh queue list when background updates statuses/jobIds
+    useEffect(() => {
+        const handler = (msg: any) => {
+            if (msg?.action === "midjourneyQueueUpdated") {
+                loadQueuedRequests()
+            }
+        }
+        chrome.runtime.onMessage.addListener(handler)
+        return () => {
+            chrome.runtime.onMessage.removeListener(handler)
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [agentApiUrl, apiKey, selectedProjectId, requestsToTrigger])
 
     const startMidjourneyWorkflow = () => {
         const finalPrompt =
@@ -268,9 +292,102 @@ export function MidjourneyTab() {
         }
     }
 
+    const parseRequestedCount = () => {
+        const raw = (requestsToTrigger || "").trim().toLowerCase()
+        if (raw === "all") return { mode: "all" as const, count: 500 }
+        const n = Number(raw)
+        if (!Number.isFinite(n) || n <= 0) return { mode: "count" as const, count: 10 }
+        return { mode: "count" as const, count: Math.floor(n) }
+    }
+
+    const loadQueuedRequests = async () => {
+        if (!agentApiUrl || typeof agentApiUrl !== "string") {
+            alert("Please configure the Mediamake API URL in Settings.")
+            return
+        }
+        setIsLoadingQueue(true)
+        try {
+            const params = new URLSearchParams()
+            const requested = parseRequestedCount()
+            params.append("limit", String(requested.count))
+            if (selectedProjectId && selectedProjectId !== "all") {
+                params.append("projectId", selectedProjectId)
+            }
+            const headers: HeadersInit = {}
+            if (apiKey) {
+                headers["Authorization"] = `Bearer ${apiKey}`
+            }
+            const res = await fetch(
+                `${agentApiUrl}/api/midjourney-queue/pending?${params.toString()}`,
+                { headers }
+            )
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}: ${res.statusText}`)
+            }
+            const data = await res.json()
+            if (!Array.isArray(data)) {
+                setQueuedRequests([])
+                return
+            }
+            const sorted = data.slice().sort((a: any, b: any) => {
+                if (a.priority === b.priority) {
+                    return (a.createdAt || "").localeCompare(b.createdAt || "")
+                }
+                return b.priority - a.priority
+            })
+            setQueuedRequests(sorted)
+        } catch (e: any) {
+            console.error("Failed to load queued requests:", e)
+            alert(
+                `Failed to load queued requests: ${e?.message || String(e)}`
+            )
+        } finally {
+            setIsLoadingQueue(false)
+        }
+    }
+
+    const startQueueBatch = () => {
+        if (!queuedRequests || queuedRequests.length === 0) {
+            alert("No queued requests loaded.")
+            return
+        }
+        const requested = parseRequestedCount()
+        const count =
+            requested.mode === "all"
+                ? queuedRequests.length
+                : Math.min(requested.count, queuedRequests.length)
+        const sorted = queuedRequests.slice().sort((a: any, b: any) => {
+            if (a.priority === b.priority) {
+                return (a.createdAt || "").localeCompare(b.createdAt || "")
+            }
+            return b.priority - a.priority
+        })
+        const toTrigger = sorted.slice(0, count)
+        if (toTrigger.length === 0) {
+            alert("No requests available to trigger.")
+            return
+        }
+
+        chrome.storage.local.set({ useLastImage }, () => {
+            chrome.runtime.sendMessage({
+                action: "startMidjourneyQueueBatch",
+                requests: toTrigger,
+                delay,
+                useLastImage,
+                folderTag,
+                maxQueueSize
+            })
+        })
+    }
+
     return (
         <div>
             <h2>Midjourney Automation</h2>
+            <div style={{ margin: "8px 0 16px 0" }}>
+                <p style={{ marginTop: 4, fontSize: 11, color: "#555" }}>
+                    Project selection is now managed globally in the Settings tab.
+                </p>
+            </div>
             <div style={{ display: "flex", marginBottom: 16 }}>
                 <button
                     onClick={() => setMidjourneyTab("plain")}
@@ -323,6 +440,19 @@ export function MidjourneyTab() {
                         flex: 1
                     }}>
                     Scrape
+                </button>
+                <button
+                    onClick={() => setMidjourneyTab("queue")}
+                    style={{
+                        padding: "8px 16px",
+                        border: "none",
+                        backgroundColor:
+                            midjourneyTab === "queue" ? "#6DB6FF" : "#E0E0E0",
+                        color: midjourneyTab === "queue" ? "white" : "black",
+                        cursor: "pointer",
+                        flex: 1
+                    }}>
+                    Queue
                 </button>
             </div>
 
@@ -553,6 +683,120 @@ export function MidjourneyTab() {
                             />
                         </div>
                     )}
+                </div>
+            )}
+            {midjourneyTab === "queue" && (
+                <div>
+                    <p style={{ marginBottom: 8 }}>
+                        Load pending Midjourney requests from Mediamake for the selected
+                        project and trigger them in priority order.
+                    </p>
+                    <div style={{ marginTop: 10 }}>
+                        <label>Folder tag for this batch (optional):</label>
+                        <input
+                            type="text"
+                            value={folderTag}
+                            onChange={(e) => {
+                                setFolderTag(e.target.value)
+                                chrome.storage.local.set({ folderTag: e.target.value })
+                            }}
+                            placeholder="e.g., kidtales"
+                            style={{
+                                width: "100%",
+                                padding: "8px",
+                                boxSizing: "border-box",
+                                marginTop: "4px"
+                            }}
+                        />
+                        <p style={{ marginTop: 4, fontSize: 11, color: "#666" }}>
+                            This controls the Midjourney folder filter used when triggering
+                            queued prompts.
+                        </p>
+                    </div>
+                    <div style={{ marginTop: 12 }}>
+                        <label>How many requests to trigger:</label>
+                        <input
+                            type="text"
+                            value={requestsToTrigger}
+                            onChange={(e) => setRequestsToTrigger(e.target.value)}
+                            placeholder='10 (or "all")'
+                            style={{
+                                width: "100%",
+                                padding: "8px",
+                                boxSizing: "border-box",
+                                marginTop: "4px"
+                            }}
+                        />
+                        <p style={{ marginTop: 4, fontSize: 11, color: "#666" }}>
+                            Enter a number (e.g. 10) or type <strong>all</strong>.
+                        </p>
+                    </div>
+                    <button
+                        onClick={loadQueuedRequests}
+                        disabled={isLoadingQueue}
+                        style={{ marginTop: 10, width: "100%", padding: "10px" }}>
+                        {isLoadingQueue ? "Loading requests..." : "Load requests from DB"}
+                    </button>
+                    <button
+                        onClick={startQueueBatch}
+                        style={{ marginTop: "10px", width: "100%", padding: "10px" }}>
+                        Trigger queued requests
+                    </button>
+                    <div style={{ marginTop: 16 }}>
+                        <h3>Pending requests</h3>
+                        {queuedRequests.length === 0 ? (
+                            <p style={{ fontSize: 12, color: "#666" }}>
+                                No pending requests loaded.
+                            </p>
+                        ) : (
+                            <ul
+                                style={{
+                                    listStyle: "none",
+                                    padding: 0,
+                                    maxHeight: 220,
+                                    overflowY: "auto",
+                                    marginTop: 8
+                                }}>
+                                {queuedRequests.map((item: any) => (
+                                    <li
+                                        key={item.id}
+                                        style={{
+                                            padding: "6px 8px",
+                                            borderBottom: "1px solid #eee",
+                                            fontSize: 12
+                                        }}>
+                                        <div
+                                            style={{
+                                                display: "flex",
+                                                justifyContent: "space-between",
+                                                marginBottom: 2
+                                            }}>
+                                            <span>
+                                                <strong>P{item.priority}</strong>{" "}
+                                                {item.projectId || "default"}
+                                            </span>
+                                            <span
+                                                style={{
+                                                    textTransform: "capitalize",
+                                                    color: "#555"
+                                                }}>
+                                                {item.status}
+                                            </span>
+                                        </div>
+                                        <div
+                                            style={{
+                                                whiteSpace: "nowrap",
+                                                overflow: "hidden",
+                                                textOverflow: "ellipsis"
+                                            }}
+                                            title={item.prompt}>
+                                            {item.prompt}
+                                        </div>
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                    </div>
                 </div>
             )}
         </div>
