@@ -18,6 +18,7 @@ const exampleJson = {
 }
 
 type MidjourneySubTab = "plain" | "json" | "database" | "scrape" | "queue"
+const ALL_REQUEST_BATCH_SIZE = 10
 
 export function MidjourneyTab() {
     const [midjourneyTab, setMidjourneyTab] = useState<MidjourneySubTab>("plain")
@@ -38,11 +39,15 @@ export function MidjourneyTab() {
     const [isLoadingDb, setIsLoadingDb] = useState(false)
     const [apiKey, setApiKey] = useState("")
     const [selectedProjectId, setSelectedProjectId] = useState<string>("default")
+    const [loadFromAllProjects, setLoadFromAllProjects] = useState(false)
 
     const [queuedRequests, setQueuedRequests] = useState<any[]>([])
     const [isLoadingQueue, setIsLoadingQueue] = useState(false)
     // Accept a positive integer or the string "all"
     const [requestsToTrigger, setRequestsToTrigger] = useState<string>("10")
+    const [isQueueBatchRunning, setIsQueueBatchRunning] = useState(false)
+    const [remainingInAllModeBatch, setRemainingInAllModeBatch] = useState(0)
+    const [overwriteQueueFolder, setOverwriteQueueFolder] = useState(false)
 
     useEffect(() => {
         chrome.storage.local.get(
@@ -57,7 +62,9 @@ export function MidjourneyTab() {
                 "maxQueueSize",
                 "agentApiUrl",
                 "apiKey",
-                "selectedProjectId"
+                "selectedProjectId",
+                "overwriteQueueFolder",
+                "loadFromAllProjects"
             ],
             (result) => {
                 if (typeof result.prompt === "string") {
@@ -93,23 +100,15 @@ export function MidjourneyTab() {
                 if (typeof result.selectedProjectId === "string") {
                     setSelectedProjectId(result.selectedProjectId)
                 }
+                if (typeof result.loadFromAllProjects === "boolean") {
+                    setLoadFromAllProjects(result.loadFromAllProjects)
+                }
+                if (typeof result.overwriteQueueFolder === "boolean") {
+                    setOverwriteQueueFolder(result.overwriteQueueFolder)
+                }
             }
         )
     }, [])
-
-    // Refresh queue list when background updates statuses/jobIds
-    useEffect(() => {
-        const handler = (msg: any) => {
-            if (msg?.action === "midjourneyQueueUpdated") {
-                loadQueuedRequests()
-            }
-        }
-        chrome.runtime.onMessage.addListener(handler)
-        return () => {
-            chrome.runtime.onMessage.removeListener(handler)
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [agentApiUrl, apiKey, selectedProjectId, requestsToTrigger])
 
     const startMidjourneyWorkflow = () => {
         const finalPrompt =
@@ -294,23 +293,48 @@ export function MidjourneyTab() {
 
     const parseRequestedCount = () => {
         const raw = (requestsToTrigger || "").trim().toLowerCase()
-        if (raw === "all") return { mode: "all" as const, count: 500 }
+        if (raw === "all") {
+            return { mode: "all" as const, count: ALL_REQUEST_BATCH_SIZE }
+        }
         const n = Number(raw)
         if (!Number.isFinite(n) || n <= 0) return { mode: "count" as const, count: 10 }
         return { mode: "count" as const, count: Math.floor(n) }
     }
 
-    const loadQueuedRequests = async () => {
+    const triggerQueueBatchRequests = (requests: any[]) => {
+        chrome.storage.local.set({ useLastImage }, () => {
+            chrome.runtime.sendMessage({
+                action: "startMidjourneyQueueBatch",
+                requests,
+                delay,
+                useLastImage,
+                folderTag,
+                overwriteQueueFolder,
+                maxQueueSize
+            })
+        })
+    }
+
+    const loadQueuedRequests = async (
+        overrideCount?: number,
+        options?: { silent?: boolean }
+    ) => {
         if (!agentApiUrl || typeof agentApiUrl !== "string") {
-            alert("Please configure the Mediamake API URL in Settings.")
-            return
+            if (!options?.silent) {
+                alert("Please configure the Mediamake API URL in Settings.")
+            }
+            return [] as any[]
         }
         setIsLoadingQueue(true)
         try {
             const params = new URLSearchParams()
             const requested = parseRequestedCount()
-            params.append("limit", String(requested.count))
-            if (selectedProjectId && selectedProjectId !== "all") {
+            params.append("limit", String(overrideCount ?? requested.count))
+            if (
+                !loadFromAllProjects &&
+                selectedProjectId &&
+                selectedProjectId !== "all"
+            ) {
                 params.append("projectId", selectedProjectId)
             }
             const headers: HeadersInit = {}
@@ -327,7 +351,7 @@ export function MidjourneyTab() {
             const data = await res.json()
             if (!Array.isArray(data)) {
                 setQueuedRequests([])
-                return
+                return [] as any[]
             }
             const sorted = data.slice().sort((a: any, b: any) => {
                 if (a.priority === b.priority) {
@@ -336,15 +360,69 @@ export function MidjourneyTab() {
                 return b.priority - a.priority
             })
             setQueuedRequests(sorted)
+            return sorted
         } catch (e: any) {
             console.error("Failed to load queued requests:", e)
-            alert(
-                `Failed to load queued requests: ${e?.message || String(e)}`
-            )
+            if (!options?.silent) {
+                alert(
+                    `Failed to load queued requests: ${e?.message || String(e)}`
+                )
+            }
+            return [] as any[]
         } finally {
             setIsLoadingQueue(false)
         }
     }
+
+    const loadAndTriggerNextAllModeBatch = async () => {
+        const nextBatch = await loadQueuedRequests(ALL_REQUEST_BATCH_SIZE, {
+            silent: true
+        })
+        if (!nextBatch || nextBatch.length === 0) {
+            setIsQueueBatchRunning(false)
+            setRemainingInAllModeBatch(0)
+            return
+        }
+        setRemainingInAllModeBatch(nextBatch.length)
+        triggerQueueBatchRequests(nextBatch)
+    }
+
+    // Refresh queue list when background updates statuses/jobIds
+    useEffect(() => {
+        const handler = (msg: any) => {
+            if (msg?.action !== "midjourneyQueueUpdated") {
+                return
+            }
+
+            const requested = parseRequestedCount()
+            if (requested.mode === "all" && isQueueBatchRunning) {
+                setRemainingInAllModeBatch((prev) => {
+                    if (prev <= 1) {
+                        window.setTimeout(() => {
+                            void loadAndTriggerNextAllModeBatch()
+                        }, 0)
+                        return 0
+                    }
+                    return prev - 1
+                })
+                return
+            }
+
+            void loadQueuedRequests()
+        }
+        chrome.runtime.onMessage.addListener(handler)
+        return () => {
+            chrome.runtime.onMessage.removeListener(handler)
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [
+        agentApiUrl,
+        apiKey,
+        selectedProjectId,
+        loadFromAllProjects,
+        requestsToTrigger,
+        isQueueBatchRunning
+    ])
 
     const startQueueBatch = () => {
         if (!queuedRequests || queuedRequests.length === 0) {
@@ -352,10 +430,22 @@ export function MidjourneyTab() {
             return
         }
         const requested = parseRequestedCount()
+        if (requested.mode === "all") {
+            const allModeBatch = queuedRequests.slice(0, ALL_REQUEST_BATCH_SIZE)
+            if (allModeBatch.length === 0) {
+                alert("No requests available to trigger.")
+                return
+            }
+            setIsQueueBatchRunning(true)
+            setRemainingInAllModeBatch(allModeBatch.length)
+            triggerQueueBatchRequests(allModeBatch)
+            return
+        }
+
+        setIsQueueBatchRunning(false)
+        setRemainingInAllModeBatch(0)
         const count =
-            requested.mode === "all"
-                ? queuedRequests.length
-                : Math.min(requested.count, queuedRequests.length)
+            Math.min(requested.count, queuedRequests.length)
         const sorted = queuedRequests.slice().sort((a: any, b: any) => {
             if (a.priority === b.priority) {
                 return (a.createdAt || "").localeCompare(b.createdAt || "")
@@ -368,16 +458,7 @@ export function MidjourneyTab() {
             return
         }
 
-        chrome.storage.local.set({ useLastImage }, () => {
-            chrome.runtime.sendMessage({
-                action: "startMidjourneyQueueBatch",
-                requests: toTrigger,
-                delay,
-                useLastImage,
-                folderTag,
-                maxQueueSize
-            })
-        })
+        triggerQueueBatchRequests(toTrigger)
     }
 
     return (
@@ -691,6 +772,22 @@ export function MidjourneyTab() {
                         Load pending Midjourney requests from Mediamake for the selected
                         project and trigger them in priority order.
                     </p>
+                    <div style={{ marginTop: 10, display: "flex", alignItems: "center" }}>
+                        <input
+                            type="checkbox"
+                            id="loadFromAllProjects"
+                            checked={loadFromAllProjects}
+                            onChange={(e) => {
+                                const checked = e.target.checked
+                                setLoadFromAllProjects(checked)
+                                chrome.storage.local.set({ loadFromAllProjects: checked })
+                            }}
+                            style={{ marginRight: "8px" }}
+                        />
+                        <label htmlFor="loadFromAllProjects">
+                            Load requests from all projects (ignore selected project filter)
+                        </label>
+                    </div>
                     <div style={{ marginTop: 10 }}>
                         <label>Folder tag for this batch (optional):</label>
                         <input
@@ -709,9 +806,24 @@ export function MidjourneyTab() {
                             }}
                         />
                         <p style={{ marginTop: 4, fontSize: 11, color: "#666" }}>
-                            This controls the Midjourney folder filter used when triggering
-                            queued prompts.
+                            Used as fallback when request has no folder, unless override is enabled.
                         </p>
+                    </div>
+                    <div style={{ marginTop: 10, display: "flex", alignItems: "center" }}>
+                        <input
+                            type="checkbox"
+                            id="overwriteQueueFolder"
+                            checked={overwriteQueueFolder}
+                            onChange={(e) => {
+                                const checked = e.target.checked
+                                setOverwriteQueueFolder(checked)
+                                chrome.storage.local.set({ overwriteQueueFolder: checked })
+                            }}
+                            style={{ marginRight: "8px" }}
+                        />
+                        <label htmlFor="overwriteQueueFolder">
+                            Override each queued request folder with the input above
+                        </label>
                     </div>
                     <div style={{ marginTop: 12 }}>
                         <label>How many requests to trigger:</label>
@@ -730,9 +842,17 @@ export function MidjourneyTab() {
                         <p style={{ marginTop: 4, fontSize: 11, color: "#666" }}>
                             Enter a number (e.g. 10) or type <strong>all</strong>.
                         </p>
+                        {isQueueBatchRunning && (
+                            <p style={{ marginTop: 4, fontSize: 11, color: "#2f6feb" }}>
+                                Running all-mode batches of {ALL_REQUEST_BATCH_SIZE}.{" "}
+                                Current batch remaining: {remainingInAllModeBatch}
+                            </p>
+                        )}
                     </div>
                     <button
-                        onClick={loadQueuedRequests}
+                        onClick={() => {
+                            void loadQueuedRequests()
+                        }}
                         disabled={isLoadingQueue}
                         style={{ marginTop: 10, width: "100%", padding: "10px" }}>
                         {isLoadingQueue ? "Loading requests..." : "Load requests from DB"}
