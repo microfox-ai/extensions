@@ -1,5 +1,8 @@
 import { config } from "../../config"
 
+const SAME_FOLDER_SETTLE_MS = 1000
+const FOLDER_SWITCH_SETTLE_MS = 2000
+
 export function startMidjourneyWorkflow(
   prompt: string,
   useLastImage: boolean = false,
@@ -80,7 +83,7 @@ export function startMidjourneyWorkflow(
             normalizedTag,
             queueItemId
           )
-        }, 1000)
+        }, SAME_FOLDER_SETTLE_MS)
       })
       return
     }
@@ -111,7 +114,7 @@ export function startMidjourneyWorkflow(
                     normalizedTag,
                     queueItemId
                   )
-                }, 2000)
+                }, FOLDER_SWITCH_SETTLE_MS)
               }
               chrome.tabs.onUpdated.removeListener(listener)
             }
@@ -139,7 +142,7 @@ export function startMidjourneyWorkflow(
                 normalizedTag,
                 queueItemId
               )
-            }, 2000)
+            }, FOLDER_SWITCH_SETTLE_MS)
           }
           chrome.tabs.onUpdated.removeListener(listener)
         }
@@ -158,6 +161,7 @@ function executeWorkflow(
 ) {
   chrome.scripting.executeScript({
     target: { tabId: tabId },
+    world: "MAIN",
     func: (prompt, useLastImage, folderTag, queueItemId) => {
       // Function to click the Use button on the first container
       const clickUseButton = (): Promise<void> => {
@@ -479,7 +483,59 @@ function executeWorkflow(
         if (textarea) {
           try {
             const w = window as any
-            if (!w.__mjOriginalFetch) {
+            const normalizePrompt = (value: string | null | undefined) =>
+              String(value || "")
+                .replace(/\s+/g, " ")
+                .trim()
+                .toLowerCase()
+            if (!w.__mjPendingSubmitContexts) {
+              w.__mjPendingSubmitContexts = []
+            }
+
+            const emitSubmitJobResult = (
+              jobId: string | null,
+              context?: {
+                prompt?: string
+                folderTag?: string
+                queueItemId?: string | null
+              },
+              source: "fetch" | "xhr" = "fetch"
+            ) => {
+              if (!jobId || typeof jobId !== "string") return
+
+              const queueItemIdForEvent =
+                typeof context?.queueItemId === "string"
+                  ? context.queueItemId
+                  : null
+
+              const key = `${jobId}::${String(queueItemIdForEvent || "")}`
+              if (!w.__mjEmittedSubmitJobKeys) {
+                w.__mjEmittedSubmitJobKeys = new Set<string>()
+              }
+              if (w.__mjEmittedSubmitJobKeys.has(key)) return
+              w.__mjEmittedSubmitJobKeys.add(key)
+
+              console.log("[get-into-zone][midjourney][network] emit job result", {
+                source,
+                jobId,
+                queueItemId: queueItemIdForEvent,
+                prompt: context?.prompt || null
+              })
+
+              window.postMessage(
+                {
+                  type: "MIDJOURNEY_SUBMIT_JOB_RESULT",
+                  jobId,
+                  prompt: context?.prompt || "",
+                  folderTag: context?.folderTag || "",
+                  queueItemId: queueItemIdForEvent
+                },
+                "*"
+              )
+            }
+
+            if (!w.__mjNetworkSubmitHookInstalled) {
+              w.__mjNetworkSubmitHookInstalled = true
               w.__mjOriginalFetch = window.fetch.bind(window)
               window.fetch = async (...args: [input: RequestInfo | URL, init?: RequestInit]) => {
                 const url =
@@ -489,8 +545,35 @@ function executeWorkflow(
                 const isSubmitJobs =
                   typeof url === "string" &&
                   url.includes("/api/submit-jobs")
+                let requestPrompt = ""
+                if (isSubmitJobs) {
+                  try {
+                    const initBody = args[1]?.body
+                    if (typeof initBody === "string") {
+                      const bodyJson = JSON.parse(initBody)
+                      requestPrompt =
+                        typeof bodyJson?.prompt === "string"
+                          ? bodyJson.prompt
+                          : ""
+                    } else if (args[0] instanceof Request) {
+                      const requestClone = args[0].clone()
+                      const textBody = await requestClone.text()
+                      if (textBody) {
+                        const bodyJson = JSON.parse(textBody)
+                        requestPrompt =
+                          typeof bodyJson?.prompt === "string"
+                            ? bodyJson.prompt
+                            : ""
+                      }
+                    }
+                  } catch {
+                    // ignore body parse errors
+                  }
+                }
+
                 const originalFetch: typeof fetch = w.__mjOriginalFetch
                 const response = await originalFetch(...args)
+
                 if (isSubmitJobs) {
                   try {
                     const cloned = response.clone()
@@ -503,27 +586,166 @@ function executeWorkflow(
                           data.success[0]?.job_id
                             ? data.success[0].job_id
                             : null
-                        if (jobId) {
-                          window.postMessage(
-                            {
-                              type: "MIDJOURNEY_SUBMIT_JOB_RESULT",
-                              jobId,
-                              prompt,
-                              folderTag,
-                              queueItemId: queueItemId || null
-                            },
-                            "*"
-                          )
+
+                        const requestPromptNormalized = normalizePrompt(requestPrompt)
+                        const pending = (w.__mjPendingSubmitContexts || []).filter(
+                          (ctx: any) => Date.now() - Number(ctx.createdAt || 0) < 180000
+                        )
+                        w.__mjPendingSubmitContexts = pending
+
+                        let contextIndex = -1
+                        if (requestPromptNormalized) {
+                          contextIndex = pending.findIndex((ctx: any) => {
+                            const expected = normalizePrompt(ctx.expectedPrompt || ctx.prompt)
+                            return (
+                              expected === requestPromptNormalized ||
+                              expected.includes(requestPromptNormalized) ||
+                              requestPromptNormalized.includes(expected)
+                            )
+                          })
                         }
+                        if (contextIndex < 0 && pending.length > 0) {
+                          contextIndex = 0
+                        }
+                        const matchedContext =
+                          contextIndex >= 0
+                            ? pending.splice(contextIndex, 1)[0]
+                            : null
+                        w.__mjPendingSubmitContexts = pending
+
+                        console.log("[get-into-zone][midjourney][network] fetch /api/submit-jobs", {
+                          requestPrompt,
+                          matchedQueueItemId: matchedContext?.queueItemId || null,
+                          jobId
+                        })
+
+                        emitSubmitJobResult(
+                          jobId,
+                          matchedContext
+                            ? {
+                                prompt: matchedContext.prompt || "",
+                                folderTag: matchedContext.folderTag || "",
+                                queueItemId: matchedContext.queueItemId || null
+                              }
+                            : undefined,
+                          "fetch"
+                        )
                       })
-                      .catch(() => {
-                        // ignore JSON parse errors
+                      .catch((error: any) => {
+                        console.log(
+                          "[get-into-zone][midjourney][network] fetch submit-jobs parse error",
+                          error?.message || error
+                        )
                       })
                   } catch {
                     // ignore clone/parse issues
                   }
                 }
                 return response
+              }
+
+              w.__mjOriginalXHROpen = XMLHttpRequest.prototype.open
+              w.__mjOriginalXHRSend = XMLHttpRequest.prototype.send
+
+              XMLHttpRequest.prototype.open = function (
+                method: string,
+                url: string | URL,
+                async?: boolean,
+                username?: string | null,
+                password?: string | null
+              ) {
+                ;(this as any).__mjUrl = String(url || "")
+                return w.__mjOriginalXHROpen.call(
+                  this,
+                  method,
+                  url,
+                  async,
+                  username,
+                  password
+                )
+              }
+
+              XMLHttpRequest.prototype.send = function (body?: Document | XMLHttpRequestBodyInit | null) {
+                const xhr = this as XMLHttpRequest & { __mjUrl?: string }
+                let requestPrompt = ""
+                try {
+                  if (typeof body === "string") {
+                    try {
+                      const bodyJson = JSON.parse(body)
+                      requestPrompt =
+                        typeof bodyJson?.prompt === "string"
+                          ? bodyJson.prompt
+                          : ""
+                    } catch {
+                      // ignore parse errors
+                    }
+                  }
+                  xhr.addEventListener("load", function () {
+                    const requestUrl = xhr.__mjUrl || ""
+                    if (!requestUrl.includes("/api/submit-jobs")) return
+                    try {
+                      const data = JSON.parse(xhr.responseText || "{}")
+                      const jobId =
+                        data?.success &&
+                        Array.isArray(data.success) &&
+                        data.success[0]?.job_id
+                          ? data.success[0].job_id
+                          : null
+
+                      const requestPromptNormalized = normalizePrompt(requestPrompt)
+                      const pending = (w.__mjPendingSubmitContexts || []).filter(
+                        (ctx: any) => Date.now() - Number(ctx.createdAt || 0) < 180000
+                      )
+                      w.__mjPendingSubmitContexts = pending
+
+                      let contextIndex = -1
+                      if (requestPromptNormalized) {
+                        contextIndex = pending.findIndex((ctx: any) => {
+                          const expected = normalizePrompt(ctx.expectedPrompt || ctx.prompt)
+                          return (
+                            expected === requestPromptNormalized ||
+                            expected.includes(requestPromptNormalized) ||
+                            requestPromptNormalized.includes(expected)
+                          )
+                        })
+                      }
+                      if (contextIndex < 0 && pending.length > 0) {
+                        contextIndex = 0
+                      }
+                      const matchedContext =
+                        contextIndex >= 0
+                          ? pending.splice(contextIndex, 1)[0]
+                          : null
+                      w.__mjPendingSubmitContexts = pending
+
+                      console.log("[get-into-zone][midjourney][network] xhr /api/submit-jobs", {
+                        requestPrompt,
+                        matchedQueueItemId: matchedContext?.queueItemId || null,
+                        jobId
+                      })
+
+                      emitSubmitJobResult(
+                        jobId,
+                        matchedContext
+                          ? {
+                              prompt: matchedContext.prompt || "",
+                              folderTag: matchedContext.folderTag || "",
+                              queueItemId: matchedContext.queueItemId || null
+                            }
+                          : undefined,
+                        "xhr"
+                      )
+                    } catch (error: any) {
+                      console.log(
+                        "[get-into-zone][midjourney][network] xhr submit-jobs parse error",
+                        error?.message || error
+                      )
+                    }
+                  })
+                } catch {
+                  // ignore listener issues
+                }
+                return w.__mjOriginalXHRSend.call(this, body as any)
               }
             }
           } catch (e) {
@@ -550,6 +772,47 @@ function executeWorkflow(
               const inputEvent = new Event("input", { bubbles: true })
               textarea.dispatchEvent(inputEvent)
 
+              const w = window as any
+              if (!w.__mjPendingSubmitContexts) {
+                w.__mjPendingSubmitContexts = []
+              }
+              w.__mjPendingSubmitContexts = (w.__mjPendingSubmitContexts || []).filter(
+                (ctx: any) => Date.now() - Number(ctx.createdAt || 0) < 180000
+              )
+              w.__mjPendingSubmitContexts.push({
+                prompt: String(prompt || ""),
+                expectedPrompt: String(prompt || "")
+                  .replace(/\s+/g, " ")
+                  .trim()
+                  .toLowerCase(),
+                folderTag: String(folderTag || ""),
+                queueItemId: typeof queueItemId === "string" ? queueItemId : null,
+                createdAt: Date.now()
+              })
+              console.log("[get-into-zone][midjourney][network] queued submit context", {
+                queueItemId: typeof queueItemId === "string" ? queueItemId : null,
+                prompt: String(prompt || "").slice(0, 140),
+                pendingCount: w.__mjPendingSubmitContexts.length
+              })
+              setTimeout(() => {
+                const pendingStillExists = (w.__mjPendingSubmitContexts || []).some(
+                  (ctx: any) =>
+                    ctx?.queueItemId ===
+                    (typeof queueItemId === "string" ? queueItemId : null)
+                )
+                if (pendingStillExists) {
+                  console.warn(
+                    "[get-into-zone][midjourney][network] pending context not resolved after 20s",
+                    {
+                      queueItemId:
+                        typeof queueItemId === "string" ? queueItemId : null,
+                      expectedPrompt: String(prompt || "").slice(0, 140),
+                      pendingCount: (w.__mjPendingSubmitContexts || []).length
+                    }
+                  )
+                }
+              }, 20000)
+
               setTimeout(() => {
                 textarea.dispatchEvent(
                   new KeyboardEvent("keydown", {
@@ -560,14 +823,6 @@ function executeWorkflow(
                   })
                 )
                 console.log("Workflow completed: prompt submitted.")
-
-                // After submitting the prompt, start watching the DOM
-                // for the corresponding job card and extract its job_id.
-                startDomWatcherForJobId(
-                  String(prompt),
-                  String(folderTag),
-                  typeof queueItemId === "string" ? queueItemId : undefined
-                )
               }, 500)
             },
             useLastImage ? 500 : 0
