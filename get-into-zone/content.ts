@@ -77,12 +77,12 @@ function injectSunoUploadUI() {
     })
 
     const tagLabel = document.createElement("label")
-    tagLabel.textContent = "Tag"
+    tagLabel.textContent = "Tags (comma-separated)"
     Object.assign(tagLabel.style, { fontSize: "11px", color: "rgba(255,255,255,0.6)", fontWeight: "500" })
 
     const tagInput = document.createElement("input")
     tagInput.type = "text"
-    tagInput.placeholder = "e.g. suno-remix"
+    tagInput.placeholder = "e.g. suno, remix, temp"
     Object.assign(tagInput.style, {
       padding: "8px 10px",
       fontSize: "12px",
@@ -183,6 +183,62 @@ function injectSunoUploadUI() {
         | HTMLAudioElement
         | null
       const finalAudioUrl = audioUrl || audioEl?.src || null
+      const playbarTitleAnchor = document.querySelector(
+        'a[aria-label^="Playbar: Title for "]'
+      ) as HTMLAnchorElement | null
+      const nearestSongAnchor = (document.querySelector(
+        'a[href*="/song/"]'
+      ) as HTMLAnchorElement | null) || songLink
+      const titleFromSongLink = nearestSongAnchor?.textContent?.trim() || ""
+      const titleFromPlaybarText = playbarTitleAnchor?.textContent?.trim() || ""
+      const titleFromPlaybarLabel = (
+        playbarTitleAnchor?.getAttribute("aria-label") || ""
+      )
+        .replace(/^Playbar:\s*Title for\s*/i, "")
+        .trim()
+      const title = (
+        titleFromPlaybarText ||
+        titleFromPlaybarLabel ||
+        titleFromSongLink
+      ).trim()
+      const copyLyricsButton = document.querySelector(
+        'button[aria-label="Copy lyrics to clipboard"]'
+      ) as HTMLButtonElement | null
+      const lyricsDisplayContainer = copyLyricsButton?.closest("div.css-x4if1z")
+      const lyricsDisplayText = (
+        (lyricsDisplayContainer?.querySelector(
+          ".pr-6"
+        ) as HTMLElement | null)?.innerText || ""
+      ).trim()
+      const lyricsTextarea =
+        (document.querySelector(
+          '[data-testid="lyrics-textarea"]'
+        ) as HTMLTextAreaElement | null) ||
+        (audioScope.querySelector(
+          '[data-testid="lyrics-textarea"]'
+        ) as HTMLTextAreaElement | null) ||
+        null
+      const sunoLyricsRaw = (
+        lyricsDisplayText ||
+        lyricsTextarea?.value ||
+        lyricsTextarea?.textContent ||
+        ""
+      ).trim()
+      const sunoLyricsFallback = (
+        (document.querySelector(
+          '[data-testid="lyrics-textarea"]'
+        ) as HTMLElement | null)?.innerText || ""
+      ).trim()
+      const sunoLyrics =
+        sunoLyricsRaw.length > 0
+          ? sunoLyricsRaw
+          : sunoLyricsFallback.length > 0
+          ? sunoLyricsFallback
+          : undefined
+      const tags = tagInput.value
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0)
 
       if (!finalAudioUrl) {
         uploadButton.disabled = false
@@ -193,31 +249,40 @@ function injectSunoUploadUI() {
 
       uploadButton.textContent = "Triggering worker..."
 
-      chrome.runtime.sendMessage(
-        {
-          action: "uploadSunoTrackToMediamake",
-          audioUrl: finalAudioUrl,
-          language: langInput.value.trim() || "en",
-          tag: tagInput.value.trim() || undefined
-        },
-        (response) => {
-          uploadButton.disabled = false
-          if (!response) {
-            uploadButton.textContent = "Upload to Mediamake"
-            alert("No response from extension. Check API Endpoint in Settings.")
-            return
+      chrome.storage.local.get(["selectedProjectId"], (storage) => {
+        chrome.runtime.sendMessage(
+          {
+            action: "uploadSunoTrackToMediamake",
+            audioUrl: finalAudioUrl,
+            language: langInput.value.trim() || "en",
+            tags: tags.length > 0 ? tags : undefined,
+            title: title || undefined,
+            sunoLyrics,
+            projectId:
+              typeof storage.selectedProjectId === "string" &&
+              storage.selectedProjectId.trim().length > 0
+                ? storage.selectedProjectId.trim()
+                : undefined
+          },
+          (response) => {
+            uploadButton.disabled = false
+            if (!response) {
+              uploadButton.textContent = "Upload to Mediamake"
+              alert("No response from extension. Check API Endpoint in Settings.")
+              return
+            }
+            if (!response.success) {
+              uploadButton.textContent = "Upload to Mediamake"
+              alert(response.message || "Failed to queue worker.")
+              return
+            }
+            uploadButton.textContent = "Worker queued!"
+            setTimeout(() => {
+              uploadButton.textContent = "Upload to Mediamake"
+            }, 3000)
           }
-          if (!response.success) {
-            uploadButton.textContent = "Upload to Mediamake"
-            alert(response.message || "Failed to queue worker.")
-            return
-          }
-          uploadButton.textContent = "Worker queued!"
-          setTimeout(() => {
-            uploadButton.textContent = "Upload to Mediamake"
-          }, 3000)
-        }
-      )
+        )
+      })
     })
 
     wrapper.appendChild(tagLabel)
