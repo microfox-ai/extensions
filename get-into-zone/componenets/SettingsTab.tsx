@@ -66,7 +66,13 @@ export function SettingsTab() {
 
   const saveSettings = () => {
     chrome.storage.local.set(
-      { apiEndpoint, tags, apiKey, isButtonEnabled, selectedProjectId },
+      {
+        apiEndpoint,
+        tags,
+        apiKey,
+        isButtonEnabled,
+        selectedProjectId
+      },
       () => {
         console.log("Settings saved")
       }
