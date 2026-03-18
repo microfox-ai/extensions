@@ -5,9 +5,12 @@ import {
 } from "./workflows/midjourney"
 import { startSunoWorkflow } from "./workflows/suno"
 
+const QUEUE_REQUEST_RATE_LIMIT_MS = 3000
+
 const updateQueueItemStatus = (
   queueItemId: string,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
+  onSuccess?: () => void
 ) => {
   if (!queueItemId) return
   chrome.storage.local.get(
@@ -55,11 +58,32 @@ const updateQueueItemStatus = (
 
         // Notify popup to refresh the queue list
         chrome.runtime.sendMessage({ action: "midjourneyQueueUpdated" })
+        onSuccess?.()
       })
       .catch((err) => {
         console.error("Failed to update midjourney queue item:", err)
       })
   })
+}
+
+const queueTriggerWaiters = new Map<string, () => void>()
+
+const waitForQueueItemTriggered = (queueItemId: string) =>
+  new Promise<void>((resolve) => {
+    console.log("[get-into-zone][queue] waiting for triggered status", {
+      queueItemId
+    })
+    queueTriggerWaiters.set(queueItemId, resolve)
+  })
+
+const resolveQueueItemTriggered = (queueItemId: string) => {
+  const resolve = queueTriggerWaiters.get(queueItemId)
+  if (!resolve) return
+  queueTriggerWaiters.delete(queueItemId)
+  console.log("[get-into-zone][queue] triggered wait resolved", {
+    queueItemId
+  })
+  resolve()
 }
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -99,8 +123,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           typeof request.audioUrl === "string" && request.audioUrl
             ? request.audioUrl
             : null
+        let title: string | null =
+          typeof request.title === "string" && request.title.trim().length > 0
+            ? request.title.trim()
+            : null
+        let sunoLyrics: string | null =
+          typeof request.sunoLyrics === "string" &&
+          request.sunoLyrics.trim().length > 0
+            ? request.sunoLyrics.trim()
+            : null
 
-        if (!audioUrl) {
+        if (!audioUrl || !title || !sunoLyrics) {
           const [tab] = await chrome.tabs.query({ url: "https://suno.com/*" })
           if (tab?.id) {
             try {
@@ -108,45 +141,78 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 await chrome.scripting.executeScript({
                   target: { tabId: tab.id },
                   func: () => {
-                    const buttons = Array.from(
-                      document.querySelectorAll("button")
-                    ) as HTMLButtonElement[]
-                    const remixButton = buttons.find((btn) =>
-                      btn.textContent?.trim().toLowerCase().includes("remix/edit")
-                    )
-                    if (!remixButton) return null
-                    const wrapperDiv = remixButton.closest("div.relative") as HTMLElement | null
-                    if (!wrapperDiv) return null
-                    const prev = wrapperDiv.previousElementSibling
-                    const prevText = (prev?.textContent?.trim() ?? "").toLowerCase()
-                    const isNextToAddCaption =
-                      prev != null && prevText.includes("add a caption")
-                    const isFullWidthPill =
-                      remixButton.classList.contains("w-full") ||
-                      /\bpy-\[13px\]\b/.test(remixButton.className) ||
-                      /\brounded-\[16px\]\b/.test(remixButton.className)
-                    if (!isNextToAddCaption && !isFullWidthPill) return null
-                    let current: HTMLElement | null = wrapperDiv
-                    let songLink: HTMLAnchorElement | null = null
-                    while (current && current !== document.body) {
-                      const candidate = current.querySelector('a[href*="/song/"]') as HTMLAnchorElement | null
-                      if (candidate) {
-                        songLink = candidate
-                        break
-                      }
-                      current = current.parentElement
-                    }
-                    const href = songLink?.getAttribute("href") || ""
+                    const playbarTitleAnchor = document.querySelector(
+                      'a[aria-label^="Playbar: Title for "]'
+                    ) as HTMLAnchorElement | null
+                    const fallbackSongAnchor = document.querySelector(
+                      'a[href*="/song/"]'
+                    ) as HTMLAnchorElement | null
+                    const href =
+                      playbarTitleAnchor?.getAttribute("href") ||
+                      fallbackSongAnchor?.getAttribute("href") ||
+                      ""
                     const lastSegment = href.split("/").filter(Boolean).pop() || ""
                     const songId = lastSegment.split("?")[0]?.trim() || null
                     const url = songId ? `https://cdn1.suno.ai/${songId}.m4a` : null
-                    const audioEl = (wrapperDiv.closest("aside") || wrapperDiv.closest("div"))?.querySelector("audio") as HTMLAudioElement | null
-                    return { audioUrl: url || audioEl?.src || null }
+                    const audioEl = document.querySelector("audio") as
+                      | HTMLAudioElement
+                      | null
+                    const titleFromPlaybarText =
+                      playbarTitleAnchor?.textContent?.trim() || ""
+                    const titleFromPlaybarLabel = (
+                      playbarTitleAnchor?.getAttribute("aria-label") || ""
+                    )
+                      .replace(/^Playbar:\s*Title for\s*/i, "")
+                      .trim()
+                    const titleFromSongAnchor =
+                      fallbackSongAnchor?.textContent?.trim() || ""
+                    const finalTitle =
+                      titleFromPlaybarText ||
+                      titleFromPlaybarLabel ||
+                      titleFromSongAnchor ||
+                      null
+                    const copyLyricsButton = document.querySelector(
+                      'button[aria-label="Copy lyrics to clipboard"]'
+                    ) as HTMLButtonElement | null
+                    const lyricsDisplayContainer = copyLyricsButton?.closest(
+                      "div.css-x4if1z"
+                    )
+                    const lyricsDisplayText = (
+                      (lyricsDisplayContainer?.querySelector(
+                        ".pr-6"
+                      ) as HTMLElement | null)?.innerText || ""
+                    ).trim()
+                    const lyricsTextarea = document.querySelector(
+                      '[data-testid="lyrics-textarea"]'
+                    ) as HTMLTextAreaElement | null
+                    const lyricsFromTextarea = (
+                      lyricsDisplayText ||
+                      lyricsTextarea?.value ||
+                      lyricsTextarea?.textContent ||
+                      ""
+                    ).trim()
+                    const lyricsFromInnerText = (
+                      (document.querySelector(
+                        '[data-testid="lyrics-textarea"]'
+                      ) as HTMLElement | null)?.innerText || ""
+                    ).trim()
+                    const lyrics =
+                      lyricsFromTextarea.length > 0
+                        ? lyricsFromTextarea
+                        : lyricsFromInnerText
+
+                    return {
+                      audioUrl: url || audioEl?.src || null,
+                      title: finalTitle,
+                      sunoLyrics: lyrics || null
+                    }
                   }
                 })
-              audioUrl = scrapeResult?.audioUrl || null
+              audioUrl = audioUrl || scrapeResult?.audioUrl || null
+              title = title || scrapeResult?.title || null
+              sunoLyrics = sunoLyrics || scrapeResult?.sunoLyrics || null
             } catch {
-              audioUrl = null
+              // Keep whatever values we already had from the request payload.
             }
           }
         }
@@ -167,9 +233,30 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         }
 
         const projectId =
-          typeof result.selectedProjectId === "string"
-            ? result.selectedProjectId
+          typeof result.selectedProjectId === "string" &&
+          result.selectedProjectId.trim() !== ""
+            ? result.selectedProjectId.trim()
+            : typeof request.projectId === "string" &&
+              request.projectId.trim() !== ""
+            ? request.projectId.trim()
             : undefined
+        const tags = Array.isArray(request.tags)
+          ? request.tags
+              .map((entry: unknown) =>
+                typeof entry === "string" ? entry.trim() : ""
+              )
+              .filter((entry: string) => entry.length > 0)
+          : typeof request.tags === "string"
+          ? request.tags
+              .split(",")
+              .map((entry: string) => entry.trim())
+              .filter((entry: string) => entry.length > 0)
+          : typeof request.tag === "string"
+          ? request.tag
+              .split(",")
+              .map((entry: string) => entry.trim())
+              .filter((entry: string) => entry.length > 0)
+          : []
 
         const uploadUrl = `${baseUrl.replace(/\/+$/, "")}/api/workflows/workers/transcriber`
 
@@ -181,9 +268,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               input: {
                 audioUrl,
                 language: request.language || "en",
-                tag: request.tag,
-                projectId,
-                clientId: "default"
+                tags: tags.length > 0 ? tags : undefined,
+                title: title || undefined,
+                sunoLyrics: sunoLyrics || undefined,
+                projectId
               },
               await: false
             })
@@ -342,7 +430,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         sendResponse({ status: "No active tab" })
         return
       }
-      const { requests, delay, folderTag, maxQueueSize } = request
+      const { requests, delay, folderTag, overwriteQueueFolder, maxQueueSize } = request
       if (!Array.isArray(requests) || requests.length === 0) {
         sendResponse({ status: "No requests to process" })
         return
@@ -380,17 +468,52 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           }
 
           let effectiveFolderTag = ""
-          if (typeof folderTag === "string" && folderTag.trim().length > 0) {
+          const hasQueueFolderInput =
+            typeof folderTag === "string" && folderTag.trim().length > 0
+          const shouldOverridePerItemFolder = Boolean(overwriteQueueFolder)
+
+          if (shouldOverridePerItemFolder && hasQueueFolderInput) {
+            effectiveFolderTag = folderTag.trim()
+          } else if (
+            typeof item?.folder === "string" &&
+            item.folder.trim().length > 0
+          ) {
+            effectiveFolderTag = item.folder.trim()
+          } else if (hasQueueFolderInput) {
+            // Fallback folder when queue item does not have a saved folder.
             effectiveFolderTag = folderTag.trim()
           }
 
           try {
+            const queueItemId =
+              item && typeof item.id === "string" ? item.id : undefined
+            const waitForTriggered = queueItemId
+              ? waitForQueueItemTriggered(queueItemId)
+              : null
+            if (queueItemId) {
+              console.log("[get-into-zone][queue] starting workflow for queue item", {
+                queueItemId,
+                effectiveFolderTag,
+                promptPreview: String(promptText).slice(0, 120)
+              })
+            }
+
             startMidjourneyWorkflow(
               promptText,
               request.useLastImage || false,
               effectiveFolderTag || "",
-              item && typeof item.id === "string" ? item.id : undefined
+              queueItemId
             )
+
+            if (waitForTriggered) {
+              waitForTriggered.then(() => {
+                currentIndex++
+                if (currentIndex < requests.length) {
+                  setTimeout(processNext, QUEUE_REQUEST_RATE_LIMIT_MS)
+                }
+              })
+              return
+            }
           } catch (err: any) {
             console.error(
               "Failed to start Midjourney workflow for queued item:",
@@ -403,12 +526,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                   (err && err.message) ||
                   "Failed to start Midjourney workflow"
               })
+              resolveQueueItemTriggered(item.id)
             }
           }
 
           currentIndex++
           if (currentIndex < requests.length) {
-            setTimeout(processNext, delayMs)
+            setTimeout(
+              processNext,
+              Math.max(delayMs, QUEUE_REQUEST_RATE_LIMIT_MS)
+            )
           }
         })
       }
@@ -451,6 +578,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         jobId,
         folder: typeof folderTag === "string" ? folderTag : null,
         triggeredAt: new Date().toISOString()
+      }, () => {
+        resolveQueueItemTriggered(queueItemId)
       })
     }
   }
