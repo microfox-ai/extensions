@@ -3,7 +3,7 @@ import { useEffect, useState } from "react"
 export function SunoTab() {
   const [sunoData, setSunoData] = useState("")
   const [isLoadingSuno, setIsLoadingSuno] = useState(false)
-  const [tag, setTag] = useState("")
+  const [tags, setTags] = useState("")
   const [language, setLanguage] = useState("en")
   const [isUploading, setIsUploading] = useState(false)
   const [statusMessage, setStatusMessage] = useState("")
@@ -39,12 +39,12 @@ export function SunoTab() {
       <div style={{ marginTop: 16 }}>
         <h3>Upload current remix to Mediamake</h3>
         <div style={{ marginTop: 8 }}>
-          <label>Tag:</label>
+          <label>Tags (comma-separated):</label>
           <input
             type="text"
-            value={tag}
-            onChange={(e) => setTag(e.target.value)}
-            placeholder="e.g., suno-remix"
+            value={tags}
+            onChange={(e) => setTags(e.target.value)}
+            placeholder="e.g., suno, remix, temp"
             style={{
               width: "100%",
               padding: "8px",
@@ -75,7 +75,7 @@ export function SunoTab() {
             chrome.runtime.sendMessage(
               {
                 action: "uploadSunoTrackToMediamake",
-                tag: tag.trim() || undefined,
+                tags: tags.trim() || undefined,
                 language: language.trim() || "en"
               },
               (response) => {
