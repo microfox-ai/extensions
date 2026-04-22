@@ -1,11 +1,26 @@
 console.log("Content script loaded.")
 
 let isButtonFeatureEnabled = true
+const isPinterestPage =
+  /(^|\.)pinterest\./i.test(window.location.hostname) ||
+  window.location.hostname === "pin.it" ||
+  window.location.hostname.endsWith(".pin.it")
 
 // Track which media elements already have buttons to prevent duplicates
 const mediaElementsWithButtons = new WeakMap<
   HTMLImageElement | HTMLVideoElement,
   HTMLElement
+>()
+const pinterestOverlays = new WeakMap<HTMLImageElement, HTMLElement>()
+const pinterestResultPanels = new WeakMap<HTMLImageElement, HTMLElement>()
+const pinterestAnalysisCache = new WeakMap<
+  HTMLImageElement,
+  {
+    description?: string
+    keywords?: string[]
+    artStyle?: string[]
+    audienceKeywords?: string[]
+  }
 >()
 
 chrome.storage.local.get("isButtonEnabled", (result) => {
@@ -338,9 +353,561 @@ window.addEventListener("message", (event) => {
   }
 })
 
+function removePinterestPanel(mediaElement: HTMLImageElement) {
+  const panel = pinterestResultPanels.get(mediaElement)
+  if (panel && panel.parentElement) {
+    panel.parentElement.removeChild(panel)
+  }
+  pinterestResultPanels.delete(mediaElement)
+}
+
+function renderPinterestPanel(
+  mediaElement: HTMLImageElement,
+  status: "loading" | "success" | "error",
+  content: { title: string; description?: string; keywords?: string[] }
+) {
+  removePinterestPanel(mediaElement)
+  const panel = document.createElement("div")
+  panel.className = "media-save-button"
+  panel.setAttribute("data-mm-overlay-type", "pinterest-analysis")
+  panel.style.position = "absolute"
+  panel.style.zIndex = "10001"
+  panel.style.maxWidth = "320px"
+  panel.style.padding = "10px"
+  panel.style.borderRadius = "10px"
+  panel.style.border = "1px solid rgba(255,255,255,0.18)"
+  panel.style.background =
+    status === "error"
+      ? "rgba(112, 28, 28, 0.96)"
+      : "rgba(15, 23, 42, 0.95)"
+  panel.style.color = "white"
+  panel.style.fontSize = "12px"
+  panel.style.lineHeight = "1.4"
+  panel.style.boxShadow = "0 8px 20px rgba(0,0,0,0.35)"
+
+  const rect = mediaElement.getBoundingClientRect()
+  panel.style.left = `${window.scrollX + rect.left}px`
+  panel.style.top = `${window.scrollY + rect.top}px`
+
+  const header = document.createElement("div")
+  header.style.display = "flex"
+  header.style.alignItems = "center"
+  header.style.justifyContent = "space-between"
+  header.style.gap = "8px"
+  header.style.marginBottom = "6px"
+
+  const title = document.createElement("div")
+  title.style.fontWeight = "600"
+  title.style.flex = "1"
+  title.innerText = content.title
+  header.appendChild(title)
+
+  if (content.description && content.description.trim().length > 0) {
+    const copyButton = document.createElement("button")
+    copyButton.innerText = "📋"
+    copyButton.title = "Copy description"
+    copyButton.style.border = "1px solid rgba(255,255,255,0.3)"
+    copyButton.style.borderRadius = "6px"
+    copyButton.style.background = "rgba(255,255,255,0.1)"
+    copyButton.style.color = "#fff"
+    copyButton.style.cursor = "pointer"
+    copyButton.style.fontSize = "12px"
+    copyButton.style.padding = "2px 6px"
+    copyButton.style.lineHeight = "1.1"
+
+    copyButton.addEventListener("click", async (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      const textToCopy = content.description || ""
+      try {
+        await navigator.clipboard.writeText(textToCopy)
+      } catch {
+        const textArea = document.createElement("textarea")
+        textArea.value = textToCopy
+        textArea.style.position = "fixed"
+        textArea.style.opacity = "0"
+        document.body.appendChild(textArea)
+        textArea.select()
+        document.execCommand("copy")
+        document.body.removeChild(textArea)
+      }
+      const oldLabel = copyButton.innerText
+      copyButton.innerText = "✓"
+      window.setTimeout(() => {
+        copyButton.innerText = oldLabel
+      }, 1200)
+    })
+
+    header.appendChild(copyButton)
+  }
+
+  panel.appendChild(header)
+
+  if (content.description) {
+    const description = document.createElement("div")
+    description.style.marginBottom = "6px"
+    description.innerText = content.description
+    panel.appendChild(description)
+  }
+
+  if (content.keywords && content.keywords.length > 0) {
+    const keywords = document.createElement("div")
+    keywords.style.opacity = "0.9"
+    keywords.innerText = `Keywords: ${content.keywords.slice(0, 8).join(", ")}`
+    panel.appendChild(keywords)
+  }
+
+  document.body.appendChild(panel)
+  pinterestResultPanels.set(mediaElement, panel)
+
+  if (status !== "loading") {
+    window.setTimeout(() => {
+      removePinterestPanel(mediaElement)
+    }, 8000)
+  }
+}
+
+function setPinterestButtonState(
+  button: HTMLButtonElement,
+  text: string,
+  disabled: boolean
+) {
+  button.innerText = text
+  button.disabled = disabled
+  button.style.opacity = disabled ? "0.7" : "1"
+  button.style.cursor = disabled ? "default" : "pointer"
+}
+
+function queueSparkboardUpload(
+  payload: {
+    sourceUrl: string
+    pageUrl: string
+    tags: string[]
+    metadata: Record<string, unknown>
+  },
+  onDone: (ok: boolean, message: string) => void
+) {
+  chrome.runtime.sendMessage(
+    {
+      action: "queueSparkboardIndex",
+      sourceUrl: payload.sourceUrl,
+      tags: payload.tags,
+      contentMimeType: "image/jpeg",
+      contentSubType: "general",
+      contentSource: "web",
+      contentSourceUrl: payload.pageUrl,
+      metadata: payload.metadata || {},
+      analyzeImage: false,
+      generateDescription: false,
+      generateKeywords: false
+    },
+    (response) => {
+      if (!response?.success) {
+        onDone(false, response?.message || "Failed to queue sparkboard worker.")
+        return
+      }
+      onDone(true, "Queued for upload/indexing.")
+    }
+  )
+}
+
+function handlePinterestUpload(
+  mediaElement: HTMLImageElement,
+  withAi: boolean,
+  withAiButton: HTMLButtonElement,
+  noAiButton: HTMLButtonElement,
+  viewAiButton: HTMLButtonElement
+) {
+  setPinterestButtonState(withAiButton, withAi ? "Analyzing..." : "Save + AI", true)
+  setPinterestButtonState(noAiButton, withAi ? "Save (No AI)" : "Uploading...", true)
+
+  const prompt = mediaElement.alt || ""
+  chrome.storage.local.get(["tags"], (result) => {
+    const storedTags =
+      typeof result.tags === "string"
+        ? result.tags
+            .split(",")
+            .map((tag: string) => tag.trim())
+            .filter((tag: string) => tag.length > 0)
+        : []
+    const payloadTags =
+      storedTags.length > 0 ? storedTags : ["pinterest", "extension-upload"]
+
+    const queueNow = (metadata: Record<string, unknown>, successTitle: string) => {
+      queueSparkboardUpload(
+        {
+          sourceUrl: mediaElement.src,
+          pageUrl: window.location.href,
+          tags: payloadTags,
+          metadata
+        },
+        (ok, message) => {
+          if (ok) {
+            renderPinterestPanel(mediaElement, "success", {
+              title: successTitle,
+              description: message,
+              keywords: Array.isArray(metadata.keywords)
+                ? (metadata.keywords as string[])
+                : []
+            })
+            setPinterestButtonState(withAiButton, "Done", true)
+            setPinterestButtonState(noAiButton, "Done", true)
+            window.setTimeout(() => {
+              setPinterestButtonState(withAiButton, "Save + AI", false)
+              setPinterestButtonState(noAiButton, "Save (No AI)", false)
+            }, 1800)
+            return
+          }
+
+          renderPinterestPanel(mediaElement, "error", {
+            title: "Worker queue failed",
+            description: message
+          })
+          setPinterestButtonState(withAiButton, "Save + AI", false)
+          setPinterestButtonState(noAiButton, "Save (No AI)", false)
+        }
+      )
+    }
+
+    if (!withAi) {
+      renderPinterestPanel(mediaElement, "loading", {
+        title: "Queueing upload/index worker..."
+      })
+      queueNow(
+        {
+          platform: "web",
+          platformId: "web",
+          platformUrl: window.location.href,
+          imageLink: mediaElement.src,
+          src: mediaElement.src
+        },
+        "Uploaded without AI generation"
+      )
+      return
+    }
+
+    chrome.runtime.sendMessage(
+      {
+        action: "analyzeImageWithApi",
+        imageUrl: mediaElement.src,
+        pageUrl: window.location.href,
+        imageAlt: mediaElement.alt || "",
+        prompt,
+        tags: payloadTags
+      },
+      (response) => {
+        if (!response?.success) {
+          renderPinterestPanel(mediaElement, "error", {
+            title: "AI analysis failed",
+            description: response?.message || "Request failed."
+          })
+          setPinterestButtonState(withAiButton, "Save + AI", false)
+          setPinterestButtonState(noAiButton, "Save (No AI)", false)
+          return
+        }
+
+        const apiData = response.data?.data || response.data
+        const analysis = apiData?.analysis
+        if (!analysis) {
+          renderPinterestPanel(mediaElement, "error", {
+            title: "AI analysis failed",
+            description: "No AI analysis was returned."
+          })
+          setPinterestButtonState(withAiButton, "Save + AI", false)
+          setPinterestButtonState(noAiButton, "Save (No AI)", false)
+          return
+        }
+
+        pinterestAnalysisCache.set(mediaElement, analysis)
+        setPinterestButtonState(viewAiButton, "View AI", false)
+
+        renderPinterestPanel(mediaElement, "loading", {
+          title: "AI complete. Queueing upload/index worker...",
+          description: analysis.description || "",
+          keywords: analysis.keywords || []
+        })
+
+        queueNow(
+          {
+            description: analysis.description,
+            keywords: analysis.keywords || [],
+            artStyle: analysis.artStyle || [],
+            audienceKeywords: analysis.audienceKeywords || [],
+            platform: "web",
+            platformId: "web",
+            platformUrl: window.location.href,
+            imageLink: mediaElement.src,
+            src: mediaElement.src
+          },
+          "Uploaded with AI metadata"
+        )
+      }
+    )
+  })
+}
+
+function handlePinterestAnalyzeOnly(
+  mediaElement: HTMLImageElement,
+  aiOnlyButton: HTMLButtonElement,
+  withAiButton: HTMLButtonElement,
+  noAiButton: HTMLButtonElement,
+  viewAiButton: HTMLButtonElement
+) {
+  setPinterestButtonState(aiOnlyButton, "Analyzing...", true)
+  setPinterestButtonState(withAiButton, "Save + AI", true)
+  setPinterestButtonState(noAiButton, "Save (No AI)", true)
+
+  const prompt = mediaElement.alt || ""
+  chrome.storage.local.get(["tags"], (result) => {
+    const storedTags =
+      typeof result.tags === "string"
+        ? result.tags
+            .split(",")
+            .map((tag: string) => tag.trim())
+            .filter((tag: string) => tag.length > 0)
+        : []
+    const payloadTags =
+      storedTags.length > 0 ? storedTags : ["pinterest", "analysis-only"]
+
+    renderPinterestPanel(mediaElement, "loading", {
+      title: "Running AI analysis only..."
+    })
+
+    chrome.runtime.sendMessage(
+      {
+        action: "analyzeImageWithApi",
+        imageUrl: mediaElement.src,
+        pageUrl: window.location.href,
+        imageAlt: mediaElement.alt || "",
+        prompt,
+        tags: payloadTags
+      },
+      (response) => {
+        if (!response?.success) {
+          renderPinterestPanel(mediaElement, "error", {
+            title: "AI analysis failed",
+            description: response?.message || "Request failed."
+          })
+          setPinterestButtonState(aiOnlyButton, "AI Only", false)
+          setPinterestButtonState(withAiButton, "Save + AI", false)
+          setPinterestButtonState(noAiButton, "Save (No AI)", false)
+          return
+        }
+
+        const apiData = response.data?.data || response.data
+        const analysis = apiData?.analysis
+        if (!analysis) {
+          renderPinterestPanel(mediaElement, "error", {
+            title: "AI analysis failed",
+            description: "No AI analysis was returned."
+          })
+          setPinterestButtonState(aiOnlyButton, "AI Only", false)
+          setPinterestButtonState(withAiButton, "Save + AI", false)
+          setPinterestButtonState(noAiButton, "Save (No AI)", false)
+          return
+        }
+
+        pinterestAnalysisCache.set(mediaElement, analysis)
+        setPinterestButtonState(viewAiButton, "View AI", false)
+        renderPinterestPanel(mediaElement, "success", {
+          title: "AI analysis ready (not saved)",
+          description: analysis.description || "",
+          keywords: analysis.keywords || []
+        })
+
+        setPinterestButtonState(aiOnlyButton, "Done", true)
+        setPinterestButtonState(withAiButton, "Save + AI", false)
+        setPinterestButtonState(noAiButton, "Save (No AI)", false)
+        window.setTimeout(() => {
+          setPinterestButtonState(aiOnlyButton, "AI Only", false)
+        }, 1500)
+      }
+    )
+  })
+}
+
+function createPinterestOverlay(mediaElement: HTMLImageElement) {
+  if (pinterestOverlays.has(mediaElement)) {
+    return pinterestOverlays.get(mediaElement)!
+  }
+  if (!mediaElement.src || mediaElement.src === "") {
+    return null
+  }
+
+  const wrapper = document.createElement("div")
+  wrapper.className = "media-save-button"
+  wrapper.setAttribute("data-mm-overlay-type", "pinterest-actions")
+  wrapper.style.position = "absolute"
+  wrapper.style.zIndex = "10000"
+  wrapper.style.display = "none"
+  wrapper.style.flexDirection = "column"
+  wrapper.style.gap = "6px"
+  wrapper.style.padding = "8px"
+  wrapper.style.borderRadius = "10px"
+  wrapper.style.background = "rgba(0,0,0,0.72)"
+  wrapper.style.boxShadow = "0 6px 16px rgba(0,0,0,0.3)"
+  document.body.appendChild(wrapper)
+  pinterestOverlays.set(mediaElement, wrapper)
+
+  const withAiButton = document.createElement("button")
+  withAiButton.innerText = "Save + AI"
+  withAiButton.style.border = "none"
+  withAiButton.style.borderRadius = "7px"
+  withAiButton.style.padding = "6px 9px"
+  withAiButton.style.fontSize = "12px"
+  withAiButton.style.fontWeight = "600"
+  withAiButton.style.background = "#2563eb"
+  withAiButton.style.color = "#fff"
+  withAiButton.style.cursor = "pointer"
+
+  const withoutAiButton = document.createElement("button")
+  withoutAiButton.innerText = "Save (No AI)"
+  withoutAiButton.style.border = "1px solid rgba(255,255,255,0.4)"
+  withoutAiButton.style.borderRadius = "7px"
+  withoutAiButton.style.padding = "6px 9px"
+  withoutAiButton.style.fontSize = "12px"
+  withoutAiButton.style.fontWeight = "600"
+  withoutAiButton.style.background = "rgba(255,255,255,0.09)"
+  withoutAiButton.style.color = "#fff"
+  withoutAiButton.style.cursor = "pointer"
+
+  const aiOnlyButton = document.createElement("button")
+  aiOnlyButton.innerText = "AI Only"
+  aiOnlyButton.style.border = "1px solid rgba(16,185,129,0.6)"
+  aiOnlyButton.style.borderRadius = "7px"
+  aiOnlyButton.style.padding = "6px 9px"
+  aiOnlyButton.style.fontSize = "12px"
+  aiOnlyButton.style.fontWeight = "600"
+  aiOnlyButton.style.background = "rgba(16,185,129,0.16)"
+  aiOnlyButton.style.color = "#d1fae5"
+  aiOnlyButton.style.cursor = "pointer"
+
+  const viewAiButton = document.createElement("button")
+  viewAiButton.innerText = "View AI"
+  viewAiButton.style.border = "1px solid rgba(96,165,250,0.65)"
+  viewAiButton.style.borderRadius = "7px"
+  viewAiButton.style.padding = "6px 9px"
+  viewAiButton.style.fontSize = "12px"
+  viewAiButton.style.fontWeight = "600"
+  viewAiButton.style.background = "rgba(37,99,235,0.15)"
+  viewAiButton.style.color = "#dbeafe"
+  viewAiButton.style.cursor = "pointer"
+  viewAiButton.disabled = !pinterestAnalysisCache.has(mediaElement)
+  if (viewAiButton.disabled) {
+    viewAiButton.style.opacity = "0.65"
+    viewAiButton.innerText = "View AI (none)"
+  }
+
+  withAiButton.addEventListener("click", () =>
+    handlePinterestUpload(
+      mediaElement,
+      true,
+      withAiButton,
+      withoutAiButton,
+      viewAiButton
+    )
+  )
+  withoutAiButton.addEventListener("click", () =>
+    handlePinterestUpload(
+      mediaElement,
+      false,
+      withAiButton,
+      withoutAiButton,
+      viewAiButton
+    )
+  )
+  aiOnlyButton.addEventListener("click", () =>
+    handlePinterestAnalyzeOnly(
+      mediaElement,
+      aiOnlyButton,
+      withAiButton,
+      withoutAiButton,
+      viewAiButton
+    )
+  )
+  viewAiButton.addEventListener("click", () => {
+    const analysis = pinterestAnalysisCache.get(mediaElement)
+    if (!analysis) {
+      renderPinterestPanel(mediaElement, "error", {
+        title: "No AI analysis yet",
+        description: "Use Save + AI or AI Only first to generate analysis."
+      })
+      return
+    }
+    renderPinterestPanel(mediaElement, "success", {
+      title: "AI analysis",
+      description: analysis.description || "",
+      keywords: analysis.keywords || []
+    })
+  })
+
+  wrapper.appendChild(withAiButton)
+  wrapper.appendChild(withoutAiButton)
+  wrapper.appendChild(aiOnlyButton)
+  wrapper.appendChild(viewAiButton)
+
+  const setPosition = () => {
+    const rect = mediaElement.getBoundingClientRect()
+    if (rect.width > 0 && rect.height > 0) {
+      wrapper.style.left = `${window.scrollX + rect.left}px`
+      wrapper.style.top = `${window.scrollY + rect.top}px`
+      const panel = pinterestResultPanels.get(mediaElement)
+      if (panel) {
+        panel.style.left = `${window.scrollX + rect.left}px`
+        panel.style.top = `${window.scrollY + rect.top + 60}px`
+      }
+    }
+  }
+
+  const updatePosition = () => {
+    if (wrapper.style.display !== "none") setPosition()
+  }
+  window.addEventListener("scroll", updatePosition, true)
+  window.addEventListener("resize", updatePosition)
+
+  let hideTimeout: number
+  const show = () => {
+    if (!isButtonFeatureEnabled) {
+      wrapper.style.display = "none"
+      return
+    }
+    if (mediaElement.clientWidth < 50 || mediaElement.clientHeight < 50) {
+      return
+    }
+    clearTimeout(hideTimeout)
+    wrapper.style.display = "flex"
+    setPosition()
+  }
+  const hide = () => {
+    hideTimeout = window.setTimeout(() => {
+      wrapper.style.display = "none"
+    }, 240)
+  }
+  mediaElement.addEventListener("mouseenter", show)
+  mediaElement.addEventListener("mouseleave", hide)
+  wrapper.addEventListener("mouseenter", show)
+  wrapper.addEventListener("mouseleave", hide)
+
+  return wrapper
+}
+
+function processPinterestMediaElements() {
+  const mediaElements = document.querySelectorAll("img")
+  mediaElements.forEach((element) => {
+    if (element instanceof HTMLImageElement) {
+      createPinterestOverlay(element)
+    }
+  })
+}
+
 function createOverlayButton(
   mediaElement: HTMLImageElement | HTMLVideoElement
 ) {
+  // Never show legacy single Save overlay on Pinterest pages.
+  if (isPinterestPage) {
+    return null
+  }
+
   // Skip if button already exists for this element
   if (mediaElementsWithButtons.has(mediaElement)) {
     return mediaElementsWithButtons.get(mediaElement)!
@@ -557,34 +1124,55 @@ function processMediaElements() {
   })
 }
 
-// Initial run
-processMediaElements()
-
-// Set up a MutationObserver to watch for new media elements being added to the DOM
-const observer = new MutationObserver((mutations) => {
-  mutations.forEach((mutation) => {
-    mutation.addedNodes.forEach((node) => {
-      if (
-        node instanceof HTMLImageElement ||
-        node instanceof HTMLVideoElement
-      ) {
-        // Create button for new images/videos on any website
-        createOverlayButton(node)
-      } else if (node.nodeType === 1) {
-        // Element node - check for nested media elements
-        const mediaInNode = (node as Element).querySelectorAll("img, video")
-        mediaInNode.forEach((media) => {
-          if (
-            media instanceof HTMLImageElement ||
-            media instanceof HTMLVideoElement
-          ) {
-            // Create button for nested images/videos on any website
-            createOverlayButton(media)
-          }
-        })
-      }
+if (isPinterestPage) {
+  processPinterestMediaElements()
+  const pinterestObserver = new MutationObserver((mutations) => {
+    mutations.forEach((mutation) => {
+      mutation.addedNodes.forEach((node) => {
+        if (node instanceof HTMLImageElement) {
+          createPinterestOverlay(node)
+        } else if (node.nodeType === 1) {
+          const mediaInNode = (node as Element).querySelectorAll("img")
+          mediaInNode.forEach((media) => {
+            if (media instanceof HTMLImageElement) {
+              createPinterestOverlay(media)
+            }
+          })
+        }
+      })
     })
   })
-})
+  pinterestObserver.observe(document.body, { childList: true, subtree: true })
+} else {
+  // Initial run
+  processMediaElements()
 
-observer.observe(document.body, { childList: true, subtree: true })
+  // Set up a MutationObserver to watch for new media elements being added to the DOM
+  const observer = new MutationObserver((mutations) => {
+    mutations.forEach((mutation) => {
+      mutation.addedNodes.forEach((node) => {
+        if (
+          node instanceof HTMLImageElement ||
+          node instanceof HTMLVideoElement
+        ) {
+          // Create button for new images/videos on any website
+          createOverlayButton(node)
+        } else if (node.nodeType === 1) {
+          // Element node - check for nested media elements
+          const mediaInNode = (node as Element).querySelectorAll("img, video")
+          mediaInNode.forEach((media) => {
+            if (
+              media instanceof HTMLImageElement ||
+              media instanceof HTMLVideoElement
+            ) {
+              // Create button for nested images/videos on any website
+              createOverlayButton(media)
+            }
+          })
+        }
+      })
+    })
+  })
+
+  observer.observe(document.body, { childList: true, subtree: true })
+}
