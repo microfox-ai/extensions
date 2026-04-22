@@ -495,7 +495,8 @@ function queueSparkboardUpload(
       contentMimeType: "image/jpeg",
       contentSubType: "general",
       contentSource: "web",
-      contentSourceUrl: payload.pageUrl,
+      // Use the actual media source URL for dedupe, not page URL.
+      contentSourceUrl: payload.sourceUrl,
       metadata: payload.metadata || {},
       analyzeImage: false,
       generateDescription: false,
