@@ -55,7 +55,8 @@ function findSidebarRemixEditButton(): HTMLButtonElement | null {
     if (!wrapperDiv) continue
     const prev = wrapperDiv.previousElementSibling
     const prevText = (prev?.textContent?.trim() ?? "").toLowerCase()
-    const isNextToAddCaption = prev != null && prevText.includes("add a caption")
+    const isNextToAddCaption =
+      prev != null && prevText.includes("add a caption")
     const isFullWidthPill =
       btn.classList.contains("w-full") ||
       /\bpy-\[13px\]\b/.test(btn.className) ||
@@ -73,7 +74,11 @@ function injectSunoUploadUI() {
     const wrapperDiv = remixButton.closest("div.relative")
     if (!wrapperDiv) return
     // Avoid double inject: check if we already added our block after this div
-    if (wrapperDiv.nextElementSibling?.hasAttribute?.("data-mediamake-suno-upload")) {
+    if (
+      wrapperDiv.nextElementSibling?.hasAttribute?.(
+        "data-mediamake-suno-upload"
+      )
+    ) {
       return
     }
 
@@ -92,8 +97,12 @@ function injectSunoUploadUI() {
     })
 
     const tagLabel = document.createElement("label")
-    tagLabel.textContent = "Tags (comma-separated)"
-    Object.assign(tagLabel.style, { fontSize: "11px", color: "rgba(255,255,255,0.6)", fontWeight: "500" })
+    tagLabel.textContent = "Tags (comma-separated) - used in saving images"
+    Object.assign(tagLabel.style, {
+      fontSize: "11px",
+      color: "rgba(255,255,255,0.6)",
+      fontWeight: "500"
+    })
 
     const tagInput = document.createElement("input")
     tagInput.type = "text"
@@ -112,7 +121,11 @@ function injectSunoUploadUI() {
 
     const langLabel = document.createElement("label")
     langLabel.textContent = "Language"
-    Object.assign(langLabel.style, { fontSize: "11px", color: "rgba(255,255,255,0.6)", fontWeight: "500" })
+    Object.assign(langLabel.style, {
+      fontSize: "11px",
+      color: "rgba(255,255,255,0.6)",
+      fontWeight: "500"
+    })
 
     const langInput = document.createElement("input")
     langInput.type = "text"
@@ -144,10 +157,14 @@ function injectSunoUploadUI() {
       marginTop: "4px"
     })
     uploadButton.addEventListener("mouseenter", () => {
-      if (!uploadButton.disabled) uploadButton.style.background = "linear-gradient(180deg, #818cf8 0%, #6366f1 100%)"
+      if (!uploadButton.disabled)
+        uploadButton.style.background =
+          "linear-gradient(180deg, #818cf8 0%, #6366f1 100%)"
     })
     uploadButton.addEventListener("mouseleave", () => {
-      if (!uploadButton.disabled) uploadButton.style.background = "linear-gradient(180deg, #6366f1 0%, #4f46e5 100%)"
+      if (!uploadButton.disabled)
+        uploadButton.style.background =
+          "linear-gradient(180deg, #6366f1 0%, #4f46e5 100%)"
     })
 
     uploadButton.addEventListener("click", () => {
@@ -162,7 +179,9 @@ function injectSunoUploadUI() {
         return
       }
 
-      const wrapperDiv = remixButton.closest("div.relative") as HTMLElement | null
+      const wrapperDiv = remixButton.closest(
+        "div.relative"
+      ) as HTMLElement | null
       if (!wrapperDiv) {
         uploadButton.disabled = false
         uploadButton.textContent = "Upload to Mediamake"
@@ -187,23 +206,22 @@ function injectSunoUploadUI() {
       const href = songLink?.getAttribute("href") || ""
       const lastSegment = href.split("/").filter(Boolean).pop() || ""
       const songId = lastSegment.split("?")[0]?.trim() || null
-      const audioUrl = songId
-        ? `https://cdn1.suno.ai/${songId}.m4a`
-        : null
+      const audioUrl = songId ? `https://cdn1.suno.ai/${songId}.m4a` : null
       const audioScope =
         (wrapperDiv.closest("aside") as HTMLElement | null) ||
         (wrapperDiv.closest("div") as HTMLElement | null) ||
         document.body
-      const audioEl = audioScope.querySelector("audio") as
-        | HTMLAudioElement
-        | null
+      const audioEl = audioScope.querySelector(
+        "audio"
+      ) as HTMLAudioElement | null
       const finalAudioUrl = audioUrl || audioEl?.src || null
       const playbarTitleAnchor = document.querySelector(
         'a[aria-label^="Playbar: Title for "]'
       ) as HTMLAnchorElement | null
-      const nearestSongAnchor = (document.querySelector(
-        'a[href*="/song/"]'
-      ) as HTMLAnchorElement | null) || songLink
+      const nearestSongAnchor =
+        (document.querySelector(
+          'a[href*="/song/"]'
+        ) as HTMLAnchorElement | null) || songLink
       const titleFromSongLink = nearestSongAnchor?.textContent?.trim() || ""
       const titleFromPlaybarText = playbarTitleAnchor?.textContent?.trim() || ""
       const titleFromPlaybarLabel = (
@@ -221,9 +239,8 @@ function injectSunoUploadUI() {
       ) as HTMLButtonElement | null
       const lyricsDisplayContainer = copyLyricsButton?.closest("div.css-x4if1z")
       const lyricsDisplayText = (
-        (lyricsDisplayContainer?.querySelector(
-          ".pr-6"
-        ) as HTMLElement | null)?.innerText || ""
+        (lyricsDisplayContainer?.querySelector(".pr-6") as HTMLElement | null)
+          ?.innerText || ""
       ).trim()
       const lyricsTextarea =
         (document.querySelector(
@@ -240,16 +257,18 @@ function injectSunoUploadUI() {
         ""
       ).trim()
       const sunoLyricsFallback = (
-        (document.querySelector(
-          '[data-testid="lyrics-textarea"]'
-        ) as HTMLElement | null)?.innerText || ""
+        (
+          document.querySelector(
+            '[data-testid="lyrics-textarea"]'
+          ) as HTMLElement | null
+        )?.innerText || ""
       ).trim()
       const sunoLyrics =
         sunoLyricsRaw.length > 0
           ? sunoLyricsRaw
           : sunoLyricsFallback.length > 0
-          ? sunoLyricsFallback
-          : undefined
+            ? sunoLyricsFallback
+            : undefined
       const tags = tagInput.value
         .split(",")
         .map((entry) => entry.trim())
@@ -283,7 +302,9 @@ function injectSunoUploadUI() {
             uploadButton.disabled = false
             if (!response) {
               uploadButton.textContent = "Upload to Mediamake"
-              alert("No response from extension. Check API Endpoint in Settings.")
+              alert(
+                "No response from extension. Check API Endpoint in Settings."
+              )
               return
             }
             if (!response.success) {
@@ -377,9 +398,7 @@ function renderPinterestPanel(
   panel.style.borderRadius = "10px"
   panel.style.border = "1px solid rgba(255,255,255,0.18)"
   panel.style.background =
-    status === "error"
-      ? "rgba(112, 28, 28, 0.96)"
-      : "rgba(15, 23, 42, 0.95)"
+    status === "error" ? "rgba(112, 28, 28, 0.96)" : "rgba(15, 23, 42, 0.95)"
   panel.style.color = "white"
   panel.style.fontSize = "12px"
   panel.style.lineHeight = "1.4"
@@ -519,8 +538,16 @@ function handlePinterestUpload(
   noAiButton: HTMLButtonElement,
   viewAiButton: HTMLButtonElement
 ) {
-  setPinterestButtonState(withAiButton, withAi ? "Analyzing..." : "Save + AI", true)
-  setPinterestButtonState(noAiButton, withAi ? "Save (No AI)" : "Uploading...", true)
+  setPinterestButtonState(
+    withAiButton,
+    withAi ? "Analyzing..." : "Save + AI",
+    true
+  )
+  setPinterestButtonState(
+    noAiButton,
+    withAi ? "Save (No AI)" : "Uploading...",
+    true
+  )
 
   const prompt = mediaElement.alt || ""
   chrome.storage.local.get(["tags"], (result) => {
@@ -534,7 +561,10 @@ function handlePinterestUpload(
     const payloadTags =
       storedTags.length > 0 ? storedTags : ["pinterest", "extension-upload"]
 
-    const queueNow = (metadata: Record<string, unknown>, successTitle: string) => {
+    const queueNow = (
+      metadata: Record<string, unknown>,
+      successTitle: string
+    ) => {
       queueSparkboardUpload(
         {
           sourceUrl: mediaElement.src,
@@ -1072,10 +1102,12 @@ function createOverlayButton(
               imageMimeType: blob.type
             }
 
+            console.log("payload", payload)
+
             chrome.runtime.sendMessage(
               {
                 action: "sendApiRequest",
-                endpoint: apiEndpoint,
+                endpoint: apiEndpoint + "/api/media-files/midjourney",
                 apiKey: apiKey,
                 payload: payload
               },
