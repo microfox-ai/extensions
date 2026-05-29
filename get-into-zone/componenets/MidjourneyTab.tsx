@@ -360,6 +360,16 @@ export function MidjourneyTab() {
                 return b.priority - a.priority
             })
             setQueuedRequests(sorted)
+
+            // Show the folder from the first DB item in the input so the user
+            // can see what folder the DB items carry (and confirm it's being used).
+            const firstWithFolder = sorted.find(
+                (item: any) => typeof item.folder === "string" && item.folder.trim().length > 0
+            )
+            if (firstWithFolder) {
+                setFolderTag(firstWithFolder.folder.trim())
+            }
+
             return sorted
         } catch (e: any) {
             console.error("Failed to load queued requests:", e)
@@ -912,6 +922,11 @@ export function MidjourneyTab() {
                                             title={item.prompt}>
                                             {item.prompt}
                                         </div>
+                                        {item.folder && (
+                                            <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>
+                                                📁 {item.folder}
+                                            </div>
+                                        )}
                                     </li>
                                 ))}
                             </ul>
