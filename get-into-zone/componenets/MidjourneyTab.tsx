@@ -60,7 +60,7 @@ export function MidjourneyTab() {
                 "dbRecordId",
                 "useLastImage",
                 "maxQueueSize",
-                "agentApiUrl",
+                "apiEndpoint",
                 "apiKey",
                 "selectedProjectId",
                 "overwriteQueueFolder",
@@ -91,8 +91,8 @@ export function MidjourneyTab() {
                 if (typeof result.maxQueueSize === "number") {
                     setMaxQueueSize(result.maxQueueSize)
                 }
-                if (typeof result.agentApiUrl === "string") {
-                    setAgentApiUrl(result.agentApiUrl)
+                if (typeof result.apiEndpoint === "string") {
+                    setAgentApiUrl(result.apiEndpoint)
                 }
                 if (typeof result.apiKey === "string") {
                     setApiKey(result.apiKey)

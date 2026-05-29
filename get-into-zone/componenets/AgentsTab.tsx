@@ -15,17 +15,14 @@ export function AgentsTab() {
   const [jsonError, setJsonError] = useState("")
 
   useEffect(() => {
-    chrome.storage.local.get(
-      ["agentApiUrl", "apiKey"],
-      (result) => {
-        if (typeof result.agentApiUrl === "string") {
-          setAgentApiUrl(result.agentApiUrl)
-        }
-        if (typeof result.apiKey === "string") {
-          setApiKey(result.apiKey)
-        }
+    chrome.storage.local.get(["apiEndpoint", "apiKey"], (result) => {
+      if (typeof result.apiEndpoint === "string") {
+        setAgentApiUrl(result.apiEndpoint)
       }
-    )
+      if (typeof result.apiKey === "string") {
+        setApiKey(result.apiKey)
+      }
+    })
   }, [])
 
   useEffect(() => {
@@ -64,12 +61,6 @@ export function AgentsTab() {
     } finally {
       setIsLoadingAgents(false)
     }
-  }
-
-  const saveAgentApiUrl = () => {
-    chrome.storage.local.set({ agentApiUrl }, () => {
-      alert("API URL saved!")
-    })
   }
 
   const executeAgent = async () => {
@@ -160,51 +151,6 @@ export function AgentsTab() {
   return (
     <div>
       <h2>🤖 AI Agents</h2>
-
-      <div style={{ marginBottom: 16 }}>
-        <label style={{ fontSize: "12px", color: "#666" }}>API Server URL:</label>
-        <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
-          <input
-            type="text"
-            value={agentApiUrl}
-            onChange={(e) => setAgentApiUrl(e.target.value)}
-            placeholder="http://localhost:3000"
-            style={{
-              flex: 1,
-              padding: "6px 8px",
-              fontSize: "12px",
-              border: "1px solid #ccc",
-              borderRadius: "4px"
-            }}
-          />
-          <button
-            onClick={saveAgentApiUrl}
-            style={{
-              padding: "6px 12px",
-              fontSize: "12px",
-              background: "#28a745",
-              color: "white",
-              border: "none",
-              borderRadius: "4px",
-              cursor: "pointer"
-            }}>
-            Save
-          </button>
-          <button
-            onClick={loadAgents}
-            style={{
-              padding: "6px 12px",
-              fontSize: "12px",
-              background: "#007bff",
-              color: "white",
-              border: "none",
-              borderRadius: "4px",
-              cursor: "pointer"
-            }}>
-            Refresh
-          </button>
-        </div>
-      </div>
 
       {isLoadingAgents ? (
         <p>Loading agents...</p>
