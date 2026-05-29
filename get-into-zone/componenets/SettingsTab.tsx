@@ -1,7 +1,12 @@
 import { useEffect, useState } from "react"
 
+const DEFAULT_API_ENDPOINT =
+  process.env.NODE_ENV === "production"
+    ? "https://mediamake-mediamake.vercel.app/"
+    : "http://localhost:3000"
+
 export function SettingsTab() {
-  const [apiEndpoint, setApiEndpoint] = useState("")
+  const [apiEndpoint, setApiEndpoint] = useState(DEFAULT_API_ENDPOINT)
   const [tags, setTags] = useState("")
   const [apiKey, setApiKey] = useState("")
   const [isButtonEnabled, setIsButtonEnabled] = useState(true)
@@ -88,7 +93,7 @@ export function SettingsTab() {
           type="text"
           value={apiEndpoint}
           onChange={(e) => setApiEndpoint(e.target.value)}
-          placeholder="https://your-api.com/endpoint"
+          placeholder={DEFAULT_API_ENDPOINT}
           style={{
             width: "100%",
             padding: "8px",
@@ -174,5 +179,3 @@ export function SettingsTab() {
     </div>
   )
 }
-
-
