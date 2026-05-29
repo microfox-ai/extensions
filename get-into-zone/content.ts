@@ -13,6 +13,14 @@ const mediaElementsWithButtons = new WeakMap<
 >()
 const pinterestOverlays = new WeakMap<HTMLImageElement, HTMLElement>()
 const pinterestResultPanels = new WeakMap<HTMLImageElement, HTMLElement>()
+// Show/hide controls per overlay, used by document-level hover delegation so
+// the overlay appears even when Pinterest's own overlay/canvas layers sit on
+// top of the image and swallow its pointer events.
+const pinterestOverlayControls = new WeakMap<
+  HTMLImageElement,
+  { show: () => void; hide: () => void }
+>()
+const pinterestTrackedImages = new Set<HTMLImageElement>()
 const pinterestAnalysisCache = new WeakMap<
   HTMLImageElement,
   {
@@ -194,7 +202,7 @@ function injectSunoUploadUI() {
       let songLink: HTMLAnchorElement | null = null
       while (current && current !== document.body) {
         const candidate = current.querySelector(
-          'a[href*="/song/"]'
+          'h3 a[href*="/song/"]'
         ) as HTMLAnchorElement | null
         if (candidate) {
           songLink = candidate
@@ -215,25 +223,7 @@ function injectSunoUploadUI() {
         "audio"
       ) as HTMLAudioElement | null
       const finalAudioUrl = audioUrl || audioEl?.src || null
-      const playbarTitleAnchor = document.querySelector(
-        'a[aria-label^="Playbar: Title for "]'
-      ) as HTMLAnchorElement | null
-      const nearestSongAnchor =
-        (document.querySelector(
-          'a[href*="/song/"]'
-        ) as HTMLAnchorElement | null) || songLink
-      const titleFromSongLink = nearestSongAnchor?.textContent?.trim() || ""
-      const titleFromPlaybarText = playbarTitleAnchor?.textContent?.trim() || ""
-      const titleFromPlaybarLabel = (
-        playbarTitleAnchor?.getAttribute("aria-label") || ""
-      )
-        .replace(/^Playbar:\s*Title for\s*/i, "")
-        .trim()
-      const title = (
-        titleFromPlaybarText ||
-        titleFromPlaybarLabel ||
-        titleFromSongLink
-      ).trim()
+      const title = songLink?.textContent?.trim()
       const copyLyricsButton = document.querySelector(
         'button[aria-label="Copy lyrics to clipboard"]'
       ) as HTMLButtonElement | null
@@ -652,6 +642,18 @@ function handlePinterestUpload(
         pinterestAnalysisCache.set(mediaElement, analysis)
         setPinterestButtonState(viewAiButton, "View AI", false)
 
+        // Persist the analysis to DB so it shows in the Pinterest tab
+        chrome.runtime.sendMessage({
+          action: "savePinterestAnalysis",
+          imageUrl: mediaElement.src,
+          pageUrl: window.location.href,
+          imageAlt: mediaElement.alt || "",
+          description: analysis.description,
+          keywords: analysis.keywords || [],
+          artStyle: analysis.artStyle || [],
+          audienceKeywords: analysis.audienceKeywords || []
+        })
+
         renderPinterestPanel(mediaElement, "loading", {
           title: "AI complete. Queueing upload/index worker...",
           description: analysis.description || "",
@@ -740,6 +742,19 @@ function handlePinterestAnalyzeOnly(
 
         pinterestAnalysisCache.set(mediaElement, analysis)
         setPinterestButtonState(viewAiButton, "View AI", false)
+
+        // Persist the analysis to DB so it shows in the Pinterest tab
+        chrome.runtime.sendMessage({
+          action: "savePinterestAnalysis",
+          imageUrl: mediaElement.src,
+          pageUrl: window.location.href,
+          imageAlt: mediaElement.alt || "",
+          description: analysis.description,
+          keywords: analysis.keywords || [],
+          artStyle: analysis.artStyle || [],
+          audienceKeywords: analysis.audienceKeywords || []
+        })
+
         renderPinterestPanel(mediaElement, "success", {
           title: "AI analysis ready (not saved)",
           description: analysis.description || "",
@@ -919,6 +934,9 @@ function createPinterestOverlay(mediaElement: HTMLImageElement) {
   wrapper.addEventListener("mouseenter", show)
   wrapper.addEventListener("mouseleave", hide)
 
+  pinterestOverlayControls.set(mediaElement, { show, hide })
+  pinterestTrackedImages.add(mediaElement)
+
   return wrapper
 }
 
@@ -929,6 +947,81 @@ function processPinterestMediaElements() {
       createPinterestOverlay(element)
     }
   })
+}
+
+// Pinterest's own hover overlay sits on top of the pin image and steals the
+// hover, causing our overlay to flicker/hide. Disable its pointer events so it
+// stops intercepting hover, but keep it in the DOM (removing it drops the pin
+// from the list).
+function disablePinterestHoverOverlays(root: ParentNode = document) {
+  const overlays = root.querySelectorAll('[data-test-id="pin-card-hover-overlay"]')
+  overlays.forEach((el) => {
+    ;(el as HTMLElement).style.pointerEvents = "none"
+  })
+}
+
+// Pinterest layers its own hover overlay (data-test-id="pin-card-hover-overlay")
+// and renders the main pin on a canvas, both of which sit above the <img> and
+// swallow its pointer events — so the image's own mouseenter often never fires.
+// To make our overlay appear reliably, we resolve the hovered image by
+// hit-testing the cursor against the bounding rects of every tracked image,
+// regardless of what's painted on top.
+function findPinterestImageAtPoint(x: number, y: number): HTMLImageElement | null {
+  let best: HTMLImageElement | null = null
+  let bestArea = Infinity
+  for (const img of pinterestTrackedImages) {
+    if (!img.isConnected) {
+      pinterestTrackedImages.delete(img)
+      continue
+    }
+    const rect = img.getBoundingClientRect()
+    if (rect.width < 50 || rect.height < 50) continue
+    if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+      const area = rect.width * rect.height
+      // Prefer the smallest (most specific) image when rects overlap/nest.
+      if (area < bestArea) {
+        bestArea = area
+        best = img
+      }
+    }
+  }
+  return best
+}
+
+if (isPinterestPage) {
+  let activeOverlayImage: HTMLImageElement | null = null
+
+  document.addEventListener(
+    "mousemove",
+    (e) => {
+      if (!isButtonFeatureEnabled) return
+
+      // Keep current state while the cursor is over our own overlay/panel so
+      // the buttons stay interactive (their element listeners manage this).
+      const target = e.target as HTMLElement | null
+      if (
+        target &&
+        typeof target.closest === "function" &&
+        target.closest('.media-save-button, [data-mm-overlay-type]')
+      ) {
+        return
+      }
+
+      const img = findPinterestImageAtPoint(e.clientX, e.clientY)
+      if (img === activeOverlayImage) return
+
+      if (activeOverlayImage) {
+        pinterestOverlayControls.get(activeOverlayImage)?.hide()
+      }
+      if (img) {
+        pinterestOverlayControls.get(img)?.show()
+        activeOverlayImage = img
+      } else {
+        activeOverlayImage = null
+      }
+    },
+    true
+  )
 }
 
 function createOverlayButton(
@@ -1159,13 +1252,20 @@ function processMediaElements() {
 
 if (isPinterestPage) {
   processPinterestMediaElements()
+  disablePinterestHoverOverlays()
   const pinterestObserver = new MutationObserver((mutations) => {
     mutations.forEach((mutation) => {
       mutation.addedNodes.forEach((node) => {
         if (node instanceof HTMLImageElement) {
           createPinterestOverlay(node)
         } else if (node.nodeType === 1) {
-          const mediaInNode = (node as Element).querySelectorAll("img")
+          const el = node as Element
+          if (el.matches('[data-test-id="pin-card-hover-overlay"]')) {
+            ;(el as HTMLElement).style.pointerEvents = "none"
+            return
+          }
+          disablePinterestHoverOverlays(el)
+          const mediaInNode = el.querySelectorAll("img")
           mediaInNode.forEach((media) => {
             if (media instanceof HTMLImageElement) {
               createPinterestOverlay(media)
