@@ -14,17 +14,14 @@ const updateQueueItemStatus = (
 ) => {
   if (!queueItemId) return
   chrome.storage.local.get(
-    ["agentApiUrl", "apiEndpoint", "apiKey"],
+    ["apiEndpoint", "apiKey"],
     (result) => {
-      // Prefer agentApiUrl (used by Midjourney/Agents tabs), but fall back to
-      // apiEndpoint from Settings if agentApiUrl hasn't been set explicitly.
       const baseUrl =
-        (typeof result.agentApiUrl === "string" && result.agentApiUrl) ||
         (typeof result.apiEndpoint === "string" && result.apiEndpoint) ||
         ""
     if (!baseUrl || typeof baseUrl !== "string") {
       console.warn(
-        "[get-into-zone] Missing agentApiUrl in storage; cannot PATCH queue item",
+        "[get-into-zone] Missing apiEndpoint in storage; cannot PATCH queue item",
         { queueItemId, payload }
       )
       return
@@ -506,8 +503,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
         const markPromptProcessed = (recordId: string, promptIndex: number) => {
           if (!recordId || promptIndex < 0) return
-          chrome.storage.local.get(["agentApiUrl"], (result) => {
-            const baseUrl = result.agentApiUrl
+          chrome.storage.local.get(["apiEndpoint"], (result) => {
+            const baseUrl = result.apiEndpoint
             if (!baseUrl || typeof baseUrl !== "string") {
               return
             }
