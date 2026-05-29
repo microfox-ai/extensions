@@ -390,6 +390,91 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       }
     )
     return true
+  } else if (request.action === "savePinterestAnalysis") {
+    chrome.storage.local.get(
+      ["apiEndpoint", "apiKey", "selectedProjectId"],
+      async (result) => {
+        const baseUrl =
+          (typeof result.apiEndpoint === "string" && result.apiEndpoint) || ""
+        if (!baseUrl) {
+          sendResponse({ success: false, message: "Missing API Endpoint in Settings." })
+          return
+        }
+        const headers: HeadersInit = { "Content-Type": "application/json" }
+        if (result.apiKey && typeof result.apiKey === "string") {
+          headers["Authorization"] = `Bearer ${result.apiKey}`
+        }
+        const projectId =
+          typeof result.selectedProjectId === "string" &&
+          result.selectedProjectId.trim().length > 0
+            ? result.selectedProjectId.trim()
+            : undefined
+
+        const endpoint = `${baseUrl.replace(/\/+$/, "")}/api/pinterest-analyses`
+        try {
+          const resp = await fetch(endpoint, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              imageUrl: request.imageUrl,
+              pageUrl: request.pageUrl,
+              imageAlt: request.imageAlt || "",
+              description: request.description,
+              keywords: request.keywords || [],
+              artStyle: request.artStyle || [],
+              audienceKeywords: request.audienceKeywords || [],
+              ...(projectId ? { projectId } : {})
+            })
+          })
+          const data = await resp.json().catch(() => ({}))
+          if (!resp.ok) {
+            sendResponse({ success: false, message: data?.error || `Save failed: ${resp.status}` })
+            return
+          }
+          sendResponse({ success: true, data })
+        } catch (error) {
+          sendResponse({
+            success: false,
+            message: error instanceof Error ? error.message : "Failed to save analysis."
+          })
+        }
+      }
+    )
+    return true
+  } else if (request.action === "fetchPinterestAnalyses") {
+    chrome.storage.local.get(
+      ["apiEndpoint", "apiKey"],
+      async (result) => {
+        const baseUrl =
+          (typeof result.apiEndpoint === "string" && result.apiEndpoint) || ""
+        if (!baseUrl) {
+          sendResponse({ success: false, message: "Missing API Endpoint in Settings." })
+          return
+        }
+        const headers: HeadersInit = {}
+        if (result.apiKey && typeof result.apiKey === "string") {
+          headers["Authorization"] = `Bearer ${result.apiKey}`
+        }
+        const limit = typeof request.limit === "number" ? request.limit : 50
+        const offset = typeof request.offset === "number" ? request.offset : 0
+        const endpoint = `${baseUrl.replace(/\/+$/, "")}/api/pinterest-analyses?limit=${limit}&offset=${offset}`
+        try {
+          const resp = await fetch(endpoint, { headers })
+          const data = await resp.json().catch(() => ({}))
+          if (!resp.ok) {
+            sendResponse({ success: false, message: data?.error || `Fetch failed: ${resp.status}` })
+            return
+          }
+          sendResponse({ success: true, data })
+        } catch (error) {
+          sendResponse({
+            success: false,
+            message: error instanceof Error ? error.message : "Failed to fetch analyses."
+          })
+        }
+      }
+    )
+    return true
   } else if (request.action === "queueSparkboardIndex") {
     chrome.storage.local.get(
       ["apiEndpoint", "apiKey", "selectedProjectId"],
