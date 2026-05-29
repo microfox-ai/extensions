@@ -5,8 +5,9 @@ import { MidjourneyTab } from "./componenets/MidjourneyTab"
 import { SunoTab } from "./componenets/SunoTab"
 import { AgentsTab } from "./componenets/AgentsTab"
 import { SettingsTab } from "./componenets/SettingsTab"
+import { PinterestTab } from "./componenets/PinterestTab"
 
-type MainTab = "midjourney" | "suno" | "agents" | "settings"
+type MainTab = "midjourney" | "suno" | "agents" | "settings" | "pinterest"
 
 function IndexPopup() {
   const [activeTab, setActiveTab] = useState<MainTab>("midjourney")
@@ -33,6 +34,20 @@ function IndexPopup() {
             fontSize: "12px"
           }}>
           Midjourney
+        </button>
+        <button
+          onClick={() => setActiveTab("pinterest")}
+          style={{
+            padding: "8px 12px",
+            border: "none",
+            backgroundColor: activeTab === "pinterest" ? "#E60023" : "#E0E0E0",
+            color: activeTab === "pinterest" ? "white" : "black",
+            cursor: "pointer",
+            flex: 1,
+            minWidth: "80px",
+            fontSize: "12px"
+          }}>
+          Pinterest
         </button>
         <button
           onClick={() => setActiveTab("suno")}
@@ -82,6 +97,7 @@ function IndexPopup() {
       {activeTab === "suno" && <SunoTab />}
       {activeTab === "agents" && <AgentsTab />}
       {activeTab === "settings" && <SettingsTab />}
+      {activeTab === "pinterest" && <PinterestTab />}
     </div>
   )
 }
