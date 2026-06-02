@@ -1,6 +1,7 @@
 console.log("Content script loaded.")
 
 let isButtonFeatureEnabled = true
+let isPinterestOverlayEnabled = true
 const isPinterestPage =
   /(^|\.)pinterest\./i.test(window.location.hostname) ||
   window.location.hostname === "pin.it" ||
@@ -31,9 +32,12 @@ const pinterestAnalysisCache = new WeakMap<
   }
 >()
 
-chrome.storage.local.get("isButtonEnabled", (result) => {
+chrome.storage.local.get(["isButtonEnabled", "isPinterestOverlayEnabled"], (result) => {
   if (result.isButtonEnabled !== undefined) {
     isButtonFeatureEnabled = result.isButtonEnabled
+  }
+  if (result.isPinterestOverlayEnabled !== undefined) {
+    isPinterestOverlayEnabled = result.isPinterestOverlayEnabled
   }
 })
 
@@ -43,6 +47,14 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
     if (!isButtonFeatureEnabled) {
       const buttons = document.querySelectorAll(".media-save-button")
       buttons.forEach((btn) => ((btn as HTMLElement).style.display = "none"))
+    }
+  }
+  if (namespace === "local" && changes.isPinterestOverlayEnabled) {
+    isPinterestOverlayEnabled = changes.isPinterestOverlayEnabled.newValue
+    if (!isPinterestOverlayEnabled) {
+      for (const img of pinterestTrackedImages) {
+        pinterestOverlayControls.get(img)?.hide()
+      }
     }
   }
 })
@@ -913,7 +925,7 @@ function createPinterestOverlay(mediaElement: HTMLImageElement) {
 
   let hideTimeout: number
   const show = () => {
-    if (!isButtonFeatureEnabled) {
+    if (!isButtonFeatureEnabled || !isPinterestOverlayEnabled) {
       wrapper.style.display = "none"
       return
     }
@@ -994,7 +1006,7 @@ if (isPinterestPage) {
   document.addEventListener(
     "mousemove",
     (e) => {
-      if (!isButtonFeatureEnabled) return
+      if (!isButtonFeatureEnabled || !isPinterestOverlayEnabled) return
 
       // Keep current state while the cursor is over our own overlay/panel so
       // the buttons stay interactive (their element listeners manage this).

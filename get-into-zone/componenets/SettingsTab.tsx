@@ -10,13 +10,14 @@ export function SettingsTab() {
   const [tags, setTags] = useState("")
   const [apiKey, setApiKey] = useState("")
   const [isButtonEnabled, setIsButtonEnabled] = useState(true)
+  const [isPinterestOverlayEnabled, setIsPinterestOverlayEnabled] = useState(true)
   const [projects, setProjects] = useState<{ id: string; displayName: string }[]>([])
   const [projectsLoading, setProjectsLoading] = useState(false)
   const [selectedProjectId, setSelectedProjectId] = useState<string>("default")
 
   useEffect(() => {
     chrome.storage.local.get(
-      ["apiEndpoint", "tags", "apiKey", "isButtonEnabled", "selectedProjectId"],
+      ["apiEndpoint", "tags", "apiKey", "isButtonEnabled", "isPinterestOverlayEnabled", "selectedProjectId"],
       (result) => {
         if (typeof result.apiEndpoint === "string") {
           setApiEndpoint(result.apiEndpoint)
@@ -29,6 +30,9 @@ export function SettingsTab() {
         }
         if (typeof result.isButtonEnabled === "boolean") {
           setIsButtonEnabled(result.isButtonEnabled)
+        }
+        if (typeof result.isPinterestOverlayEnabled === "boolean") {
+          setIsPinterestOverlayEnabled(result.isPinterestOverlayEnabled)
         }
         if (typeof result.selectedProjectId === "string") {
           setSelectedProjectId(result.selectedProjectId)
@@ -76,6 +80,7 @@ export function SettingsTab() {
         tags,
         apiKey,
         isButtonEnabled,
+        isPinterestOverlayEnabled,
         selectedProjectId
       },
       () => {
@@ -175,6 +180,43 @@ export function SettingsTab() {
           style={{ marginRight: "8px" }}
         />
         <label htmlFor="enableButton">Enable "Save" button on images/videos</label>
+      </div>
+      <div style={{ marginTop: 14, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <span style={{ fontSize: "14px" }}>Pinterest image overlay</span>
+        <label style={{ position: "relative", display: "inline-block", width: "42px", height: "24px", cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={isPinterestOverlayEnabled}
+            onChange={(e) => {
+              const val = e.target.checked
+              setIsPinterestOverlayEnabled(val)
+              chrome.storage.local.set({ isPinterestOverlayEnabled: val })
+            }}
+            style={{ opacity: 0, width: 0, height: 0, position: "absolute" }}
+          />
+          <span
+            style={{
+              position: "absolute",
+              top: 0, left: 0, right: 0, bottom: 0,
+              backgroundColor: isPinterestOverlayEnabled ? "#E60023" : "#ccc",
+              borderRadius: "24px",
+              transition: "background-color 0.25s"
+            }}
+          />
+          <span
+            style={{
+              position: "absolute",
+              width: "18px",
+              height: "18px",
+              left: isPinterestOverlayEnabled ? "21px" : "3px",
+              top: "3px",
+              backgroundColor: "#fff",
+              borderRadius: "50%",
+              transition: "left 0.25s",
+              boxShadow: "0 1px 3px rgba(0,0,0,0.3)"
+            }}
+          />
+        </label>
       </div>
     </div>
   )
