@@ -9,15 +9,14 @@ export function SettingsTab() {
   const [apiEndpoint, setApiEndpoint] = useState(DEFAULT_API_ENDPOINT)
   const [tags, setTags] = useState("")
   const [apiKey, setApiKey] = useState("")
-  const [isButtonEnabled, setIsButtonEnabled] = useState(true)
-  const [isPinterestOverlayEnabled, setIsPinterestOverlayEnabled] = useState(true)
+  const [isImageOverlayEnabled, setIsImageOverlayEnabled] = useState(true)
   const [projects, setProjects] = useState<{ id: string; displayName: string }[]>([])
   const [projectsLoading, setProjectsLoading] = useState(false)
   const [selectedProjectId, setSelectedProjectId] = useState<string>("default")
 
   useEffect(() => {
     chrome.storage.local.get(
-      ["apiEndpoint", "tags", "apiKey", "isButtonEnabled", "isPinterestOverlayEnabled", "selectedProjectId"],
+      ["apiEndpoint", "tags", "apiKey", "isButtonEnabled", "selectedProjectId"],
       (result) => {
         if (typeof result.apiEndpoint === "string") {
           setApiEndpoint(result.apiEndpoint)
@@ -29,10 +28,7 @@ export function SettingsTab() {
           setApiKey(result.apiKey)
         }
         if (typeof result.isButtonEnabled === "boolean") {
-          setIsButtonEnabled(result.isButtonEnabled)
-        }
-        if (typeof result.isPinterestOverlayEnabled === "boolean") {
-          setIsPinterestOverlayEnabled(result.isPinterestOverlayEnabled)
+          setIsImageOverlayEnabled(result.isButtonEnabled)
         }
         if (typeof result.selectedProjectId === "string") {
           setSelectedProjectId(result.selectedProjectId)
@@ -79,8 +75,6 @@ export function SettingsTab() {
         apiEndpoint,
         tags,
         apiKey,
-        isButtonEnabled,
-        isPinterestOverlayEnabled,
         selectedProjectId
       },
       () => {
@@ -171,26 +165,16 @@ export function SettingsTab() {
           )}
         </select>
       </div>
-      <div style={{ marginTop: 10, display: "flex", alignItems: "center" }}>
-        <input
-          type="checkbox"
-          id="enableButton"
-          checked={isButtonEnabled}
-          onChange={(e) => setIsButtonEnabled(e.target.checked)}
-          style={{ marginRight: "8px" }}
-        />
-        <label htmlFor="enableButton">Enable "Save" button on images/videos</label>
-      </div>
-      <div style={{ marginTop: 14, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <span style={{ fontSize: "14px" }}>Pinterest image overlay</span>
+      <div style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <span style={{ fontSize: "14px" }}>Save overlay on images</span>
         <label style={{ position: "relative", display: "inline-block", width: "42px", height: "24px", cursor: "pointer" }}>
           <input
             type="checkbox"
-            checked={isPinterestOverlayEnabled}
+            checked={isImageOverlayEnabled}
             onChange={(e) => {
               const val = e.target.checked
-              setIsPinterestOverlayEnabled(val)
-              chrome.storage.local.set({ isPinterestOverlayEnabled: val })
+              setIsImageOverlayEnabled(val)
+              chrome.storage.local.set({ isButtonEnabled: val })
             }}
             style={{ opacity: 0, width: 0, height: 0, position: "absolute" }}
           />
@@ -198,7 +182,7 @@ export function SettingsTab() {
             style={{
               position: "absolute",
               top: 0, left: 0, right: 0, bottom: 0,
-              backgroundColor: isPinterestOverlayEnabled ? "#E60023" : "#ccc",
+              backgroundColor: isImageOverlayEnabled ? "#4285F4" : "#ccc",
               borderRadius: "24px",
               transition: "background-color 0.25s"
             }}
@@ -208,7 +192,7 @@ export function SettingsTab() {
               position: "absolute",
               width: "18px",
               height: "18px",
-              left: isPinterestOverlayEnabled ? "21px" : "3px",
+              left: isImageOverlayEnabled ? "21px" : "3px",
               top: "3px",
               backgroundColor: "#fff",
               borderRadius: "50%",
