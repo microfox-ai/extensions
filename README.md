@@ -37,7 +37,7 @@ Keeping the same folder keeps the same extension ID, so your settings and saver 
 Open the extension popup, go to **Settings**, and fill in:
 
 - **API Endpoint**: your Mediamake URL (defaults to the hosted instance)
-- **API Key**: needed for saving media
+- **API Key**: your Mediamake API key. The extension sends it with every request to the Mediamake APIs (saving media, loading projects, the Midjourney queue) to authorize them
 - **Tags**: comma-separated tags added to everything you save
 - **Default Project**: the Mediamake project uploads go to
 
