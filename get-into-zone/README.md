@@ -1,5 +1,30 @@
 This is a [Plasmo extension](https://docs.plasmo.com/) project bootstrapped with [`plasmo init`](https://www.npmjs.com/package/plasmo).
 
+> Just want to install the extension? Download it from [Releases](https://github.com/microfox-ai/extensions/releases) and follow the [install steps](../README.md#install-get-into-zone).
+
+## Project layout
+
+| Path | What it does |
+| --- | --- |
+| `popup.tsx` | Popup shell and header tabs. Set `hidden: true` in `TABS` to hide a tab (Suno and AI Agents are hidden) |
+| `componenets/` | One component per popup tab (`SaverTab.tsx`, `MidjourneyTab.tsx`, ...) |
+| `content.ts` | Content script: Save / AI overlays on images, the Suno upload panel |
+| `background.ts` | Service worker: API calls, Midjourney queue, Suno upload |
+| `lib/saverRules.ts` | Saver toggle rules (page / site / window / everywhere) shared by popup, content script, and background |
+| `lib/saverBackground.ts` | Toolbar "OFF" badge, right-click menu, window-rule cleanup |
+
+## Releasing
+
+Releases are built by the repo-level [release workflow](../.github/workflows/release-get-into-zone.yml). Bump `version` in `package.json`, push, then push a `vX.Y.Z` tag (or run the workflow from the Actions tab). See [Cut a release](../README.md#cut-a-release).
+
+To build the same zip locally:
+
+```bash
+npm run build && npm run package
+```
+
+The zip lands in `build/chrome-mv3-prod.zip`.
+
 ## Getting Started
 
 First, run the development server:

@@ -1,2 +1,111 @@
 # extensions
+
 Simple Repo For Developing Extensions to support accelerated automations on local
+
+| Folder | What it is |
+| --- | --- |
+| [`get-into-zone/`](get-into-zone) | **Get into zone**: a Chrome extension that adds Save / AI overlays to images on any site, automates Midjourney prompts, and sends media to Mediamake |
+| [`midjourney-gen-workflow1/`](midjourney-gen-workflow1) | Standalone Midjourney generation script |
+
+## Install Get into zone
+
+Every release is published on the [Releases page](https://github.com/microfox-ai/extensions/releases) as a ready-to-load zip. It works in Chrome and other Chromium browsers (Edge, Brave, Arc).
+
+1. Download the zip:
+   - Latest version: [get-into-zone-chrome.zip](https://github.com/microfox-ai/extensions/releases/latest/download/get-into-zone-chrome.zip)
+   - A specific version: open [Releases](https://github.com/microfox-ai/extensions/releases) and download `get-into-zone-vX.Y.Z-chrome.zip`
+2. Unzip it into a folder you'll keep, for example `~/Extensions/get-into-zone`. Don't delete this folder later: Chrome loads the extension from it.
+3. Open `chrome://extensions` (Edge: `edge://extensions`, Brave: `brave://extensions`).
+4. Turn on **Developer mode** (toggle in the top right).
+5. Click **Load unpacked** and select the unzipped folder (the one that contains `manifest.json`).
+6. Pin it: click the puzzle-piece icon in the toolbar, then the pin next to **Get into zone**.
+
+> Chrome may show a "Disable developer mode extensions" warning on startup. That's expected for extensions installed outside the Chrome Web Store; click away or choose **Keep**.
+
+### Update to a new version
+
+1. Download the new zip.
+2. Delete the contents of the folder you loaded in step 5 and unzip the new version into **the same folder**.
+3. On `chrome://extensions`, click the reload icon on the **Get into zone** card.
+
+Keeping the same folder keeps the same extension ID, so your settings and saver rules carry over. The installed version is shown on the extension card.
+
+## Use Get into zone
+
+### First-time setup
+
+Open the extension popup, go to **Settings**, and fill in:
+
+- **API Endpoint**: your Mediamake URL (defaults to the hosted instance)
+- **API Key**: needed for saving media
+- **Tags**: comma-separated tags added to everything you save
+- **Default Project**: the Mediamake project uploads go to
+
+Click **Save Settings**.
+
+### Save media from any page
+
+Hover any image or video (at least 50×50 px) and a **Save** button appears in its top-left corner. Click it to send the media, plus its prompt when on Midjourney, to Mediamake.
+
+On Pinterest the overlay has more options:
+
+| Button | What it does |
+| --- | --- |
+| Save + AI | Runs AI analysis (description, keywords, art style) and saves the image with it |
+| Save (No AI) | Saves the image as is |
+| AI Only | Runs the analysis without saving; results show up in the **Pinterest** tab |
+| View AI | Shows the last analysis for that image |
+
+On suno.com, an **Upload to Mediamake** panel appears under the open track's Remix/Edit button.
+
+### Turn overlays on or off (Saver tab)
+
+The **Saver** tab controls where overlays appear. It has three switches:
+
+- **All savers**: every overlay, including the Suno upload panel
+- **Save button**: the Save buttons
+- **AI analyse**: the Save + AI, AI Only, and View AI buttons
+
+Pick where a change applies with **Apply changes to**, then flip a switch:
+
+| Scope | Applies to | Lasts |
+| --- | --- | --- |
+| This page | The current URL (query string and `#hash` ignored) | Until you remove it |
+| This site | Every page on the current domain (`www.` ignored) | Until you remove it |
+| This window | Every tab in the current browser window | Until the window closes |
+| Everywhere | All sites | Until you remove it |
+
+When rules overlap, the narrowest one wins: page beats site, site beats window, window beats everywhere. That lets you do things like "off everywhere, but on for pinterest.com". When you flip a switch, any narrower rule for the current tab that would block the change is cleared, and an **Undo** link appears.
+
+The bottom of the tab lists the rules affecting the current tab (remove one with ×), and **Show N rules for other pages** lists the rest. **Reset all** clears every rule (click it twice to confirm).
+
+Shortcuts:
+
+- **Toolbar badge**: the extension icon shows **OFF** when no overlay will appear on the current tab.
+- **Right-click menu**: right-click any page, then **Hide savers** (or **Show savers** when they're off) → *On this page / On this site / In this window / Everywhere*.
+
+### Automate Midjourney (Midjourney tab)
+
+With a midjourney.com tab open, queue prompts as plain text (one per line) or JSON, pull them from your Mediamake database, scrape your Midjourney results, and run the request queue in batches.
+
+## For maintainers
+
+### Cut a release
+
+1. Bump `version` in [`get-into-zone/package.json`](get-into-zone/package.json) (and run `npm install` in `get-into-zone/` so `package-lock.json` matches), then commit and push to `main`.
+2. Start the release one of two ways:
+   - Push a matching tag:
+
+     ```bash
+     git tag v0.2.0 && git push origin v0.2.0
+     ```
+
+   - Or open **Actions → Release Get into zone extension → Run workflow**. It tags the selected commit with `v<version>` for you.
+
+The [release workflow](.github/workflows/release-get-into-zone.yml) builds the extension, zips it, and publishes a GitHub release with install notes, auto-generated changelog, and two assets: `get-into-zone-vX.Y.Z-chrome.zip` and `get-into-zone-chrome.zip` (the stable name the "latest" link above points to). It fails if the tag doesn't match `package.json` or the release already exists.
+
+Versioning follows [semver](https://semver.org): `0.1.x` for fixes, `0.x.0` for new features.
+
+### Develop locally
+
+See [`get-into-zone/README.md`](get-into-zone/README.md).

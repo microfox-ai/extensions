@@ -1,0 +1,88 @@
+name: Release Get into zone extension
+
+# Builds the Chrome extension in get-into-zone/ and publishes it as a
+# downloadable zip on GitHub Releases.
+#
+# Two ways to cut a release (bump "version" in get-into-zone/package.json first):
+#   1. Push a tag that matches the version:  git tag v0.1.0 && git push origin v0.1.0
+#   2. Actions tab -> "Release Get into zone extension" -> Run workflow
+#      (tags the selected commit with v<version> for you)
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-get-into-zone
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: get-into-zone
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: get-into-zone/package-lock.json
+
+      - name: Resolve version
+        id: version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v${VERSION}"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "${TAG}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match get-into-zone/package.json version ${VERSION}. Bump the version or retag."
+            exit 1
+          fi
+          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "::error::Release ${TAG} already exists. Bump the version in get-into-zone/package.json first."
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and zip
+        run: |
+          npm run build
+          npm run package
+          mkdir -p ../dist
+          cp build/chrome-mv3-prod.zip "../dist/get-into-zone-${{ steps.version.outputs.tag }}-chrome.zip"
+          # Stable name so the README can link to .../releases/latest/download/get-into-zone-chrome.zip
+          cp build/chrome-mv3-prod.zip ../dist/get-into-zone-chrome.zip
+
+      - name: Publish GitHub release
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          cat > ../dist/notes.md <<EOF
+          ## Install
+
+          1. Download **get-into-zone-${TAG}-chrome.zip** below and unzip it.
+          2. Open \`chrome://extensions\` and turn on **Developer mode** (top right).
+          3. Click **Load unpacked** and pick the unzipped folder (the one with \`manifest.json\`).
+
+          Updating? Replace the contents of the folder you loaded with the new zip, then click the reload icon on the extension card. See the [README](https://github.com/${GITHUB_REPOSITORY}#readme) for details.
+          EOF
+          gh release create "${TAG}" \
+            ../dist/get-into-zone-${TAG}-chrome.zip \
+            ../dist/get-into-zone-chrome.zip \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target "${GITHUB_SHA}" \
+            --title "Get into zone ${TAG}" \
+            --notes-file ../dist/notes.md \
+            --generate-notes
