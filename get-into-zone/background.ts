@@ -4,6 +4,9 @@ import {
   startMidjourneyWorkflow
 } from "./workflows/midjourney"
 import { startSunoWorkflow } from "./workflows/suno"
+import { initSaverBackground } from "./lib/saverBackground"
+
+initSaverBackground()
 
 const QUEUE_REQUEST_RATE_LIMIT_MS = 3000
 

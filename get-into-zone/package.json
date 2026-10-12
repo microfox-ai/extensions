@@ -36,7 +36,8 @@
     "permissions": [
       "scripting",
       "storage",
-      "activeTab"
+      "activeTab",
+      "contextMenus"
     ],
     "background": {
       "service_worker": "background.ts"

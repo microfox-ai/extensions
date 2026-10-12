@@ -1,10 +1,28 @@
+import {
+  SAVER_RULES_KEY,
+  isPinterestHost,
+  isSaverActive,
+  isSunoHost,
+  readSaverRules,
+  type SaverFeature,
+  type SaverRule
+} from "./lib/saverRules"
+
 console.log("Content script loaded.")
 
-let isImageOverlayEnabled = true
-const isPinterestPage =
-  /(^|\.)pinterest\./i.test(window.location.hostname) ||
-  window.location.hostname === "pin.it" ||
-  window.location.hostname.endsWith(".pin.it")
+const isPinterestPage = isPinterestHost(window.location.hostname)
+const isSunoPage = isSunoHost(window.location.hostname)
+
+// Saver toggles from the popup's Saver tab. Evaluated against the live URL so
+// page rules keep working across SPA navigations.
+let saverRules: SaverRule[] = []
+let saverWindowId: number | undefined
+
+const isSaverOn = (feature: SaverFeature) =>
+  isSaverActive(saverRules, feature, {
+    url: window.location.href,
+    windowId: saverWindowId
+  })
 
 // Track which media elements already have buttons to prevent duplicates
 const mediaElementsWithButtons = new WeakMap<
@@ -31,19 +49,44 @@ const pinterestAnalysisCache = new WeakMap<
   }
 >()
 
-chrome.storage.local.get("isButtonEnabled", (result) => {
-  if (result.isButtonEnabled !== undefined) {
-    isImageOverlayEnabled = result.isButtonEnabled
+let activePinterestOverlayImage: HTMLImageElement | null = null
+
+// Hide every overlay so the next hover re-renders it under the new rules.
+function applySaverRules() {
+  document
+    .querySelectorAll(".media-save-button")
+    .forEach((btn) => ((btn as HTMLElement).style.display = "none"))
+  activePinterestOverlayImage = null
+  if (isSunoPage) injectSunoUploadUI()
+}
+
+chrome.storage.local.get(SAVER_RULES_KEY, (result) => {
+  saverRules = readSaverRules(result[SAVER_RULES_KEY])
+  applySaverRules()
+})
+
+chrome.runtime.sendMessage({ action: "getSaverContext" }, (response) => {
+  if (chrome.runtime.lastError) return
+  if (typeof response?.windowId === "number") {
+    saverWindowId = response.windowId
+    applySaverRules()
+  }
+})
+
+chrome.runtime.onMessage.addListener((request) => {
+  if (
+    request?.action === "saverWindowChanged" &&
+    typeof request.windowId === "number"
+  ) {
+    saverWindowId = request.windowId
+    applySaverRules()
   }
 })
 
 chrome.storage.onChanged.addListener((changes, namespace) => {
-  if (namespace === "local" && changes.isButtonEnabled) {
-    isImageOverlayEnabled = changes.isButtonEnabled.newValue
-    if (!isImageOverlayEnabled) {
-      document.querySelectorAll(".media-save-button")
-        .forEach((btn) => ((btn as HTMLElement).style.display = "none"))
-    }
+  if (namespace === "local" && changes[SAVER_RULES_KEY]) {
+    saverRules = readSaverRules(changes[SAVER_RULES_KEY].newValue)
+    applySaverRules()
   }
 })
 
@@ -76,6 +119,13 @@ function findSidebarRemixEditButton(): HTMLButtonElement | null {
 
 function injectSunoUploadUI() {
   try {
+    if (!isSaverOn("all")) {
+      document
+        .querySelectorAll("[data-mediamake-suno-upload]")
+        .forEach((el) => el.remove())
+      return
+    }
+
     const remixButton = findSidebarRemixEditButton()
     if (!remixButton) return
 
@@ -323,7 +373,7 @@ function injectSunoUploadUI() {
   }
 }
 
-if (window.location.hostname === "suno.com") {
+if (isSunoPage) {
   const observer = new MutationObserver(() => {
     injectSunoUploadUI()
   })
@@ -913,7 +963,13 @@ function createPinterestOverlay(mediaElement: HTMLImageElement) {
 
   let hideTimeout: number
   const show = () => {
-    if (!isImageOverlayEnabled) {
+    const saveOn = isSaverOn("save")
+    const aiOn = isSaverOn("ai")
+    withAiButton.style.display = saveOn && aiOn ? "" : "none"
+    withoutAiButton.style.display = saveOn ? "" : "none"
+    aiOnlyButton.style.display = aiOn ? "" : "none"
+    viewAiButton.style.display = aiOn ? "" : "none"
+    if (!saveOn && !aiOn) {
       wrapper.style.display = "none"
       return
     }
@@ -989,12 +1045,10 @@ function findPinterestImageAtPoint(x: number, y: number): HTMLImageElement | nul
 }
 
 if (isPinterestPage) {
-  let activeOverlayImage: HTMLImageElement | null = null
-
   document.addEventListener(
     "mousemove",
     (e) => {
-      if (!isImageOverlayEnabled) return
+      if (!isSaverOn("save") && !isSaverOn("ai")) return
 
       // Keep current state while the cursor is over our own overlay/panel so
       // the buttons stay interactive (their element listeners manage this).
@@ -1008,16 +1062,16 @@ if (isPinterestPage) {
       }
 
       const img = findPinterestImageAtPoint(e.clientX, e.clientY)
-      if (img === activeOverlayImage) return
+      if (img === activePinterestOverlayImage) return
 
-      if (activeOverlayImage) {
-        pinterestOverlayControls.get(activeOverlayImage)?.hide()
+      if (activePinterestOverlayImage) {
+        pinterestOverlayControls.get(activePinterestOverlayImage)?.hide()
       }
       if (img) {
         pinterestOverlayControls.get(img)?.show()
-        activeOverlayImage = img
+        activePinterestOverlayImage = img
       } else {
-        activeOverlayImage = null
+        activePinterestOverlayImage = null
       }
     },
     true
@@ -1083,7 +1137,7 @@ function createOverlayButton(
   let hideTimeout: number
 
   const showButton = () => {
-    if (!isImageOverlayEnabled) {
+    if (!isSaverOn("save")) {
       button.style.display = "none"
       return
     }

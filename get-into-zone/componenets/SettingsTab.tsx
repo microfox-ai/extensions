@@ -9,14 +9,13 @@ export function SettingsTab() {
   const [apiEndpoint, setApiEndpoint] = useState(DEFAULT_API_ENDPOINT)
   const [tags, setTags] = useState("")
   const [apiKey, setApiKey] = useState("")
-  const [isImageOverlayEnabled, setIsImageOverlayEnabled] = useState(true)
   const [projects, setProjects] = useState<{ id: string; displayName: string }[]>([])
   const [projectsLoading, setProjectsLoading] = useState(false)
   const [selectedProjectId, setSelectedProjectId] = useState<string>("default")
 
   useEffect(() => {
     chrome.storage.local.get(
-      ["apiEndpoint", "tags", "apiKey", "isButtonEnabled", "selectedProjectId"],
+      ["apiEndpoint", "tags", "apiKey", "selectedProjectId"],
       (result) => {
         if (typeof result.apiEndpoint === "string") {
           setApiEndpoint(result.apiEndpoint)
@@ -26,9 +25,6 @@ export function SettingsTab() {
         }
         if (typeof result.apiKey === "string") {
           setApiKey(result.apiKey)
-        }
-        if (typeof result.isButtonEnabled === "boolean") {
-          setIsImageOverlayEnabled(result.isButtonEnabled)
         }
         if (typeof result.selectedProjectId === "string") {
           setSelectedProjectId(result.selectedProjectId)
@@ -165,43 +161,9 @@ export function SettingsTab() {
           )}
         </select>
       </div>
-      <div style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <span style={{ fontSize: "14px" }}>Save overlay on images</span>
-        <label style={{ position: "relative", display: "inline-block", width: "42px", height: "24px", cursor: "pointer" }}>
-          <input
-            type="checkbox"
-            checked={isImageOverlayEnabled}
-            onChange={(e) => {
-              const val = e.target.checked
-              setIsImageOverlayEnabled(val)
-              chrome.storage.local.set({ isButtonEnabled: val })
-            }}
-            style={{ opacity: 0, width: 0, height: 0, position: "absolute" }}
-          />
-          <span
-            style={{
-              position: "absolute",
-              top: 0, left: 0, right: 0, bottom: 0,
-              backgroundColor: isImageOverlayEnabled ? "#4285F4" : "#ccc",
-              borderRadius: "24px",
-              transition: "background-color 0.25s"
-            }}
-          />
-          <span
-            style={{
-              position: "absolute",
-              width: "18px",
-              height: "18px",
-              left: isImageOverlayEnabled ? "21px" : "3px",
-              top: "3px",
-              backgroundColor: "#fff",
-              borderRadius: "50%",
-              transition: "left 0.25s",
-              boxShadow: "0 1px 3px rgba(0,0,0,0.3)"
-            }}
-          />
-        </label>
-      </div>
+      <p style={{ marginTop: 16, fontSize: "12px", color: "#666" }}>
+        Turn the on-page Save and AI overlays on or off from the Saver tab.
+      </p>
     </div>
   )
 }
