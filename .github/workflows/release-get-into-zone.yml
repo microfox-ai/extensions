@@ -1,22 +1,28 @@
 name: Release Get into zone extension
 
 # Builds the Chrome extension in get-into-zone/ and publishes it as a
-# downloadable zip on GitHub Releases.
-#
-# Two ways to cut a release (bump "version" in get-into-zone/package.json first):
-#   1. Push a tag that matches the version:  git tag v0.1.0 && git push origin v0.1.0
-#   2. Actions tab -> "Release Get into zone extension" -> Run workflow
-#      (tags the selected commit with v<version> for you)
+# downloadable zip on GitHub Releases. Fully automatic on every push to main
+# that changes the extension's code:
+#   - If get-into-zone/package.json has a version that isn't released yet
+#     (you bumped minor/major by hand), that version is released as is.
+#   - Otherwise the patch version is bumped (0.1.0 -> 0.1.1), committed back
+#     to main, tagged, and released.
+# "Run workflow" on the Actions tab does the same for the selected branch.
 
 on:
   push:
-    tags:
-      - "v*.*.*"
+    branches:
+      - main
+    paths:
+      - "get-into-zone/**"
+      - "!get-into-zone/**/*.md"
+      - "!get-into-zone/.github/**"
   workflow_dispatch:
 
 permissions:
   contents: write
 
+# Serialize releases so two pushes can't claim the same version.
 concurrency:
   group: release-get-into-zone
   cancel-in-progress: false
@@ -30,29 +36,35 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
         with:
-          node-version: 20
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
           cache: npm
           cache-dependency-path: get-into-zone/package-lock.json
 
-      - name: Resolve version
+      - name: Pick version
         id: version
         run: |
-          VERSION=$(node -p "require('./package.json').version")
-          TAG="v${VERSION}"
-          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "${TAG}" ]; then
-            echo "::error::Tag ${GITHUB_REF_NAME} does not match get-into-zone/package.json version ${VERSION}. Bump the version or retag."
-            exit 1
-          fi
-          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            echo "::error::Release ${TAG} already exists. Bump the version in get-into-zone/package.json first."
-            exit 1
+          # Pick up a bump commit/tag pushed by a release that ran just before this one.
+          git pull --ff-only origin "${GITHUB_REF_NAME}"
+          git fetch --tags --force origin
+          CURRENT=$(node -p "require('./package.json').version")
+          if git rev-parse -q --verify "refs/tags/v${CURRENT}" >/dev/null; then
+            npm version patch --no-git-tag-version >/dev/null
+            VERSION=$(node -p "require('./package.json').version")
+            echo "v${CURRENT} is already released; bumping to v${VERSION}"
+            echo "bumped=true" >> "$GITHUB_OUTPUT"
+          else
+            VERSION="${CURRENT}"
+            echo "Releasing v${VERSION} from package.json"
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies
         run: npm ci
@@ -65,6 +77,17 @@ jobs:
           cp build/chrome-mv3-prod.zip "../dist/get-into-zone-${{ steps.version.outputs.tag }}-chrome.zip"
           # Stable name so the README can link to .../releases/latest/download/get-into-zone-chrome.zip
           cp build/chrome-mv3-prod.zip ../dist/get-into-zone-chrome.zip
+
+      # Pushes made with the workflow token don't trigger workflows, so this
+      # commit won't start another release.
+      - name: Commit version bump
+        if: steps.version.outputs.bumped == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          git commit -m "chore(release): get-into-zone ${{ steps.version.outputs.tag }}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
 
       - name: Publish GitHub release
         run: |
@@ -82,7 +105,7 @@ jobs:
             ../dist/get-into-zone-${TAG}-chrome.zip \
             ../dist/get-into-zone-chrome.zip \
             --repo "${GITHUB_REPOSITORY}" \
-            --target "${GITHUB_SHA}" \
+            --target "$(git rev-parse HEAD)" \
             --title "Get into zone ${TAG}" \
             --notes-file ../dist/notes.md \
             --generate-notes

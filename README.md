@@ -90,21 +90,18 @@ With a midjourney.com tab open, queue prompts as plain text (one per line) or JS
 
 ## For maintainers
 
-### Cut a release
+### Releases are automatic
 
-1. Bump `version` in [`get-into-zone/package.json`](get-into-zone/package.json) (and run `npm install` in `get-into-zone/` so `package-lock.json` matches), then commit and push to `main`.
-2. Start the release one of two ways:
-   - Push a matching tag:
+Every push to `main` that changes code in `get-into-zone/` publishes a new release through the [release workflow](.github/workflows/release-get-into-zone.yml). Nothing to do by hand:
 
-     ```bash
-     git tag v0.2.0 && git push origin v0.2.0
-     ```
+- **Patch releases** (`0.1.0` → `0.1.1`): the workflow bumps the version in `package.json` and `package-lock.json`, commits it to `main` as `chore(release): get-into-zone vX.Y.Z`, tags it, and publishes the release.
+- **Minor or major releases**: set `version` in [`get-into-zone/package.json`](get-into-zone/package.json) yourself (for example `npm version minor --no-git-tag-version` in `get-into-zone/`) and push. If that version isn't released yet, the workflow releases it as is instead of bumping.
 
-   - Or open **Actions → Release Get into zone extension → Run workflow**. It tags the selected commit with `v<version>` for you.
+Each release has install notes, an auto-generated changelog, and two assets: `get-into-zone-vX.Y.Z-chrome.zip` and `get-into-zone-chrome.zip` (the stable name the "latest" link above points to).
 
-The [release workflow](.github/workflows/release-get-into-zone.yml) builds the extension, zips it, and publishes a GitHub release with install notes, auto-generated changelog, and two assets: `get-into-zone-vX.Y.Z-chrome.zip` and `get-into-zone-chrome.zip` (the stable name the "latest" link above points to). It fails if the tag doesn't match `package.json` or the release already exists.
+Changes that don't need a new extension build don't trigger a release: Markdown files, and anything outside `get-into-zone/`. To release without a code change, open **Actions → Release Get into zone extension → Run workflow**.
 
-Versioning follows [semver](https://semver.org): `0.1.x` for fixes, `0.x.0` for new features.
+Run `git pull` after pushing so you have the bot's version-bump commit locally.
 
 ### Develop locally
 
