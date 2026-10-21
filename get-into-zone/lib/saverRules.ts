@@ -5,8 +5,9 @@
 export const SAVER_RULES_KEY = "saverRules"
 
 // "all" is the master switch: it covers every overlay (Save button, AI
-// buttons and the Suno upload panel). "save" and "ai" are individual savers.
-export type SaverFeature = "all" | "save" | "ai"
+// buttons, the YouTube download buttons and the Suno upload panel). "save",
+// "ai" and "youtube" are individual savers.
+export type SaverFeature = "all" | "save" | "ai" | "youtube"
 export type SaverScope = "page" | "site" | "window" | "all"
 
 export interface SaverRule {
@@ -25,7 +26,7 @@ export interface SaverContext {
 // which beats an "everywhere" rule. With no matching rule a saver is on.
 export const SCOPE_ORDER: SaverScope[] = ["page", "site", "window", "all"]
 
-export const SAVER_FEATURES: SaverFeature[] = ["all", "save", "ai"]
+export const SAVER_FEATURES: SaverFeature[] = ["all", "save", "ai", "youtube"]
 
 const parseHttpUrl = (url?: string): URL | null => {
   if (!url) return null
@@ -47,6 +48,9 @@ export const isPinterestHost = (hostname: string) =>
   hostname.endsWith(".pin.it")
 
 export const isSunoHost = (hostname: string) => hostname === "suno.com"
+
+export const isYouTubeHost = (hostname: string) =>
+  hostname === "youtube.com" || hostname.endsWith(".youtube.com")
 
 // The key a rule at `scope` would have for this context, or null when the
 // scope doesn't apply (e.g. no window id yet, or a chrome:// page).
@@ -101,6 +105,9 @@ export function isAnySaverActive(rules: SaverRule[], ctx: SaverContext) {
   if (!url || !isSaverActive(rules, "all", ctx)) return false
   if (isSunoHost(url.hostname)) return true
   if (isSaverActive(rules, "save", ctx)) return true
+  if (isYouTubeHost(url.hostname) && isSaverActive(rules, "youtube", ctx)) {
+    return true
+  }
   return isPinterestHost(url.hostname) && isSaverActive(rules, "ai", ctx)
 }
 

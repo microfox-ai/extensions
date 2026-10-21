@@ -16,7 +16,11 @@ This is a [Plasmo extension](https://docs.plasmo.com/) project bootstrapped with
 | `lib/pinterestVideoBackground.ts` | Saves one Pinterest video: finds its MP4, or falls back to HLS through `tabs/offscreen.tsx`. Shares the single offscreen-document slot with the YouTube downloader |
 | `lib/hls.ts` | Downloads an HLS stream (best variant plus its audio rendition) into one MP4, or a `.ts` for MPEG-TS streams |
 | `tabs/offscreen.tsx` | Offscreen document that turns Pinterest HLS videos into blob URLs for download or Mediamake upload |
+| `contents/youtube.ts` | Content script on youtube.com: Download button on thumbnails and under the watch-page title, progress cards |
+| `lib/youtube.ts` | YouTube download: video ID parsing, the in-tab player request, format choices per mode |
+| `lib/youtubeBackground.ts` | YouTube download jobs: offscreen document, progress in `chrome.storage.session`, saving to Downloads |
 | `lib/mp4Merge.ts` | Muxes a video-only and an audio-only fragmented MP4 into one file, no re-encoding |
+| `tabs/youtube-offscreen.tsx` | Offscreen document that fetches YouTube streams in ranged chunks and merges them |
 | `lib/saverRules.ts` | Saver toggle rules (page / site / window / everywhere) shared by popup, content script, and background |
 | `lib/saverBackground.ts` | Toolbar "OFF" badge, right-click menu, window-rule cleanup |
 

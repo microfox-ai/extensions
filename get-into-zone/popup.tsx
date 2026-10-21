@@ -7,10 +7,12 @@ import { AgentsTab } from "./componenets/AgentsTab"
 import { SaverTab } from "./componenets/SaverTab"
 import { SettingsTab } from "./componenets/SettingsTab"
 import { PinterestTab } from "./componenets/PinterestTab"
+import { YouTubeTab } from "./componenets/YouTubeTab"
 
 type MainTab =
   | "midjourney"
   | "pinterest"
+  | "youtube"
   | "suno"
   | "agents"
   | "saver"
@@ -30,6 +32,12 @@ const TABS: {
     label: "Pinterest",
     activeColor: "#E60023",
     component: PinterestTab
+  },
+  {
+    id: "youtube",
+    label: "YouTube",
+    activeColor: "#FF0000",
+    component: YouTubeTab
   },
   { id: "suno", label: "Suno", component: SunoTab, hidden: true },
   { id: "agents", label: "AI Agents", component: AgentsTab, hidden: true },

@@ -6,10 +6,12 @@ import {
 import { startSunoWorkflow } from "./workflows/suno"
 import { initSaverBackground } from "./lib/saverBackground"
 import { initPinterestBulkBackground } from "./lib/pinterestBulkBackground"
+import { initYouTubeBackground } from "./lib/youtubeBackground"
 import { normalizeTags, queueSparkboardIndex } from "./lib/mediamake"
 
 initSaverBackground()
 initPinterestBulkBackground()
+initYouTubeBackground()
 
 const QUEUE_REQUEST_RATE_LIMIT_MS = 3000
 

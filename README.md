@@ -79,13 +79,40 @@ Rules:
 - Videos are saved as MP4 at up to 720p. Pinterest only plays videos as streams, so the extension finds the pin's MP4 file; for the few pins that have none, it downloads the stream and joins picture and sound into one MP4 (older pins become a `.ts` file).
 - The session belongs to that tab only and ends when you click Stop, close the tab, or quit the browser.
 
+### Download a YouTube video
+
+**On YouTube pages** (no popup needed):
+
+- **Under the video title** on a watch page: click **Download** to save the video in the best H.264 quality with sound (up to 1080p; the quality and size are shown next to the button). Click the arrow next to it to pick another quality, audio only, or video only.
+- **On any thumbnail** (home, search, sidebar, channel pages, Shorts): hover it and click **Download** in its bottom-left corner. That saves the same best-quality MP4 without opening the video.
+
+A progress card appears in the top-right corner of the page: × cancels a running download, **Show** opens a finished file in its folder. Live streams can be downloaded only after they end. Turn the buttons off with the **YouTube download** switch in the Saver tab.
+
+**From the popup's YouTube tab:**
+
+1. Open a YouTube video (a `watch` page, a Short, or a live replay) in the current tab, then open the popup's **YouTube** tab. It shows the video's title, channel and length.
+2. Pick what to save:
+   - **Video + audio**: one MP4 with sound, up to 1080p in H.264 (higher when YouTube offers AV1 for the video)
+   - **Video only**: picture without sound, every resolution YouTube has, including VP9 WebM up to 4K
+   - **Audio only**: M4A (AAC) or WebM (Opus)
+3. Choose a **Quality** (the estimated size is shown) and click **Download**. The file goes to your Downloads folder, named after the video, for example `Video title (1080p).mp4`.
+
+Progress shows under **Downloads** in the tab, and keeps going if you close the popup. Click × to cancel, or the folder icon to show a finished file.
+
+Notes:
+
+- YouTube stores picture and sound as separate streams; for **Video + audio** the extension downloads both and merges them into one MP4 without re-encoding.
+- The whole file is held in memory until it's saved, so very long videos at high quality need a lot of RAM.
+- Videos that need sign-in (age-restricted, members-only, private) and paid or DRM-protected content can't be downloaded. Only download videos you have the right to save.
+
 ### Turn overlays on or off (Saver tab)
 
-The **Saver** tab controls where overlays appear. It has three switches:
+The **Saver** tab controls where overlays appear. It has four switches:
 
 - **All savers**: every overlay, including the Suno upload panel
 - **Save button**: the Save buttons
 - **AI analyse**: the Save + AI, AI Only, and View AI buttons
+- **YouTube download**: the Download buttons on YouTube thumbnails and under the video title
 
 Pick where a change applies with **Apply changes to**, then flip a switch:
 

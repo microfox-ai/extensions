@@ -4,6 +4,7 @@ import {
   Eye,
   EyeOff,
   Globe,
+  MonitorPlay,
   Power,
   Sparkles,
   X
@@ -16,6 +17,7 @@ import {
   isAnySaverActive,
   isPinterestHost,
   isSaverActive,
+  isYouTubeHost,
   loadSaverRules,
   readSaverRules,
   resolveSaverFeature,
@@ -62,6 +64,12 @@ const FEATURES: {
     label: "AI analyse",
     hint: "Save + AI, AI Only and View AI buttons",
     icon: <Sparkles size={16} />
+  },
+  {
+    id: "youtube",
+    label: "YouTube download",
+    hint: "Download buttons on YouTube thumbnails and under the video title",
+    icon: <MonitorPlay size={16} />
   }
 ]
 
@@ -291,6 +299,9 @@ export function SaverTab() {
       : "On by default"
     if (feature === "ai" && isWebPage && !isPinterestHost(hostname)) {
       return `${base} · only appears on Pinterest`
+    }
+    if (feature === "youtube" && isWebPage && !isYouTubeHost(hostname)) {
+      return `${base} · only appears on YouTube`
     }
     return base
   }
