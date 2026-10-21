@@ -37,7 +37,8 @@
       "scripting",
       "storage",
       "activeTab",
-      "contextMenus"
+      "contextMenus",
+      "downloads"
     ],
     "background": {
       "service_worker": "background.ts"

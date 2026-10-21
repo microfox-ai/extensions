@@ -58,6 +58,25 @@ On Pinterest the overlay has more options:
 
 On suno.com, an **Upload to Mediamake** panel appears under the open track's Remix/Edit button.
 
+### Bulk download from Pinterest (Pinterest tab)
+
+Saves every pin image you browse in a Pinterest tab, page after page, until you stop it.
+
+1. Open Pinterest, then open the popup's **Pinterest** tab.
+2. Under **Bulk download**, pick where images go:
+   - **Browser downloads**: every image is saved into the same folder inside your Downloads folder (for example `Downloads/pinterest-2026-10-21`)
+   - **Mediamake**: every image is uploaded with the same tags (pre-filled from Settings). Uses the API Endpoint, API Key and Default Project from Settings
+3. Set **Max images per page** (empty means no limit), then click **Start downloading this tab**.
+4. Browse normally: scroll, open pins, search. Each new page contributes up to the limit, including pins loaded as you scroll.
+5. Click **Stop** when done. The panel shows saved, queued and failed counts while it runs.
+
+Rules:
+
+- A page you go back to (Back button, or clicking to it again) is skipped, so it's never downloaded twice. A page is its path, plus the query on search pages.
+- An image that already appeared on an earlier page is not saved again.
+- Images are saved at original resolution when Pinterest has it, otherwise at 736px wide.
+- The session belongs to that tab only and ends when you click Stop, close the tab, or quit the browser.
+
 ### Turn overlays on or off (Saver tab)
 
 The **Saver** tab controls where overlays appear. It has three switches:

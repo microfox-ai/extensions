@@ -5,8 +5,11 @@ import {
 } from "./workflows/midjourney"
 import { startSunoWorkflow } from "./workflows/suno"
 import { initSaverBackground } from "./lib/saverBackground"
+import { initPinterestBulkBackground } from "./lib/pinterestBulkBackground"
+import { normalizeTags, queueSparkboardIndex } from "./lib/mediamake"
 
 initSaverBackground()
+initPinterestBulkBackground()
 
 const QUEUE_REQUEST_RATE_LIMIT_MS = 3000
 
@@ -67,23 +70,6 @@ const updateQueueItemStatus = (
 }
 
 const queueTriggerWaiters = new Map<string, () => void>()
-
-const normalizeTags = (input: unknown): string[] => {
-  if (Array.isArray(input)) {
-    const clean = input
-      .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
-      .filter((entry) => entry.length > 0)
-    return clean.length > 0 ? Array.from(new Set(clean)) : ["pinterest"]
-  }
-  if (typeof input === "string") {
-    const clean = input
-      .split(",")
-      .map((entry) => entry.trim())
-      .filter((entry) => entry.length > 0)
-    return clean.length > 0 ? Array.from(new Set(clean)) : ["pinterest"]
-  }
-  return ["pinterest"]
-}
 
 const waitForQueueItemTriggered = (queueItemId: string) =>
   new Promise<void>((resolve) => {
@@ -479,93 +465,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     )
     return true
   } else if (request.action === "queueSparkboardIndex") {
-    chrome.storage.local.get(
-      ["apiEndpoint", "apiKey", "selectedProjectId"],
-      async (result) => {
-        const baseUrl =
-          (typeof result.apiEndpoint === "string" && result.apiEndpoint) || ""
-        if (!baseUrl || typeof baseUrl !== "string") {
-          sendResponse({
-            success: false,
-            message: "Missing API Endpoint in Settings."
-          })
-          return
-        }
-
-        const headers: HeadersInit = {
-          "Content-Type": "application/json"
-        }
-        if (result.apiKey && typeof result.apiKey === "string") {
-          headers["Authorization"] = `Bearer ${result.apiKey}`
-        }
-
-        const projectId =
-          typeof result.selectedProjectId === "string" &&
-          result.selectedProjectId.trim().length > 0
-            ? result.selectedProjectId.trim()
-            : typeof request.projectId === "string" && request.projectId.trim().length > 0
-            ? request.projectId.trim()
-            : undefined
-
-        const tags = normalizeTags(request.tags)
-        const input = {
-          tags,
-          ...(projectId ? { projectId } : {}),
-          ...(request.clientId ? { clientId: request.clientId } : {}),
-          contentType: "image",
-          contentMimeType: request.contentMimeType || "image/jpeg",
-          contentSubType: request.contentSubType || "jpeg",
-          contentSource: request.contentSource || "pinterest",
-          contentSourceUrl:
-            request.contentSourceUrl || request.sourceUrl || request.filePath,
-          sourceUrl: request.sourceUrl,
-          fileName: request.fileName || `pinterest-${Date.now()}.jpg`,
-          ...(typeof request.fileSize === "number"
-            ? { fileSize: Number(request.fileSize) }
-            : {}),
-          ...(typeof request.filePath === "string" && request.filePath
-            ? { filePath: request.filePath }
-            : {}),
-          uploadFolder: request.uploadFolder,
-          metadata: request.metadata || {},
-          analyzeImage: request.analyzeImage === true,
-          generateDescription: request.generateDescription === true,
-          generateKeywords: request.generateKeywords === true
-        }
-
-        const endpoint = `${baseUrl.replace(/\/+$/, "")}/api/workflows/workers/sparkboard-index`
-        try {
-          const resp = await fetch(endpoint, {
-            method: "POST",
-            headers,
-            body: JSON.stringify({
-              input,
-              await: false
-            })
-          })
-          const data = await resp.json().catch(() => ({}))
-          if (!resp.ok) {
-            sendResponse({
-              success: false,
-              message: data?.error || `Worker dispatch failed: ${resp.status}`
-            })
-            return
-          }
-          sendResponse({
-            success: true,
-            data
-          })
-        } catch (error) {
-          sendResponse({
-            success: false,
-            message:
-              error instanceof Error
-                ? error.message
-                : "Unexpected error while queueing sparkboard worker."
-          })
-        }
-      }
-    )
+    queueSparkboardIndex(request).then(sendResponse)
     return true
   } else if (request.action === "scrapeMidjourney") {
     chrome.tabs.query(

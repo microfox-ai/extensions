@@ -8,8 +8,11 @@ This is a [Plasmo extension](https://docs.plasmo.com/) project bootstrapped with
 | --- | --- |
 | `popup.tsx` | Popup shell and header tabs. Set `hidden: true` in `TABS` to hide a tab (Suno and AI Agents are hidden) |
 | `componenets/` | One component per popup tab (`SaverTab.tsx`, `MidjourneyTab.tsx`, ...) |
-| `content.ts` | Content script: Save / AI overlays on images, the Suno upload panel |
+| `content.ts` | Content script: Save / AI overlays on images, the Suno upload panel, the Pinterest bulk-download collector |
 | `background.ts` | Service worker: API calls, Midjourney queue, Suno upload |
+| `lib/mediamake.ts` | Mediamake sparkboard-index upload, shared by the Save overlay and bulk download |
+| `lib/pinterestBulk.ts` | Pinterest bulk download: session types, pin image URL parsing, page keys |
+| `lib/pinterestBulkBackground.ts` | Pinterest bulk download sessions (one per tab): per-page limits, skipping revisited pages, the download / upload queue |
 | `lib/saverRules.ts` | Saver toggle rules (page / site / window / everywhere) shared by popup, content script, and background |
 | `lib/saverBackground.ts` | Toolbar "OFF" badge, right-click menu, window-rule cleanup |
 

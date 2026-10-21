@@ -7,6 +7,7 @@ import {
   type SaverFeature,
   type SaverRule
 } from "./lib/saverRules"
+import { pinImageIdFromElement, pinterestPageKey } from "./lib/pinterestBulk"
 
 console.log("Content script loaded.")
 
@@ -1078,6 +1079,100 @@ if (isPinterestPage) {
   )
 }
 
+// Pinterest bulk download: while the popup has a session running for this tab,
+// report every page the tab visits and the pin images on it. The background
+// worker applies the per-page limit, skips pages already visited this session
+// and does the saving.
+function initPinterestBulkCollector() {
+  let pageKey: string | null = null
+  let collecting = false
+  let sentIds = new Set<string>()
+  let scanTimer: number | undefined
+  let urlTimer: number | undefined
+
+  const scan = () => {
+    scanTimer = undefined
+    if (!collecting || !pageKey) return
+    const images: { id: string; alt: string }[] = []
+    document.querySelectorAll("img").forEach((img) => {
+      const id = pinImageIdFromElement(img)
+      if (!id || sentIds.has(id)) return
+      sentIds.add(id)
+      images.push({ id, alt: img.alt || "" })
+    })
+    if (images.length === 0) return
+    const key = pageKey
+    chrome.runtime.sendMessage(
+      {
+        action: "pinterestBulkAddImages",
+        pageKey: key,
+        pageUrl: window.location.href,
+        images
+      },
+      (response) => {
+        if (chrome.runtime.lastError) return
+        if (pageKey === key && response?.done) collecting = false
+      }
+    )
+  }
+
+  const scheduleScan = () => {
+    if (!collecting || scanTimer !== undefined) return
+    scanTimer = window.setTimeout(scan, 400)
+  }
+
+  const enterPage = () => {
+    const key = pinterestPageKey(window.location.href)
+    pageKey = key
+    collecting = false
+    sentIds = new Set()
+    chrome.runtime.sendMessage(
+      { action: "pinterestBulkEnterPage", pageKey: key },
+      (response) => {
+        if (chrome.runtime.lastError || pageKey !== key) return
+        collecting = Boolean(response?.collect)
+        scheduleScan()
+      }
+    )
+  }
+
+  // Infinite scroll adds pins, and lazy images get their src late.
+  const observer = new MutationObserver(scheduleScan)
+
+  const setActive = (active: boolean) => {
+    observer.disconnect()
+    window.clearInterval(urlTimer)
+    pageKey = null
+    collecting = false
+    if (!active) return
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["src", "srcset"]
+    })
+    // Pinterest navigates without reloading the page.
+    urlTimer = window.setInterval(() => {
+      if (pinterestPageKey(window.location.href) !== pageKey) enterPage()
+    }, 500)
+    enterPage()
+  }
+
+  const sync = () =>
+    chrome.runtime.sendMessage({ action: "pinterestBulkStatus" }, (response) => {
+      if (chrome.runtime.lastError) return
+      setActive(Boolean(response?.active))
+    })
+
+  chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
+    if (request?.action !== "pinterestBulkSync") return
+    sync()
+    // The background treats a missing reply as "content script not loaded".
+    sendResponse({ ok: true })
+  })
+  sync()
+}
+
 function createOverlayButton(
   mediaElement: HTMLImageElement | HTMLVideoElement
 ) {
@@ -1330,6 +1425,7 @@ if (isPinterestPage) {
     })
   })
   pinterestObserver.observe(document.body, { childList: true, subtree: true })
+  initPinterestBulkCollector()
 } else {
   // Initial run
   processMediaElements()
