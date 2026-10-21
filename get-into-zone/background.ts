@@ -9,6 +9,7 @@ import { initPinterestBulkBackground } from "./lib/pinterestBulkBackground"
 import { initYouTubeBackground } from "./lib/youtubeBackground"
 import { initPinterestVideoDownloads } from "./lib/pinterestVideoDownload"
 import { normalizeTags, queueSparkboardIndex } from "./lib/mediamake"
+import { initMcpBridge } from "./lib/mcpBridge"
 
 initSaverBackground()
 initPinterestBulkBackground()
@@ -93,7 +94,11 @@ const resolveQueueItemTriggered = (queueItemId: string) => {
   resolve()
 }
 
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+const handleMessage = (
+  request: any,
+  sender: chrome.runtime.MessageSender,
+  sendResponse: (response?: any) => void
+) => {
   if (request.action === "startWorkflow") {
     chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
       if (tabs.length > 0) {
@@ -747,4 +752,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       })
     }
   }
-})
+}
+
+chrome.runtime.onMessage.addListener(handleMessage)
+initMcpBridge(handleMessage)

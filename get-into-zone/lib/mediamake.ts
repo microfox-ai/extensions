@@ -58,6 +58,24 @@ async function loadConfig() {
   return { result, baseUrl, headers }
 }
 
+// A JSON request to the Mediamake API, authorized with the API key from Settings.
+export async function mediamakeFetch(path: string, init: RequestInit = {}) {
+  const { baseUrl, headers } = await loadConfig()
+  if (!baseUrl) throw new Error("Missing API Endpoint in Settings.")
+  const resp = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    headers: {
+      ...(init.body ? { "Content-Type": "application/json" } : {}),
+      ...headers
+    }
+  })
+  const data = await resp.json().catch(() => null)
+  if (!resp.ok) {
+    throw new Error(data?.error || `Mediamake request failed: ${resp.status}`)
+  }
+  return data
+}
+
 // A presigned S3 PUT for uploading a file the extension built itself.
 export async function getUploadUrl(
   filename: string,

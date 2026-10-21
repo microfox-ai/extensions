@@ -156,7 +156,7 @@ function pump(session: BulkSession) {
   }
 }
 
-async function startSession(request: any) {
+export async function startBulkSession(request: any) {
   const tabId = Number(request.tabId)
   const tab = await chrome.tabs.get(tabId).catch(() => undefined)
   let hostname = ""
@@ -213,7 +213,7 @@ async function startSession(request: any) {
   }
 }
 
-async function stopSession(tabId: number) {
+export async function stopBulkSession(tabId: number) {
   const session = await getSession(tabId)
   if (!session) return { success: true }
   session.active = false
@@ -221,6 +221,11 @@ async function stopSession(tabId: number) {
   await persist(session)
   await notifyTab(tabId)
   return { success: true }
+}
+
+export async function listBulkSessions() {
+  await loadSessions()
+  return [...sessions.values()]
 }
 
 async function enterPage(tabId: number | undefined, pageKey: string) {
@@ -296,10 +301,10 @@ export function initPinterestBulkBackground() {
     let response: Promise<unknown>
     switch (request?.action) {
       case "pinterestBulkStart":
-        response = startSession(request)
+        response = startBulkSession(request)
         break
       case "pinterestBulkStop":
-        response = stopSession(Number(request.tabId))
+        response = stopBulkSession(Number(request.tabId))
         break
       case "pinterestBulkStatus":
         response = getSession(sender.tab?.id).then((s) => ({

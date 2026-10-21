@@ -5,6 +5,7 @@ Simple Repo For Developing Extensions to support accelerated automations on loca
 | Folder | What it is |
 | --- | --- |
 | [`get-into-zone/`](get-into-zone) | **Get into zone**: a Chrome extension that adds Save / AI overlays to images on any site, automates Midjourney prompts, and sends media to Mediamake |
+| [`mcp/`](mcp) | **MCP server**: lets Claude (Claude Code, Claude Desktop) use the Get into zone extension in your browser |
 | [`midjourney-gen-workflow1/`](midjourney-gen-workflow1) | Standalone Midjourney generation script |
 
 ## Install Get into zone
@@ -137,6 +138,10 @@ Shortcuts:
 
 - **Toolbar badge**: the extension icon shows **OFF** when no overlay will appear on the current tab.
 - **Right-click menu**: right-click any page, then **Hide savers** (or **Show savers** when they're off) → *On this page / On this site / In this window / Everywhere*.
+
+### Let Claude use the extension (MCP)
+
+With the [MCP server](mcp) set up, Claude can run everything above for you ("download this YouTube video at 720p", "bulk-download this Pinterest board"). In **Settings**, **Let Claude use this extension (MCP)** turns this on or off; it shows **Connected to Claude** while the server runs. Setup steps are in [`mcp/README.md`](mcp/README.md).
 
 ### Automate Midjourney (Midjourney tab)
 

@@ -39,7 +39,8 @@
       "activeTab",
       "contextMenus",
       "downloads",
-      "offscreen"
+      "offscreen",
+      "alarms"
     ],
     "background": {
       "service_worker": "background.ts"
