@@ -7,6 +7,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
 
 import { Bridge } from "./bridge.js"
+import { toSource } from "./sources.js"
 
 const PORT = Number(process.env.GET_INTO_ZONE_PORT) || 17892
 const bridge = new Bridge(PORT, process.env.GET_INTO_ZONE_EXTENSION_ID || undefined)
@@ -26,13 +27,20 @@ const tabId = z.number().int().optional().describe("Browser tab id from list_tab
 const tags = z.array(z.string()).optional().describe("Mediamake tags. Defaults to the tags in the extension's Settings.")
 
 type Shape = Record<string, z.ZodType>
+type Params = Record<string, any>
 
 function tool(
   name: string,
   description: string,
   inputSchema: Shape,
   method: string,
-  options: { readOnly?: boolean; destructive?: boolean; timeoutMs?: number } = {}
+  options: {
+    readOnly?: boolean
+    destructive?: boolean
+    timeoutMs?: number | ((params: Params) => number)
+    // Rewrites the tool's arguments into the extension method's params.
+    prepare?: (params: Params) => Promise<Params>
+  } = {}
 ) {
   server.registerTool(
     name,
@@ -45,9 +53,15 @@ function tool(
         openWorldHint: true
       }
     },
-    async (params: Record<string, unknown>) => {
+    async (params: Params) => {
       try {
-        const result = await bridge.call(method, params, options.timeoutMs)
+        const timeoutMs =
+          typeof options.timeoutMs === "function" ? options.timeoutMs(params) : options.timeoutMs
+        const result = await bridge.call(
+          method,
+          options.prepare ? await options.prepare(params) : params,
+          timeoutMs
+        )
         return {
           content: [{ type: "text" as const, text: JSON.stringify(result ?? { ok: true }, null, 2) }]
         }
@@ -343,6 +357,119 @@ tool(
   { recordId: z.string().optional().describe('Prompt record id; default "random"') },
   "midjourney.loadPrompts",
   { readOnly: true }
+)
+
+// --- Midjourney images (API jobs) ---
+
+const image = (what: string) =>
+  z
+    .string()
+    .describe(
+      `${what}: an image URL, an absolute local file path (PNG, JPEG, WebP, GIF), or mj:<jobId>#<index> for a Midjourney result`
+    )
+const jobParams = {
+  mode: z.enum(["relaxed", "fast", "turbo"]).optional().describe('GPU speed; default "relaxed"'),
+  private: z.boolean().optional().describe("Stealth mode (Pro and Mega plans)"),
+  extraFlags: z
+    .string()
+    .optional()
+    .describe('Other Midjourney parameters, e.g. "--raw --stylize 250 --v 8.2"'),
+  wait: z.boolean().optional().describe("Wait for the images (default true). False returns the job id right away"),
+  timeoutMs: z
+    .number()
+    .int()
+    .min(0)
+    .max(1_800_000)
+    .optional()
+    .describe("How long to wait for the images (default 240000). On timeout, poll midjourney_job_status")
+}
+const WAIT_MS = 240_000
+const jobTimeout = (p: Params) => (p.wait === false ? 0 : (p.timeoutMs ?? WAIT_MS)) + 120_000
+const withWait = (p: Params) => ({ ...p, timeoutMs: p.timeoutMs ?? WAIT_MS })
+
+tool(
+  "midjourney_outcrop",
+  "Outcrops (outpaints) an image with Midjourney: places it in a larger frame of the given aspect ratio and fills the " +
+    "empty area to match the prompt, like the Editor's Move + aspect ratio + Submit edit. Returns 4 images.",
+  {
+    image: image("The image to extend"),
+    prompt: z.string().min(1).describe("What the whole image should look like, e.g. \"anime digital art\""),
+    aspectRatio: z.string().describe('New frame, e.g. "16:9", "9:16", "1:1", "3:2" (up to 4:1)'),
+    anchor: z
+      .enum(["center", "left", "right", "top", "bottom", "top-left", "top-right", "bottom-left", "bottom-right"])
+      .optional()
+      .describe("Where the original sits in the new frame (default center); new content fills the other side"),
+    scale: z
+      .number()
+      .min(0.05)
+      .max(1)
+      .optional()
+      .describe("Shrinks the original inside the frame (default 1 = as large as fits). 0.6 adds new content on every side (zoom out)"),
+    offsetX: z.number().int().optional().describe("Nudge in frame pixels after anchoring"),
+    offsetY: z.number().int().optional(),
+    ...jobParams
+  },
+  "midjourney.outcrop",
+  {
+    timeoutMs: jobTimeout,
+    prepare: async ({ image: source, offsetX, offsetY, ...p }) => ({
+      ...withWait(p),
+      source: await toSource(source),
+      offset: { x: offsetX ?? 0, y: offsetY ?? 0 }
+    })
+  }
+)
+tool(
+  "midjourney_generate",
+  "Creates images on Midjourney's Create page, optionally from your images: imagePrompts guide content and composition, " +
+    "styleReferences copy a look (--sref), omniReferences put a subject or character in the image (--oref), and editImage " +
+    "redraws that image to the prompt, e.g. in a different style (--edit). Returns 4 images.",
+  {
+    prompt: z.string().min(1).describe("Text prompt. Parameters can go here or in extraFlags"),
+    imagePrompts: z.array(image("Image prompt")).max(5).optional(),
+    styleReferences: z
+      .array(image("Style reference").or(z.string()))
+      .max(5)
+      .optional()
+      .describe("Images (or numeric sref codes) whose style to use"),
+    omniReferences: z.array(image("Omni reference")).max(1).optional(),
+    editImage: image("Image to restyle or edit").optional(),
+    ...jobParams
+  },
+  "midjourney.generate",
+  {
+    timeoutMs: jobTimeout,
+    prepare: async ({ imagePrompts, styleReferences, omniReferences, editImage, ...p }) => ({
+      ...withWait(p),
+      imagePrompts: await Promise.all((imagePrompts ?? []).map((v: string) => toSource(v))),
+      styleReferences: await Promise.all(
+        (styleReferences ?? []).map((v: string) => toSource(v, { allowStyleCode: true }))
+      ),
+      omniReferences: await Promise.all((omniReferences ?? []).map((v: string) => toSource(v))),
+      editImage: editImage ? await toSource(editImage) : undefined
+    })
+  }
+)
+tool(
+  "midjourney_job_status",
+  "Checks a Midjourney job started by midjourney_outcrop or midjourney_generate; with wait, waits until its images are ready.",
+  {
+    jobId: z.string(),
+    wait: z.boolean().optional(),
+    timeoutMs: jobParams.timeoutMs
+  },
+  "midjourney.jobStatus",
+  { readOnly: true, timeoutMs: jobTimeout, prepare: async (p) => (p.wait ? withWait(p) : p) }
+)
+tool(
+  "midjourney_download_images",
+  "Saves a Midjourney job's images to the browser's Downloads folder as <folder>/<jobId>_<index>.png.",
+  {
+    jobId: z.string(),
+    indexes: z.array(z.number().int().min(0).max(3)).optional().describe("Which images (default all 4)"),
+    folder: z.string().optional().describe('Subfolder of Downloads (default "midjourney")')
+  },
+  "midjourney.downloadImages"
 )
 
 await server.connect(new StdioServerTransport())

@@ -12,7 +12,9 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "inspect": "npx @modelcontextprotocol/inspector node dist/index.js"
+    "inspect": "npx @modelcontextprotocol/inspector node dist/index.js",
+    "pack:mcpb": "node scripts/pack-mcpb.mjs",
+    "install-skills": "node scripts/install-skills.mjs"
   },
   "engines": {
     "node": ">=18"
@@ -23,8 +25,10 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@anthropic-ai/mcpb": "^2.1.2",
     "@types/node": "^22.20.5",
     "@types/ws": "^8.18.2",
+    "esbuild": "^0.28.2",
     "typescript": "^5.9.3"
   }
 }

@@ -16,6 +16,13 @@ import {
   type McpBridgeState
 } from "./mcp"
 import { mediamakeFetch, queueSparkboardIndex } from "./mediamake"
+import {
+  downloadImages,
+  frameSize,
+  generate,
+  outcrop,
+  waitForJob
+} from "./midjourneyApi"
 import { parseTags, sanitizeFolder, type BulkSession } from "./pinterestBulk"
 import {
   listBulkSessions,
@@ -36,6 +43,7 @@ import {
   type SaverFeature,
   type SaverScope
 } from "./saverRules"
+import { openTab } from "./tabs"
 import { buildOptions, parseVideoId, type YtMode, type YtVideo } from "./youtube"
 import {
   cancelJob,
@@ -95,38 +103,6 @@ async function activeTab() {
 
 const getTab = async (tabId?: number) =>
   typeof tabId === "number" ? chrome.tabs.get(tabId) : activeTab()
-
-const waitForTabLoad = (tabId: number, timeoutMs = 30_000) =>
-  new Promise<chrome.tabs.Tab>((resolve, reject) => {
-    const done = (finish: () => void) => {
-      clearTimeout(timer)
-      chrome.tabs.onUpdated.removeListener(listener)
-      finish()
-    }
-    const listener = (
-      id: number,
-      info: chrome.tabs.TabChangeInfo,
-      tab: chrome.tabs.Tab
-    ) => {
-      if (id === tabId && info.status === "complete") done(() => resolve(tab))
-    }
-    const timer = setTimeout(
-      () => done(() => reject(new Error("The tab took too long to load."))),
-      timeoutMs
-    )
-    chrome.tabs.onUpdated.addListener(listener)
-    chrome.tabs.get(tabId).then(
-      (tab) => {
-        if (tab.status === "complete" && !tab.pendingUrl) done(() => resolve(tab))
-      },
-      (error) => done(() => reject(error))
-    )
-  })
-
-async function openTab(url: string, active = true, waitForLoad = true) {
-  const tab = await chrome.tabs.create({ url, active })
-  return waitForLoad ? waitForTabLoad(tab.id!) : tab
-}
 
 async function loadSettings() {
   return chrome.storage.local.get([
@@ -504,7 +480,13 @@ const commands: Record<string, (params: any) => Promise<unknown>> = {
   "midjourney.loadPrompts": async ({ recordId }) => {
     const id = encodeURIComponent(String(recordId || "random"))
     return mediamakeFetch(`/api/midjourney-prompts/${id}/prompts?includeTag=true`)
-  }
+  },
+  "midjourney.outcrop": outcrop,
+  "midjourney.generate": generate,
+  "midjourney.jobStatus": async ({ jobId, wait, timeoutMs }) =>
+    waitForJob(String(jobId), 4, wait ? timeoutMs : 0),
+  "midjourney.downloadImages": downloadImages,
+  "midjourney.frameSize": async ({ aspectRatio }) => frameSize(String(aspectRatio))
 }
 
 // --- Connection ---
@@ -577,6 +559,9 @@ async function connect() {
       version: chrome.runtime.getManifest().version,
       extensionId: chrome.runtime.id
     })
+    chrome.windows.getLastFocused().then((window) => {
+      if (window.focused) send(ws, { type: "focus", focused: true })
+    })
     // Traffic every 20s keeps the service worker alive while connected.
     pingTimer = setInterval(() => send(ws, { type: "ping" }), PING_MS)
   }
@@ -616,6 +601,14 @@ export function initMcpBridge(handler: MessageHandler) {
       disconnect()
       retryMs = 2000
       connect()
+    }
+  })
+
+  // Each Chrome profile connects separately; the server sends calls without a
+  // tabId to the profile the user was in last.
+  chrome.windows.onFocusChanged.addListener((windowId) => {
+    if (socket && windowId !== chrome.windows.WINDOW_ID_NONE) {
+      send(socket, { type: "focus", focused: true })
     }
   })
 

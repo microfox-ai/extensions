@@ -5,6 +5,10 @@
 // first copy listens on the port (the hub) and later copies connect to it as
 // peers; the hub forwards their requests to the extension. When the hub exits,
 // a peer takes over the port.
+//
+// Each Chrome profile runs its own copy of the extension, so several can be
+// connected at once. A call with a tabId goes to the profile that has that tab;
+// other calls go to the profile whose window was focused last.
 
 import { WebSocket, WebSocketServer } from "ws"
 
@@ -16,6 +20,17 @@ interface ExtensionInfo {
   extensionId?: string
   connectedAt: string
 }
+
+interface Extension {
+  ws: WebSocket
+  info: ExtensionInfo
+  // When a window of this profile was last focused (0 = not known).
+  focusedAt: number
+}
+
+// Calls answered by every profile, with the results joined into one list.
+const LIST_METHODS = new Set(["tabs.list", "pinterest.bulkStatus"])
+const OWNER_LOOKUP_MS = 5000
 
 interface Pending {
   ws: WebSocket
@@ -40,7 +55,7 @@ export class Bridge {
   private mode: "hub" | "peer" | null = null
   private starting?: Promise<void>
   private hub?: WebSocket
-  private extensions: { ws: WebSocket; info: ExtensionInfo }[] = []
+  private extensions: Extension[] = []
   private waiters = new Set<() => void>()
   private pending = new Map<number, Pending>()
   private nextId = 1
@@ -135,14 +150,18 @@ export class Bridge {
               version: message.version,
               extensionId: message.extensionId,
               connectedAt: new Date().toISOString()
-            }
+            },
+            focusedAt: 0
           })
           console.error(`[bridge] extension ${message.version ?? ""} connected`)
           this.waiters.forEach((wake) => wake())
         }
         return
       }
-      if (role === "extension" && message.type === "response") {
+      if (role === "extension" && message.type === "focus") {
+        const extension = this.extensions.find((e) => e.ws === ws)
+        if (extension && message.focused) extension.focusedAt = Date.now()
+      } else if (role === "extension" && message.type === "response") {
         this.onResponse(message)
       } else if (role === "peer" && message.type === "request") {
         const { id, method, params, timeoutMs } = message
@@ -162,24 +181,64 @@ export class Bridge {
     return {
       port: this.port,
       bridgePid: process.pid,
-      extensions: this.extensions.map((e) => e.info)
+      extensions: this.extensions.map((e, i) => ({
+        profile: i + 1,
+        ...e.info,
+        default: this.extensions.length > 1 && e === this.focused()
+      }))
     }
   }
 
-  private async callExtension(method: string, params: unknown, timeoutMs: number) {
+  private async callExtension(method: string, params: any, timeoutMs: number) {
     if (method === "bridge.status") return this.status()
-    const ws = (await this.waitForExtension()).ws
-    return this.request(ws, method, { params }, timeoutMs)
+    await this.waitForExtension()
+    const tabId = typeof params?.tabId === "number" ? params.tabId : undefined
+    if (this.extensions.length > 1 && LIST_METHODS.has(method) && tabId === undefined) {
+      return this.callAll(method, params, timeoutMs)
+    }
+    const extension = (tabId !== undefined && (await this.tabOwner(tabId))) || this.focused()
+    return this.request(extension.ws, method, { params }, timeoutMs)
+  }
+
+  /** The profile focused most recently, or the newest one if none has said. */
+  private focused() {
+    return this.extensions.reduce((best, e) => (e.focusedAt >= best.focusedAt ? e : best))
+  }
+
+  private async tabOwner(tabId: number) {
+    if (this.extensions.length < 2) return undefined
+    const owners = await Promise.all(
+      this.extensions.map((e) =>
+        this.request(e.ws, "tabs.list", { params: {} }, OWNER_LOOKUP_MS).then(
+          (tabs) => (tabs as { id: number }[]).some((tab) => tab.id === tabId),
+          () => false
+        )
+      )
+    )
+    const candidates = this.extensions.filter((_, i) => owners[i])
+    return candidates.length ? candidates.reduce((best, e) => (e.focusedAt >= best.focusedAt ? e : best)) : undefined
+  }
+
+  /** Asks every profile and joins the lists, marking each entry with its profile. */
+  private async callAll(method: string, params: unknown, timeoutMs: number) {
+    const lists = await Promise.all(
+      this.extensions.map((e, i) =>
+        this.request(e.ws, method, { params }, timeoutMs).then(
+          (items) => (items as object[]).map((item) => ({ ...item, profile: i + 1 })),
+          () => []
+        )
+      )
+    )
+    return lists.flat()
   }
 
   private waitForExtension() {
-    const newest = () => this.extensions[this.extensions.length - 1]
-    if (newest()) return Promise.resolve(newest())
-    return new Promise<(typeof this.extensions)[number]>((resolve, reject) => {
+    if (this.extensions.length) return Promise.resolve()
+    return new Promise<void>((resolve, reject) => {
       const wake = () => {
         clearTimeout(timer)
         this.waiters.delete(wake)
-        resolve(newest())
+        resolve()
       }
       const timer = setTimeout(() => {
         this.waiters.delete(wake)
