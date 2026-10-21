@@ -14,6 +14,8 @@ This is a [Plasmo extension](https://docs.plasmo.com/) project bootstrapped with
 | `lib/pinterestBulk.ts` | Pinterest bulk download: session types, pin image and video URL parsing, page keys |
 | `lib/pinterestBulkBackground.ts` | Pinterest bulk download sessions (one per tab): per-page limits, skipping revisited pages, the download / upload queue |
 | `lib/pinterestVideoBackground.ts` | Saves one Pinterest video: finds its MP4, or falls back to HLS through `tabs/offscreen.tsx`. Shares the single offscreen-document slot with the YouTube downloader |
+| `contents/pinterest.ts` | Content script on Pinterest: Download button on video pins, progress cards |
+| `lib/pinterestVideoDownload.ts` | One-click Pinterest video downloads from that button: jobs, progress, cancel |
 | `lib/hls.ts` | Downloads an HLS stream (best variant plus its audio rendition) into one MP4, or a `.ts` for MPEG-TS streams |
 | `tabs/offscreen.tsx` | Offscreen document that turns Pinterest HLS videos into blob URLs for download or Mediamake upload |
 | `contents/youtube.ts` | Content script on youtube.com: Download button on thumbnails and under the watch-page title, progress cards |

@@ -5,8 +5,9 @@
 export const SAVER_RULES_KEY = "saverRules"
 
 // "all" is the master switch: it covers every overlay (Save button, AI
-// buttons, the YouTube download buttons and the Suno upload panel). "save",
-// "ai" and "youtube" are individual savers.
+// buttons, the download buttons and the Suno upload panel). "save", "ai" and
+// "youtube" are individual savers. "youtube" covers every download button
+// (YouTube and Pinterest videos); the id is what saved rules store.
 export type SaverFeature = "all" | "save" | "ai" | "youtube"
 export type SaverScope = "page" | "site" | "window" | "all"
 
@@ -105,10 +106,14 @@ export function isAnySaverActive(rules: SaverRule[], ctx: SaverContext) {
   if (!url || !isSaverActive(rules, "all", ctx)) return false
   if (isSunoHost(url.hostname)) return true
   if (isSaverActive(rules, "save", ctx)) return true
-  if (isYouTubeHost(url.hostname) && isSaverActive(rules, "youtube", ctx)) {
+  const pinterest = isPinterestHost(url.hostname)
+  if (
+    (pinterest || isYouTubeHost(url.hostname)) &&
+    isSaverActive(rules, "youtube", ctx)
+  ) {
     return true
   }
-  return isPinterestHost(url.hostname) && isSaverActive(rules, "ai", ctx)
+  return pinterest && isSaverActive(rules, "ai", ctx)
 }
 
 // Turn a saver on or off at `scope` for the given context. Rules for the same

@@ -91,7 +91,7 @@ const el = <K extends keyof HTMLElementTagNameMap>(
 }
 
 // ---------------------------------------------------------------------------
-// Saver toggle: the buttons follow the "YouTube download" switch in the Saver tab.
+// Saver toggle: the buttons follow the "Download buttons" switch in the Saver tab.
 
 let saverRules: SaverRule[] = []
 let saverWindowId: number | undefined

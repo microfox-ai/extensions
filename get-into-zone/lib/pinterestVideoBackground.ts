@@ -50,7 +50,7 @@ async function ensureOffscreen() {
   await creatingOffscreen
 }
 
-async function withOffscreen<T>(work: () => Promise<T>): Promise<T> {
+export async function withOffscreen<T>(work: () => Promise<T>): Promise<T> {
   offscreenUsers++
   try {
     await ensureOffscreen()
@@ -66,7 +66,7 @@ async function withOffscreen<T>(work: () => Promise<T>): Promise<T> {
   }
 }
 
-async function callOffscreen<T>(message: Record<string, unknown>): Promise<T> {
+export async function callOffscreen<T>(message: Record<string, unknown>): Promise<T> {
   let response: any
   // Right after creation the document may not be listening yet.
   for (let attempt = 1; attempt <= 5 && !response; attempt++) {
@@ -93,7 +93,7 @@ async function firstAvailable(urls: string[]) {
   return urls[ok.indexOf(true)]
 }
 
-async function resolveVideo(id: string) {
+export async function resolveVideo(id: string) {
   const sources = pinVideoSources(id)
   const mp4 = await firstAvailable(sources.mp4)
   if (mp4) return { type: "mp4" as const, url: mp4 }

@@ -79,6 +79,12 @@ Rules:
 - Videos are saved as MP4 at up to 720p. Pinterest only plays videos as streams, so the extension finds the pin's MP4 file; for the few pins that have none, it downloads the stream and joins picture and sound into one MP4 (older pins become a `.ts` file).
 - The session belongs to that tab only and ends when you click Stop, close the tab, or quit the browser.
 
+### Download one Pinterest video
+
+Hover a video pin anywhere on Pinterest (home feed, search, boards) and click **Download** in its bottom-left corner. On a video pin's own page the button stays visible on the video. The video is saved to your Downloads folder as an MP4 of up to 720p, named after the pin, for example `Pin title [1a2b3c4d].mp4`.
+
+A progress card appears in the top-right corner of the page: × cancels a running download, **Show** opens a finished file in its folder. Turn the button off with the **Download buttons** switch in the Saver tab.
+
 ### Download a YouTube video
 
 **On YouTube pages** (no popup needed):
@@ -86,7 +92,7 @@ Rules:
 - **Under the video title** on a watch page: click **Download** to save the video in the best H.264 quality with sound (up to 1080p; the quality and size are shown next to the button). Click the arrow next to it to pick another quality, audio only, or video only.
 - **On any thumbnail** (home, search, sidebar, channel pages, Shorts): hover it and click **Download** in its bottom-left corner. That saves the same best-quality MP4 without opening the video.
 
-A progress card appears in the top-right corner of the page: × cancels a running download, **Show** opens a finished file in its folder. Live streams can be downloaded only after they end. Turn the buttons off with the **YouTube download** switch in the Saver tab.
+A progress card appears in the top-right corner of the page: × cancels a running download, **Show** opens a finished file in its folder. Live streams can be downloaded only after they end. Turn the buttons off with the **Download buttons** switch in the Saver tab.
 
 **From the popup's YouTube tab:**
 
@@ -112,7 +118,7 @@ The **Saver** tab controls where overlays appear. It has four switches:
 - **All savers**: every overlay, including the Suno upload panel
 - **Save button**: the Save buttons
 - **AI analyse**: the Save + AI, AI Only, and View AI buttons
-- **YouTube download**: the Download buttons on YouTube thumbnails and under the video title
+- **Download buttons**: the Download buttons on YouTube thumbnails, under the YouTube video title, and on Pinterest video pins
 
 Pick where a change applies with **Apply changes to**, then flip a switch:
 

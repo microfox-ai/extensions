@@ -67,8 +67,8 @@ const FEATURES: {
   },
   {
     id: "youtube",
-    label: "YouTube download",
-    hint: "Download buttons on YouTube thumbnails and under the video title",
+    label: "Download buttons",
+    hint: "Download buttons on YouTube videos and Pinterest video pins",
     icon: <MonitorPlay size={16} />
   }
 ]
@@ -300,8 +300,13 @@ export function SaverTab() {
     if (feature === "ai" && isWebPage && !isPinterestHost(hostname)) {
       return `${base} · only appears on Pinterest`
     }
-    if (feature === "youtube" && isWebPage && !isYouTubeHost(hostname)) {
-      return `${base} · only appears on YouTube`
+    if (
+      feature === "youtube" &&
+      isWebPage &&
+      !isYouTubeHost(hostname) &&
+      !isPinterestHost(hostname)
+    ) {
+      return `${base} · only appears on YouTube and Pinterest`
     }
     return base
   }
