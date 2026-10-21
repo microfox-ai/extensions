@@ -10,6 +10,8 @@ The extension connects out to the server, so the server never needs browser acce
 
 ## Setup
 
+With Claude Code, open this repo and ask Claude to "set up get-into-zone": the [`get-into-zone-setup`](../.claude/skills/get-into-zone-setup/SKILL.md) skill runs the steps below and tells you which ones to do in Chrome.
+
 ### Claude Desktop: one-click install
 
 1. Get `get-into-zone.mcpb`, or build it yourself (Node 18+):
