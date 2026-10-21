@@ -3,34 +3,44 @@
 // chrome.storage.session, so it ends when the tab closes or the browser quits.
 
 export type BulkDestination = "browser" | "mediamake"
+export type BulkItemKind = "image" | "video"
 
-export interface BulkImage {
+export interface BulkItem {
+  kind: BulkItemKind
   id: string
   pageKey: string
   pageUrl: string
   alt: string
 }
 
+export interface BulkPageCount {
+  images: number
+  videos: number
+}
+
 export interface BulkSession {
   tabId: number
   active: boolean
   destination: BulkDestination
-  // Subfolder of the browser's Downloads folder.
+  // Subfolders of the browser's Downloads folder.
   folder: string
+  includeVideos: boolean
+  videoFolder: string
   // Mediamake tags.
   tags: string[]
-  // Max images taken from one page; 0 means no limit.
+  // Max images, and separately max videos, taken from one page; 0 means no limit.
   perPageLimit: number
   startedAt: number
-  // Every page visited this session -> images taken from it. A page in here is
-  // never collected again, even when the user navigates back to it.
-  pages: Record<string, number>
+  // Every page visited this session -> what was taken from it. A page in here
+  // is never collected again, even when the user navigates back to it.
+  pages: Record<string, BulkPageCount>
   currentPage: string | null
   currentPageRevisited: boolean
-  // Image ids already taken this session, across all pages.
+  // Keys (see bulkItemKey) of everything taken this session, across all pages.
   seen: string[]
-  pending: BulkImage[]
+  pending: BulkItem[]
   saved: number
+  savedVideos: number
   failed: number
   lastError?: string
 }
@@ -38,9 +48,14 @@ export interface BulkSession {
 export interface BulkPrefs {
   destination: BulkDestination
   folder: string
+  includeVideos: boolean
+  videoFolder: string
   tags: string
   perPageLimit: number
 }
+
+export const bulkItemKey = (item: { kind: BulkItemKind; id: string }) =>
+  `${item.kind}:${item.id}`
 
 export const BULK_SESSION_PREFIX = "pinterestBulk:"
 export const BULK_PREFS_KEY = "pinterestBulkPrefs"
@@ -75,6 +90,44 @@ export const pinImageUrls = (id: string) => [
   `https://i.pinimg.com/originals/${id}`,
   `https://i.pinimg.com/736x/${id}`
 ]
+
+// Video pins play through MSE, so <video src> is a blob: URL. The poster
+// (i.pinimg.com/videos/thumbnails/originals/<ab>/<cd>/<ef>/<hash>.0000000.jpg)
+// carries the hash of the video files on v1.pinimg.com, which is the video id.
+const PIN_VIDEO_POSTER_RE =
+  /^https?:\/\/i\.pinimg\.com\/videos\/thumbnails\/[^/]+\/([0-9a-f]{2}\/[0-9a-f]{2}\/[0-9a-f]{2}\/[0-9a-f]{32})/i
+
+export const pinVideoId = (url: string): string | null =>
+  PIN_VIDEO_POSTER_RE.exec(url.trim())?.[1]?.toLowerCase() ?? null
+
+export function pinVideoIdFromElement(
+  el: HTMLVideoElement | HTMLImageElement
+): string | null {
+  const url =
+    el instanceof HTMLVideoElement
+      ? el.getAttribute("poster") || ""
+      : el.currentSrc || el.src
+  return url ? pinVideoId(url) : null
+}
+
+// Where a video's files live, best first. Most videos have a progressive MP4
+// at one of these paths even when Pinterest's API only lists the HLS stream;
+// the rest are HLS only.
+export function pinVideoSources(id: string) {
+  const base = "https://v1.pinimg.com/videos"
+  return {
+    mp4: [
+      `${base}/iht/expMp4/${id}_720w.mp4`,
+      `${base}/iht/720p/${id}.mp4`,
+      `${base}/mc/720p/${id}.mp4`
+    ],
+    hls: [
+      `${base}/iht/hls/${id}.m3u8`,
+      `${base}/mc/hls/${id}.m3u8`,
+      `${base}/iht/hls/v2/${id}.m3u8`
+    ]
+  }
+}
 
 // A page is its path, plus the search query on search pages. Other query
 // params (rs=typed, tracking ids, ...) and the hash are ignored.

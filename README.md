@@ -60,21 +60,23 @@ On suno.com, an **Upload to Mediamake** panel appears under the open track's Rem
 
 ### Bulk download from Pinterest (Pinterest tab)
 
-Saves every pin image you browse in a Pinterest tab, page after page, until you stop it.
+Saves every pin image and video you browse in a Pinterest tab, page after page, until you stop it.
 
 1. Open Pinterest, then open the popup's **Pinterest** tab.
 2. Under **Bulk download**, pick where images go:
-   - **Browser downloads**: every image is saved into the same folder inside your Downloads folder (for example `Downloads/pinterest-2026-10-21`)
-   - **Mediamake**: every image is uploaded with the same tags (pre-filled from Settings). Uses the API Endpoint, API Key and Default Project from Settings
-3. Set **Max images per page** (empty means no limit), then click **Start downloading this tab**.
-4. Browse normally: scroll, open pins, search. Each new page contributes up to the limit, including pins loaded as you scroll.
-5. Click **Stop** when done. The panel shows saved, queued and failed counts while it runs.
+   - **Browser downloads**: every image is saved into the same folder inside your Downloads folder (for example `Downloads/pinterest-2026-10-21`), and videos into a separate folder (default: a `videos` folder inside it)
+   - **Mediamake**: every image and video is uploaded with the same tags (pre-filled from Settings). Uses the API Endpoint, API Key and Default Project from Settings
+3. Untick **Also download videos** if you only want images.
+4. Set **Max images, and videos, per page** (empty means no limit), then click **Start downloading this tab**.
+5. Browse normally: scroll, open pins, search. Each new page contributes up to the limit, including pins loaded as you scroll.
+6. Click **Stop** when done. The panel shows saved images and videos, queued and failed counts while it runs.
 
 Rules:
 
 - A page you go back to (Back button, or clicking to it again) is skipped, so it's never downloaded twice. A page is its path, plus the query on search pages.
 - An image that already appeared on an earlier page is not saved again.
 - Images are saved at original resolution when Pinterest has it, otherwise at 736px wide.
+- Videos are saved as MP4 at up to 720p. Pinterest only plays videos as streams, so the extension finds the pin's MP4 file; for the few pins that have none, it downloads the stream and joins picture and sound into one MP4 (older pins become a `.ts` file).
 - The session belongs to that tab only and ends when you click Stop, close the tab, or quit the browser.
 
 ### Turn overlays on or off (Saver tab)

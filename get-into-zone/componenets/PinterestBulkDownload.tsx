@@ -60,6 +60,9 @@ export function PinterestBulkDownload() {
   const [folder, setFolder] = useState(
     `pinterest-${new Date().toISOString().slice(0, 10)}`
   )
+  const [includeVideos, setIncludeVideos] = useState(true)
+  // Empty means "<folder>/videos".
+  const [videoFolder, setVideoFolder] = useState("")
   const [tags, setTags] = useState("pinterest")
   const [limit, setLimit] = useState(DEFAULT_LIMIT)
   const [busy, setBusy] = useState(false)
@@ -74,6 +77,10 @@ export function PinterestBulkDownload() {
         setDestination(prefs.destination)
       }
       if (prefs?.folder) setFolder(prefs.folder)
+      if (typeof prefs?.includeVideos === "boolean") {
+        setIncludeVideos(prefs.includeVideos)
+      }
+      if (prefs?.videoFolder) setVideoFolder(prefs.videoFolder)
       if (typeof prefs?.perPageLimit === "number") {
         setLimit(prefs.perPageLimit > 0 ? String(prefs.perPageLimit) : "")
       }
@@ -115,10 +122,14 @@ export function PinterestBulkDownload() {
     if (!tab) return
     const perPageLimit = Math.max(0, Math.floor(Number(limit) || 0))
     const cleanFolder = sanitizeFolder(folder)
+    const cleanVideoFolder = videoFolder.trim() ? sanitizeFolder(videoFolder) : ""
     setFolder(cleanFolder)
+    setVideoFolder(cleanVideoFolder)
     const prefs: BulkPrefs = {
       destination,
       folder: cleanFolder,
+      includeVideos,
+      videoFolder: cleanVideoFolder,
       tags,
       perPageLimit
     }
@@ -132,6 +143,8 @@ export function PinterestBulkDownload() {
         tabId: tab.id,
         destination,
         folder: cleanFolder,
+        includeVideos,
+        videoFolder: cleanVideoFolder,
         tags: parseTags(tags),
         perPageLimit
       },
@@ -160,28 +173,37 @@ export function PinterestBulkDownload() {
 
   const renderRunning = (s: BulkSession) => {
     const current = s.currentPage
-    const currentTaken = current ? s.pages[current] ?? 0 : 0
+    const counts = current ? s.pages[current] : undefined
+    const progress = (taken = 0) =>
+      s.perPageLimit > 0 ? `${taken} / ${s.perPageLimit}` : String(taken)
     return (
       <>
         <div style={{ fontSize: 12, color: "#444", marginBottom: 8 }}>
           {s.destination === "browser" ? (
             <>
-              Saving to <strong>Downloads/{s.folder}</strong>
+              Images to <strong>Downloads/{s.folder}</strong>
+              {s.includeVideos && (
+                <>
+                  , videos to <strong>Downloads/{s.videoFolder}</strong>
+                </>
+              )}
             </>
           ) : (
             <>
-              Uploading to Mediamake with tags{" "}
+              Uploading {s.includeVideos ? "images and videos" : "images"} to
+              Mediamake with tags{" "}
               <strong>{s.tags.length > 0 ? s.tags.join(", ") : "pinterest"}</strong>
             </>
           )}
           {" · "}
           {s.perPageLimit > 0
-            ? `up to ${s.perPageLimit} per page`
+            ? `up to ${s.perPageLimit} ${s.includeVideos ? "of each " : ""}per page`
             : "no per-page limit"}
         </div>
 
         <div style={{ display: "flex", gap: 6 }}>
-          <Stat label="Saved" value={s.saved} />
+          <Stat label="Images" value={s.saved} />
+          {s.includeVideos && <Stat label="Videos" value={s.savedVideos} />}
           <Stat label="Queued" value={s.pending.length} />
           <Stat label="Failed" value={s.failed} />
           <Stat label="Pages" value={pageCount} />
@@ -201,9 +223,8 @@ export function PinterestBulkDownload() {
             This page ({current}):{" "}
             {s.currentPageRevisited
               ? "visited earlier, skipped"
-              : s.perPageLimit > 0
-              ? `${currentTaken} / ${s.perPageLimit}`
-              : `${currentTaken} images`}
+              : `${progress(counts?.images)} images` +
+                (s.includeVideos ? `, ${progress(counts?.videos)} videos` : "")}
           </div>
         )}
 
@@ -277,17 +298,47 @@ export function PinterestBulkDownload() {
         })}
       </div>
 
+      <label
+        style={{
+          ...labelStyle,
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          cursor: "pointer"
+        }}>
+        <input
+          type="checkbox"
+          checked={includeVideos}
+          onChange={(e) => setIncludeVideos(e.target.checked)}
+        />
+        Also download videos
+      </label>
+
       {destination === "browser" ? (
-        <label style={labelStyle}>
-          Folder inside Downloads
-          <input
-            type="text"
-            value={folder}
-            onChange={(e) => setFolder(e.target.value)}
-            placeholder="pinterest"
-            style={inputStyle}
-          />
-        </label>
+        <>
+          <label style={labelStyle}>
+            Images folder (inside Downloads)
+            <input
+              type="text"
+              value={folder}
+              onChange={(e) => setFolder(e.target.value)}
+              placeholder="pinterest"
+              style={inputStyle}
+            />
+          </label>
+          {includeVideos && (
+            <label style={labelStyle}>
+              Videos folder (inside Downloads)
+              <input
+                type="text"
+                value={videoFolder}
+                onChange={(e) => setVideoFolder(e.target.value)}
+                placeholder={`${sanitizeFolder(folder)}/videos`}
+                style={inputStyle}
+              />
+            </label>
+          )}
+        </>
       ) : (
         <label style={labelStyle}>
           Tags (comma-separated)
@@ -302,7 +353,7 @@ export function PinterestBulkDownload() {
       )}
 
       <label style={labelStyle}>
-        Max images per page
+        Max {includeVideos ? "images, and videos," : "images"} per page
         <input
           type="number"
           min={0}
@@ -318,7 +369,8 @@ export function PinterestBulkDownload() {
 
       {session && (
         <div style={{ fontSize: 11, color: "#777", marginTop: 8 }}>
-          Last run in this tab: {session.saved} saved
+          Last run in this tab: {session.saved} images
+          {session.savedVideos > 0 ? `, ${session.savedVideos} videos` : ""}
           {session.failed > 0 ? `, ${session.failed} failed` : ""} from{" "}
           {pageCount} page{pageCount === 1 ? "" : "s"}.
         </div>

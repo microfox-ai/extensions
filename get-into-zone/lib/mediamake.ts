@@ -16,6 +16,7 @@ export const normalizeTags = (input: unknown): string[] => {
 }
 
 export interface SparkboardIndexRequest {
+  contentType?: "image" | "video"
   sourceUrl?: string
   tags?: unknown
   projectId?: string
@@ -40,25 +41,50 @@ export interface MediamakeResult {
   data?: unknown
 }
 
-export async function queueSparkboardIndex(
-  request: SparkboardIndexRequest
-): Promise<MediamakeResult> {
+async function loadConfig() {
   const result = await chrome.storage.local.get([
     "apiEndpoint",
     "apiKey",
     "selectedProjectId"
   ])
   const baseUrl =
-    (typeof result.apiEndpoint === "string" && result.apiEndpoint) || ""
-  if (!baseUrl || typeof baseUrl !== "string") {
+    typeof result.apiEndpoint === "string"
+      ? result.apiEndpoint.replace(/\/+$/, "")
+      : ""
+  const headers: Record<string, string> = {}
+  if (result.apiKey && typeof result.apiKey === "string") {
+    headers["Authorization"] = `Bearer ${result.apiKey}`
+  }
+  return { result, baseUrl, headers }
+}
+
+// A presigned S3 PUT for uploading a file the extension built itself.
+export async function getUploadUrl(
+  filename: string,
+  contentType: string
+): Promise<{ uploadUrl: string; publicUrl: string }> {
+  const { baseUrl, headers } = await loadConfig()
+  if (!baseUrl) throw new Error("Missing API Endpoint in Settings.")
+  const query = new URLSearchParams({ filename, contentType })
+  const resp = await fetch(`${baseUrl}/api/upload-url?${query}`, { headers })
+  const data = await resp.json().catch(() => ({}))
+  if (!resp.ok || !data?.uploadUrl || !data?.publicUrl) {
+    throw new Error(data?.error || `Upload URL request failed: ${resp.status}`)
+  }
+  return data
+}
+
+export async function queueSparkboardIndex(
+  request: SparkboardIndexRequest
+): Promise<MediamakeResult> {
+  const { result, baseUrl, headers: authHeaders } = await loadConfig()
+  if (!baseUrl) {
     return { success: false, message: "Missing API Endpoint in Settings." }
   }
 
   const headers: HeadersInit = {
-    "Content-Type": "application/json"
-  }
-  if (result.apiKey && typeof result.apiKey === "string") {
-    headers["Authorization"] = `Bearer ${result.apiKey}`
+    "Content-Type": "application/json",
+    ...authHeaders
   }
 
   const projectId =
@@ -75,7 +101,7 @@ export async function queueSparkboardIndex(
     tags,
     ...(projectId ? { projectId } : {}),
     ...(request.clientId ? { clientId: request.clientId } : {}),
-    contentType: "image",
+    contentType: request.contentType || "image",
     contentMimeType: request.contentMimeType || "image/jpeg",
     contentSubType: request.contentSubType || "jpeg",
     contentSource: request.contentSource || "pinterest",
@@ -96,7 +122,7 @@ export async function queueSparkboardIndex(
     generateKeywords: request.generateKeywords === true
   }
 
-  const endpoint = `${baseUrl.replace(/\/+$/, "")}/api/workflows/workers/sparkboard-index`
+  const endpoint = `${baseUrl}/api/workflows/workers/sparkboard-index`
   try {
     const resp = await fetch(endpoint, {
       method: "POST",

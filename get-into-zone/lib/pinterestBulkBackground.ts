@@ -1,13 +1,16 @@
 import { queueSparkboardIndex } from "./mediamake"
 import {
   BULK_SESSION_PREFIX,
+  bulkItemKey,
   bulkSessionKey,
   pinImageUrls,
   sanitizeFolder,
   type BulkDestination,
-  type BulkImage,
+  type BulkItem,
+  type BulkItemKind,
   type BulkSession
 } from "./pinterestBulk"
+import { saveVideo } from "./pinterestVideoBackground"
 import { isPinterestHost } from "./saverRules"
 
 const CONCURRENCY: Record<BulkDestination, number> = {
@@ -81,7 +84,7 @@ async function resolveImageUrl(id: string) {
   return fallback
 }
 
-async function saveImage(session: BulkSession, image: BulkImage) {
+async function saveImage(session: BulkSession, image: BulkItem) {
   const url = await resolveImageUrl(image.id)
   const fileName = image.id.split("/").pop()!
 
@@ -125,14 +128,17 @@ function pump(session: BulkSession) {
   }
 
   while (running.size < CONCURRENCY[session.destination]) {
-    const image = session.pending.find((item) => !running!.has(item.id))
-    if (!image) return
-    running.add(image.id)
+    const item = session.pending.find((p) => !running!.has(bulkItemKey(p)))
+    if (!item) return
+    const key = bulkItemKey(item)
+    running.add(key)
 
-    saveImage(session, image)
+    const save = item.kind === "video" ? saveVideo : saveImage
+    save(session, item)
       .then(
         () => {
-          session.saved++
+          if (item.kind === "video") session.savedVideos++
+          else session.saved++
         },
         (error) => {
           session.failed++
@@ -141,8 +147,8 @@ function pump(session: BulkSession) {
         }
       )
       .finally(() => {
-        running!.delete(image.id)
-        session.pending = session.pending.filter((item) => item.id !== image.id)
+        running!.delete(key)
+        session.pending = session.pending.filter((p) => bulkItemKey(p) !== key)
         if (sessions.get(session.tabId) !== session) return
         persist(session)
         pump(session)
@@ -173,11 +179,14 @@ async function startSession(request: any) {
   }
 
   const limit = Number(request.perPageLimit)
+  const folder = sanitizeFolder(String(request.folder ?? ""))
   const session: BulkSession = {
     tabId,
     active: true,
     destination,
-    folder: sanitizeFolder(String(request.folder ?? "")),
+    folder,
+    includeVideos: request.includeVideos !== false,
+    videoFolder: sanitizeFolder(String(request.videoFolder || `${folder}/videos`)),
     tags: Array.isArray(request.tags) ? request.tags : [],
     perPageLimit: Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 0,
     startedAt: Date.now(),
@@ -187,6 +196,7 @@ async function startSession(request: any) {
     seen: [],
     pending: [],
     saved: 0,
+    savedVideos: 0,
     failed: 0
   }
   await loadSessions()
@@ -219,12 +229,12 @@ async function enterPage(tabId: number | undefined, pageKey: string) {
   const visited = pageKey in session.pages
   session.currentPage = pageKey
   session.currentPageRevisited = visited
-  if (!visited) session.pages[pageKey] = 0
+  if (!visited) session.pages[pageKey] = { images: 0, videos: 0 }
   await persist(session)
-  return { collect: !visited }
+  return { collect: !visited, videos: session.includeVideos }
 }
 
-async function addImages(tabId: number | undefined, request: any) {
+async function addItems(tabId: number | undefined, request: any) {
   const session = await getSession(tabId)
   const { pageKey } = request
   if (
@@ -237,33 +247,41 @@ async function addImages(tabId: number | undefined, request: any) {
 
   const seen = seenSet(session)
   const limit = session.perPageLimit
-  let taken = session.pages[pageKey] ?? 0
+  const counts = (session.pages[pageKey] ??= { images: 0, videos: 0 })
+  const full = (kind: BulkItemKind) =>
+    limit > 0 && (kind === "video" ? counts.videos : counts.images) >= limit
   let accepted = 0
-  const images: { id?: unknown; alt?: unknown }[] = Array.isArray(request.images)
-    ? request.images
-    : []
+  const items: { kind?: unknown; id?: unknown; alt?: unknown }[] =
+    Array.isArray(request.items) ? request.items : []
 
-  for (const image of images) {
-    if (limit > 0 && taken >= limit) break
-    if (typeof image.id !== "string" || seen.has(image.id)) continue
-    seen.add(image.id)
-    session.seen.push(image.id)
+  for (const raw of items) {
+    const kind: BulkItemKind = raw.kind === "video" ? "video" : "image"
+    if (kind === "video" && !session.includeVideos) continue
+    if (typeof raw.id !== "string" || full(kind)) continue
+    const key = bulkItemKey({ kind, id: raw.id })
+    if (seen.has(key)) continue
+    seen.add(key)
+    session.seen.push(key)
     session.pending.push({
-      id: image.id,
+      kind,
+      id: raw.id,
       pageKey,
       pageUrl: typeof request.pageUrl === "string" ? request.pageUrl : "",
-      alt: typeof image.alt === "string" ? image.alt : ""
+      alt: typeof raw.alt === "string" ? raw.alt : ""
     })
-    taken++
+    if (kind === "video") counts.videos++
+    else counts.images++
     accepted++
   }
 
-  session.pages[pageKey] = taken
   if (accepted > 0) {
     await persist(session)
     pump(session)
   }
-  return { accepted, done: limit > 0 && taken >= limit }
+  return {
+    accepted,
+    done: full("image") && (!session.includeVideos || full("video"))
+  }
 }
 
 export function initPinterestBulkBackground() {
@@ -291,8 +309,8 @@ export function initPinterestBulkBackground() {
       case "pinterestBulkEnterPage":
         response = enterPage(sender.tab?.id, request.pageKey)
         break
-      case "pinterestBulkAddImages":
-        response = addImages(sender.tab?.id, request)
+      case "pinterestBulkAddItems":
+        response = addItems(sender.tab?.id, request)
         break
       default:
         return

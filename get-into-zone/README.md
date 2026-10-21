@@ -11,8 +11,12 @@ This is a [Plasmo extension](https://docs.plasmo.com/) project bootstrapped with
 | `content.ts` | Content script: Save / AI overlays on images, the Suno upload panel, the Pinterest bulk-download collector |
 | `background.ts` | Service worker: API calls, Midjourney queue, Suno upload |
 | `lib/mediamake.ts` | Mediamake sparkboard-index upload, shared by the Save overlay and bulk download |
-| `lib/pinterestBulk.ts` | Pinterest bulk download: session types, pin image URL parsing, page keys |
+| `lib/pinterestBulk.ts` | Pinterest bulk download: session types, pin image and video URL parsing, page keys |
 | `lib/pinterestBulkBackground.ts` | Pinterest bulk download sessions (one per tab): per-page limits, skipping revisited pages, the download / upload queue |
+| `lib/pinterestVideoBackground.ts` | Saves one Pinterest video: finds its MP4, or falls back to HLS through `tabs/offscreen.tsx`. Shares the single offscreen-document slot with the YouTube downloader |
+| `lib/hls.ts` | Downloads an HLS stream (best variant plus its audio rendition) into one MP4, or a `.ts` for MPEG-TS streams |
+| `tabs/offscreen.tsx` | Offscreen document that turns Pinterest HLS videos into blob URLs for download or Mediamake upload |
+| `lib/mp4Merge.ts` | Muxes a video-only and an audio-only fragmented MP4 into one file, no re-encoding |
 | `lib/saverRules.ts` | Saver toggle rules (page / site / window / everywhere) shared by popup, content script, and background |
 | `lib/saverBackground.ts` | Toolbar "OFF" badge, right-click menu, window-rule cleanup |
 

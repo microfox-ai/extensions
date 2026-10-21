@@ -7,7 +7,12 @@ import {
   type SaverFeature,
   type SaverRule
 } from "./lib/saverRules"
-import { pinImageIdFromElement, pinterestPageKey } from "./lib/pinterestBulk"
+import {
+  pinImageIdFromElement,
+  pinVideoIdFromElement,
+  pinterestPageKey,
+  type BulkItemKind
+} from "./lib/pinterestBulk"
 
 console.log("Content script loaded.")
 
@@ -1080,34 +1085,54 @@ if (isPinterestPage) {
 }
 
 // Pinterest bulk download: while the popup has a session running for this tab,
-// report every page the tab visits and the pin images on it. The background
-// worker applies the per-page limit, skips pages already visited this session
-// and does the saving.
+// report every page the tab visits and the pin images and videos on it. The
+// background worker applies the per-page limit, skips pages already visited
+// this session and does the saving.
 function initPinterestBulkCollector() {
   let pageKey: string | null = null
   let collecting = false
-  let sentIds = new Set<string>()
+  let includeVideos = false
+  let sentKeys = new Set<string>()
   let scanTimer: number | undefined
   let urlTimer: number | undefined
 
   const scan = () => {
     scanTimer = undefined
     if (!collecting || !pageKey) return
-    const images: { id: string; alt: string }[] = []
+    const items: { kind: BulkItemKind; id: string; alt: string }[] = []
+    const add = (kind: BulkItemKind, id: string | null, alt: string) => {
+      if (!id || sentKeys.has(`${kind}:${id}`)) return
+      sentKeys.add(`${kind}:${id}`)
+      items.push({ kind, id, alt })
+    }
+
+    const videoCards = new Set<Element>()
+    if (includeVideos) {
+      document
+        .querySelectorAll<HTMLVideoElement | HTMLImageElement>("video[poster], img")
+        .forEach((el) => {
+          const id = pinVideoIdFromElement(el)
+          if (!id) return
+          const card = el.closest("[data-grid-item]")
+          if (card) videoCards.add(card)
+          add("video", id, card?.querySelector("img[alt]")?.getAttribute("alt") || "")
+        })
+    }
     document.querySelectorAll("img").forEach((img) => {
-      const id = pinImageIdFromElement(img)
-      if (!id || sentIds.has(id)) return
-      sentIds.add(id)
-      images.push({ id, alt: img.alt || "" })
+      // A video pin's cover image is skipped when its video is being saved.
+      const card = img.closest("[data-grid-item]")
+      if (card && videoCards.has(card)) return
+      add("image", pinImageIdFromElement(img), img.alt || "")
     })
-    if (images.length === 0) return
+
+    if (items.length === 0) return
     const key = pageKey
     chrome.runtime.sendMessage(
       {
-        action: "pinterestBulkAddImages",
+        action: "pinterestBulkAddItems",
         pageKey: key,
         pageUrl: window.location.href,
-        images
+        items
       },
       (response) => {
         if (chrome.runtime.lastError) return
@@ -1125,12 +1150,13 @@ function initPinterestBulkCollector() {
     const key = pinterestPageKey(window.location.href)
     pageKey = key
     collecting = false
-    sentIds = new Set()
+    sentKeys = new Set()
     chrome.runtime.sendMessage(
       { action: "pinterestBulkEnterPage", pageKey: key },
       (response) => {
         if (chrome.runtime.lastError || pageKey !== key) return
         collecting = Boolean(response?.collect)
+        includeVideos = Boolean(response?.videos)
         scheduleScan()
       }
     )
@@ -1149,7 +1175,7 @@ function initPinterestBulkCollector() {
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["src", "srcset"]
+      attributeFilter: ["src", "srcset", "poster"]
     })
     // Pinterest navigates without reloading the page.
     urlTimer = window.setInterval(() => {
