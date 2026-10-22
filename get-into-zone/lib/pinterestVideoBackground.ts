@@ -81,15 +81,21 @@ export async function callOffscreen<T>(message: Record<string, unknown>): Promis
   return response as T
 }
 
-async function firstAvailable(urls: string[]) {
-  const ok = await Promise.all(
-    urls.map((url) =>
-      fetch(url, { method: "HEAD" }).then(
-        (resp) => resp.ok,
-        () => false
-      )
-    )
+// Some of Pinterest's video URLs reject HEAD, so a ranged GET confirms them too.
+async function urlExists(url: string) {
+  const head = await fetch(url, { method: "HEAD" }).then(
+    (resp) => resp.ok,
+    () => false
   )
+  if (head) return true
+  const resp = await fetch(url, { headers: { Range: "bytes=0-0" } }).catch(() => null)
+  if (!resp) return false
+  await resp.body?.cancel().catch(() => {})
+  return resp.ok || resp.status === 206
+}
+
+async function firstAvailable(urls: string[]) {
+  const ok = await Promise.all(urls.map(urlExists))
   return urls[ok.indexOf(true)]
 }
 

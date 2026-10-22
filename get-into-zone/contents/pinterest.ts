@@ -1,7 +1,6 @@
 import type { PlasmoCSConfig } from "plasmo"
 
 import type { PinVideoJob } from "../lib/pinterestVideoDownload"
-import { pinVideoIdFromElement } from "../lib/pinterestBulk"
 import {
   SAVER_RULES_KEY,
   isPinterestHost,
@@ -96,22 +95,130 @@ const enabled = () =>
 // ---------------------------------------------------------------------------
 // Finding video pins
 
+// Logged-in pins usually have no poster: a cover image, a duration badge and a
+// /pin/<id> link. The hash only appears in a /videos/ URL, which logged-out pins have.
+const CARD_SELECTOR = [
+  "[data-test-id='pinWrapper']",
+  "[data-test-id='pin']",
+  "[data-test-id='pin-visual-wrapper']",
+  "[data-test-id='pinrep-video']",
+  "[data-test-id='gated-pin-rep']",
+  "[data-test-id='closeup-media-container']",
+  "[data-grid-item]"
+].join(", ")
+const VIDEO_MARKER = "[data-test-id='pinrep-video'], [data-test-id='gated-pin-video'], [data-test-id='pin-closeup-video']"
+const HASH_RE = /(?:^|\/)([0-9a-f]{2}\/[0-9a-f]{2}\/[0-9a-f]{2}\/[0-9a-f]{32})(?=[._/?#]|$)/i
+const DURATION_RE = /^\d{1,2}:\d{2}(?::\d{2})?$/
+
 interface PinVideo {
-  el: HTMLVideoElement | HTMLImageElement
+  el: HTMLElement
+  card: Element
+  // Set only when a /videos/ URL in the card carries the file hash.
   videoId: string
+  pinId: string
+  // Cover-image hash. Often the same file, but not always, so it's a fallback.
+  signature: string
+  key: string
+}
+
+let videos: PinVideo[] = []
+
+function urlsIn(card: Element) {
+  const urls: string[] = []
+  const nodes: Element[] = [card, ...card.querySelectorAll("video, img, source")]
+  nodes.forEach((node) => {
+    if (node instanceof HTMLVideoElement) {
+      urls.push(node.getAttribute("poster") || "", node.currentSrc || "", node.src || "")
+    } else if (node instanceof HTMLImageElement) {
+      urls.push(node.currentSrc || "", node.src || "", node.srcset || "")
+    } else {
+      urls.push(node.getAttribute("src") || "")
+    }
+  })
+  return urls
+}
+
+function hashFrom(urls: string[], videosOnly: boolean) {
+  for (const url of urls) {
+    if (videosOnly && !/pinimg\.com\/videos\//i.test(url)) continue
+    const hash = HASH_RE.exec(url)?.[1]?.toLowerCase()
+    if (hash) return hash
+  }
+  return ""
+}
+
+function isVideoCard(card: Element) {
+  if (card instanceof HTMLVideoElement || card.matches(VIDEO_MARKER)) return true
+  if (card.querySelector(`video, ${VIDEO_MARKER}`)) return true
+  return [...card.querySelectorAll("[data-test-id='PinTypeIdentifier']")].some((badge) =>
+    DURATION_RE.test((badge.textContent || "").trim())
+  )
+}
+
+function pinIdFrom(card: Element) {
+  const attr =
+    card.getAttribute("data-test-pin-id") ||
+    card.querySelector("[data-test-pin-id]")?.getAttribute("data-test-pin-id") ||
+    ""
+  if (/^\d{5,20}$/.test(attr)) return attr
+  const href = [...card.querySelectorAll("a[href*='/pin/']")]
+    .map((link) => link.getAttribute("href") || "")
+    .find((value) => /\/pin\/\d{5,}/.test(value))
+  const fromHref = href?.match(/\/pin\/(\d{5,20})/)?.[1]
+  if (fromHref) return fromHref
+  if (card.matches("[data-test-id='closeup-media-container']")) {
+    return location.pathname.match(/^\/pin\/(\d{5,20})/)?.[1] || ""
+  }
+  return ""
+}
+
+function mediaBox(card: Element): HTMLElement | null {
+  let best: HTMLElement | null = null
+  let bestArea = 0
+  card.querySelectorAll("video, img").forEach((node) => {
+    if (!(node instanceof HTMLElement)) return
+    const rect = node.getBoundingClientRect()
+    const area = rect.width * rect.height
+    if (rect.width >= MIN_VIDEO_SIZE && rect.height >= MIN_VIDEO_SIZE && area > bestArea) {
+      best = node
+      bestArea = area
+    }
+  })
+  if (best) return best
+  if (!(card instanceof HTMLElement)) return null
+  const rect = card.getBoundingClientRect()
+  return rect.width >= MIN_VIDEO_SIZE && rect.height >= MIN_VIDEO_SIZE ? card : null
+}
+
+function describe(card: Element): PinVideo | null {
+  if (!isVideoCard(card)) return null
+  const el = mediaBox(card)
+  if (!el) return null
+  const urls = urlsIn(card)
+  const videoId = hashFrom(urls, true)
+  const pinId = pinIdFrom(card)
+  const signature = hashFrom(urls, false)
+  if (!videoId && !pinId && !signature) return null
+  return { el, card, videoId, pinId, signature, key: videoId || pinId || signature }
 }
 
 // Rebuilt on a timer: querying on every mouse move would be too slow on long boards.
-let videos: PinVideo[] = []
-
 function rescan() {
   const found: PinVideo[] = []
-  document
-    .querySelectorAll<HTMLVideoElement | HTMLImageElement>("video, img[src*='/videos/thumbnails/']")
-    .forEach((media) => {
-      const videoId = pinVideoIdFromElement(media)
-      if (videoId) found.push({ el: media, videoId })
-    })
+  const seen = new Set<Element>()
+  document.querySelectorAll(CARD_SELECTOR).forEach((card) => {
+    const described = describe(card)
+    if (!described || seen.has(described.el)) return
+    seen.add(described.el)
+    found.push(described)
+  })
+  document.querySelectorAll("video").forEach((video) => {
+    if (video.closest(CARD_SELECTOR) || seen.has(video)) return
+    const described = describe(video)
+    if (!described) return
+    seen.add(video)
+    found.push(described)
+  })
   videos = found
 }
 
@@ -154,26 +261,25 @@ function mainPinVideo() {
   return best
 }
 
-function titleFor(media: Element) {
-  if (/^\/pin\//.test(location.pathname)) {
-    const heading = document.querySelector("h1")?.textContent?.trim()
-    if (heading) return heading
-  }
-  const card = media.closest("[data-grid-item], [data-test-id='pinWrapper'], [role='listitem']")
-  // Logged-out cards are "gated" and carry no title; the file is then named after the video hash.
-  return (
-    card?.querySelector("a[href*='/pin/'][aria-label]")?.getAttribute("aria-label")?.trim() ||
-    card?.querySelector("[data-test-id*='title']")?.textContent?.trim() ||
-    card?.querySelector("img[alt]")?.getAttribute("alt")?.trim() ||
-    media.getAttribute("aria-label")?.trim() ||
+function titleFor(card: Element) {
+  const own =
+    card.querySelector("a[href*='/pin/'][aria-label]")?.getAttribute("aria-label")?.trim() ||
+    card.querySelector("[data-test-id*='title']")?.textContent?.trim() ||
+    card.querySelector("img[alt]")?.getAttribute("alt")?.trim() ||
     ""
-  )
+  if (own) return own
+  // Logged-out cards carry no title, and a related pin must not inherit the open pin's heading.
+  if (card.matches("[data-test-id='closeup-media-container']")) {
+    return document.querySelector("h1")?.textContent?.trim() || ""
+  }
+  return ""
 }
 
 // ---------------------------------------------------------------------------
 // The Download button
 
 const button = el("button", "btn", `${DOWNLOAD_ICON}<span>Download</span>`)
+button.type = "button"
 button.title = "Download this video"
 const buttonLabel = () => button.querySelector("span")!
 let hovered: PinVideo | null = null
@@ -187,7 +293,7 @@ function place() {
     button.style.display = "none"
     return
   }
-  if (target.videoId !== shown?.videoId && !button.disabled) buttonLabel().textContent = "Download"
+  if (target.key !== shown?.key && !button.disabled) buttonLabel().textContent = "Download"
   shown = target
   // Bottom-left: our Save / AI panel takes the top-left, Pinterest's own Save the top-right.
   button.style.left = `${rect.left + 12}px`
@@ -204,6 +310,18 @@ function onMouseMove(event: MouseEvent) {
   }
 }
 
+// Stop the press before Pinterest's card treats it as opening the pin.
+for (const type of ["pointerdown", "mousedown"] as const) {
+  button.addEventListener(
+    type,
+    (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+    },
+    true
+  )
+}
+
 button.addEventListener("click", async (event) => {
   event.preventDefault()
   event.stopPropagation()
@@ -215,7 +333,9 @@ button.addEventListener("click", async (event) => {
     const response = await chrome.runtime.sendMessage({
       action: "pinterestVideoDownload",
       videoId: target.videoId,
-      title: titleFor(target.el)
+      pinId: target.pinId,
+      signature: target.signature,
+      title: titleFor(target.card)
     })
     if (!response?.success) throw new Error(response?.message || "Couldn't start the download.")
   } catch (error) {
