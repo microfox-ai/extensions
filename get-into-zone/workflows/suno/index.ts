@@ -1,19 +1,25 @@
 import { config } from "../../config"
-import { scrapeSunoMusic } from "./scraper"
+import { scrapeSunoMusic, type SunoTrack } from "./scraper"
 
 export function startSunoWorkflow() {
   chrome.tabs.query({ url: config.sunoUrl }, (tabs) => {
     if (tabs.length > 0) {
       const tabId = tabs[0].id
+      if (tabId === undefined) return
       chrome.tabs.update(tabId, { active: true }, () => {
         executeSunoScript(tabId)
       })
     } else {
       chrome.tabs.create({ url: config.sunoUrl }, (tab) => {
-        const listener = (tabId, changeInfo) => {
-          if (tabId === tab.id && changeInfo.status === "complete") {
+        const listener = (
+          updatedTabId: number,
+          changeInfo: chrome.tabs.TabChangeInfo
+        ) => {
+          if (updatedTabId === tab.id && changeInfo.status === "complete") {
             setTimeout(() => {
-              executeSunoScript(tab.id)
+              if (tab.id !== undefined) {
+                executeSunoScript(tab.id)
+              }
               chrome.tabs.onUpdated.removeListener(listener)
             }, 2000)
           }
@@ -25,7 +31,7 @@ export function startSunoWorkflow() {
 }
 
 async function executeSunoScript(tabId: number) {
-  let allResults = []
+  let allResults: SunoTrack[] = []
   let previousHeight = 0
   let scrollCount = 0
   const maxScrolls = 50 // Prevent infinite loops
