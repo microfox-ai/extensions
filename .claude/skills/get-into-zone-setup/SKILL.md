@@ -74,7 +74,7 @@ The build lands in `get-into-zone/build/chrome-mv3-prod`. Loading it is somethin
 
 Loading from a *different* folder than before gives the extension a new ID, so its settings start empty. If the user already has it loaded from a release zip, either keep that copy (if it's 0.2.0 or newer, the MCP bridge is included) or remove it so only one copy is installed.
 
-For more than one Chrome profile, load the extension in each profile that should be usable. Tools given a `tabId` go to the profile that owns the tab; others go to the profile used most recently.
+For more than one Chrome profile, load the extension in each profile that should be usable, and suggest giving each a **Profile name** in the popup's Settings so they're easy to tell apart (otherwise they show up by Google account). Each Claude session then works in one profile: when two or more are connected, ask the user which one to use (show `list_profiles`), call `use_profile` with their answer, and never pick one for them.
 
 ## 6. Turn on the connection
 
@@ -92,14 +92,14 @@ A newly registered or rebuilt server is only picked up when Claude starts it:
 Then call `get_status`. Success looks like:
 
 ```json
-{ "port": 17892, "bridgePid": 12345, "extensions": [{ "profile": 1, "version": "0.2.0", ... }] }
+{ "port": 17892, "bridgePid": 12345, "profiles": [{ "id": "…", "label": "Work", "version": "0.2.0", ... }], "sessionProfile": null }
 ```
 
-When it works, offer a quick test, such as `list_tabs`.
+With two or more profiles listed, ask the user which to use and call `use_profile` before anything else. When it works, offer a quick test, such as `list_tabs`.
 
 ## Optional extras
 
-- **Midjourney skills**: `cd mcp && npm run install-skills` links the `midjourney-outcrop`, `midjourney-style-reference` and `midjourney-restyle` skills into `~/.claude/skills`.
+- **Midjourney skills**: `cd mcp && npm run install-skills` links the `midjourney-outcrop`, `midjourney-repaint`, `midjourney-style-reference`, `midjourney-restyle` and `midjourney-iterate` skills into `~/.claude/skills`.
 - **Mediamake**: saving to Mediamake needs the API endpoint and key in the popup's **Settings**. The user types the key there themselves; never ask for it in chat or write it to a file.
 - **Accept only this extension**: set `GET_INTO_ZONE_EXTENSION_ID` to the ID shown on `chrome://extensions` (`claude mcp add … -e GET_INTO_ZONE_EXTENSION_ID=<id>`, or the extension id field in Claude Desktop's settings for the bundle).
 
@@ -108,10 +108,11 @@ When it works, offer a quick test, such as `list_tabs`.
 | Symptom | Cause and fix |
 | --- | --- |
 | No `get-into-zone` tools in Claude | Server not registered or not started: check `claude mcp list`, then reconnect (step 7). |
-| `get_status` shows `"extensions": []`, or tools say the extension isn't connected | Extension not loaded, its MCP switch is off, or the ports differ. Check the status line under the switch. Wait 30 seconds after turning it on. |
+| `get_status` shows `"profiles": []`, or tools say the extension isn't connected | Extension not loaded, its MCP switch is off, or the ports differ. Check the status line under the switch. Wait 30 seconds after turning it on. |
 | Extension version below 0.2.0, or no MCP switch in Settings | An old build without the bridge. Rebuild and reload it (step 5). |
-| `get_status` lacks `profile` fields | The running server is older than the code: rebuild (step 3) and reconnect it (step 7). |
+| `get_status` has `extensions` instead of `profiles`, or there's no `use_profile` tool | The running server is older than the code: rebuild (step 3) and reconnect it (step 7). With Claude Code and Claude Desktop both open, restart both so neither runs the old bridge. |
 | `Port 17892 is in use by something else` | Another program owns the port. Pick another port in the extension's Settings and pass the same one as `GET_INTO_ZONE_PORT`. |
-| A tool acts in the wrong Chrome profile | Pass a `tabId` from `list_tabs`, or click into a window of the right profile first. |
+| A tool acts in the wrong Chrome profile | Call `use_profile` with the right one (from `list_profiles`); the choice lasts for the session. |
+| Two profiles show the same label, or `Profile 1a2b…` | Set a different **Profile name** in each profile's Settings. Profiles show a short id when they have no name and no signed-in Google account. |
 
 More detail: [`mcp/README.md`](../../../mcp/README.md) and the main [`README.md`](../../../README.md).

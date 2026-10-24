@@ -7,9 +7,12 @@ description: Outcrop (outpaint, uncrop, extend, zoom out) an image with Midjourn
 
 Extends an image beyond its edges with Midjourney's Editor. The image sits inside a bigger frame and Midjourney paints the empty area. It runs in the user's own Chrome through the `get-into-zone` MCP server, on their Midjourney account.
 
+To change a region inside the picture (erase an object, repaint a face, replace a detail), use `midjourney-repaint`. The user brushes that region in Chrome.
+
 ## Before you start
 
 - The `get-into-zone` MCP tools must be available. If a tool says the extension isn't connected, call `get_status` and tell the user to open Chrome with the Get into zone extension (Settings → "Let Claude use this extension" on).
+- If a tool says the extension is connected in several Chrome profiles, ask the user which profile to use (show `list_profiles`; it should be the one signed in to Midjourney), call `use_profile` with their answer, then carry on. Don't pick one yourself.
 - The user must be signed in to midjourney.com in that Chrome. Every outcrop uses their Midjourney GPU time.
 
 ## Steps

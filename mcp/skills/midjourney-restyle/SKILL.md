@@ -7,11 +7,12 @@ description: Redraw the user's own image in a different style with Midjourney (t
 
 Redraws an image the user provides to match a prompt. The image goes into Midjourney's Create page prompt bar as an **edit image** (not the Editor tab), so the result keeps its subject and composition while the prompt sets the new style or changes. It runs in the user's own Chrome through the `get-into-zone` MCP server, on their Midjourney account.
 
-To make new images that only borrow an image's look, use `midjourney-style-reference`. To extend an image past its edges, use `midjourney-outcrop`.
+To make new images that only borrow an image's look, use `midjourney-style-reference`. To extend an image past its edges, use `midjourney-outcrop`. To change only the part the user brushes over, use `midjourney-repaint`.
 
 ## Before you start
 
 - The `get-into-zone` MCP tools must be available. If a tool says the extension isn't connected, call `get_status` and tell the user to open Chrome with the Get into zone extension (Settings → "Let Claude use this extension" on).
+- If a tool says the extension is connected in several Chrome profiles, ask the user which profile to use (show `list_profiles`; it should be the one signed in to Midjourney), call `use_profile` with their answer, then carry on. Don't pick one yourself.
 - The user must be signed in to midjourney.com in that Chrome. Every job uses their Midjourney GPU time.
 
 ## Steps
