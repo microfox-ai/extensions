@@ -7,6 +7,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
 
 import { Bridge } from "./bridge.js"
+import { fillDistrokidReleases } from "./distrokid.js"
 import { toSource } from "./sources.js"
 
 const PORT = Number(process.env.GET_INTO_ZONE_PORT) || 17892
@@ -17,9 +18,14 @@ const server = new McpServer(
   {
     instructions:
       "Tools for the Get into zone browser extension running in the user's Chrome: bulk-download Pinterest pins, " +
-      "download YouTube videos, save media to Mediamake, toggle on-page saver overlays, upload Suno tracks and automate Midjourney. " +
+      "download YouTube videos and Instagram posts, reels and stories, save media to Mediamake, toggle on-page saver overlays, upload Suno tracks, automate Midjourney, " +
+      "and fill DistroKid's new-release form from local folders (one tab per release, never clicking Continue). " +
+      "midjourney_repaint opens a brush tab so the user can erase part of an image by hand; tell them to paint and click Repaint, then call midjourney_repaint_status. " +
       "Tools act on the user's real browser tabs; most take an optional tabId (see list_tabs) and default to the active tab. " +
-      "Downloads land in the browser's Downloads folder. Call get_status first if a tool says the extension isn't connected."
+      "Downloads land in the browser's Downloads folder. Call get_status first if a tool says the extension isn't connected. " +
+      "The extension may be installed in several Chrome profiles (accounts). When two or more are connected, ask the user which " +
+      "profile to use for this session before doing anything else (list_profiles shows them), then call use_profile; every tool " +
+      "then runs in that profile only. Never pick a profile on the user's behalf."
   }
 )
 
@@ -79,14 +85,33 @@ function tool(
 
 tool(
   "get_status",
-  "Shows whether the extension is connected to this server, and its version.",
+  "Shows whether the extension is connected, the Chrome profiles it's connected in, and which one this session uses.",
   {},
   "bridge.status",
   { readOnly: true }
 )
 tool(
+  "list_profiles",
+  "Lists the Chrome profiles the extension is connected in: number, name or Google account, open tab count and active tab. " +
+    "Show these to the user when asking which profile to use.",
+  {},
+  "bridge.profiles",
+  { readOnly: true }
+)
+tool(
+  "use_profile",
+  "Makes every tool in this session run in one Chrome profile. Call it with the profile the user chose; " +
+    "needed whenever the extension is connected in two or more profiles.",
+  {
+    profile: z
+      .union([z.string(), z.number().int()])
+      .describe("The profile's number, id, name or email, as shown by list_profiles")
+  },
+  "bridge.useProfile"
+)
+tool(
   "list_tabs",
-  "Lists the open browser tabs (id, url, title, active) so other tools can target one.",
+  "Lists the open browser tabs (id, url, title, active) of this session's Chrome profile so other tools can target one.",
   { urlPattern: z.string().optional().describe('Chrome match pattern, e.g. "*://*.pinterest.com/*"') },
   "tabs.list",
   { readOnly: true }
@@ -242,6 +267,36 @@ tool("youtube_cancel_download", "Cancels a running YouTube download.", { jobId: 
   destructive: true
 })
 tool("youtube_clear_finished", "Clears finished downloads from the list (files stay on disk).", {}, "youtube.clearFinished")
+
+// --- Instagram ---
+
+const instagramTarget = {
+  url: z.string().optional().describe("Instagram post, reel or story URL (story links need the item id; highlights aren't supported)"),
+  tabId: z.number().int().optional().describe("A tab showing the post, instead of url. Default: the active tab")
+}
+
+tool(
+  "instagram_get_post",
+  "Reads an Instagram post, reel or story: author, caption and each photo or video in it (numbered from 1 for carousels). " +
+    "Uses the user's logged-in Instagram session from any instagram.com tab; one opens in the background if none is open.",
+  instagramTarget,
+  "instagram.getPost",
+  { readOnly: true, timeoutMs: 60_000 }
+)
+tool(
+  "instagram_download",
+  "Downloads the photos and videos of an Instagram post, reel or story to the browser's Downloads folder at full size, " +
+    "and returns each saved file's path. Waits until the files are saved.",
+  {
+    ...instagramTarget,
+    items: z
+      .array(z.number().int().positive())
+      .optional()
+      .describe("Item numbers from instagram_get_post to save, e.g. [2]. Default: every item")
+  },
+  "instagram.download",
+  { timeoutMs: 300_000 }
+)
 
 // --- Saver overlays ---
 
@@ -420,6 +475,59 @@ tool(
   }
 )
 tool(
+  "midjourney_repaint",
+  "Opens a brush on the image in Chrome so the user can erase the parts Midjourney should repaint. Same Editor job as " +
+    "midjourney_outcrop (transparent pixels get painted), but the region has to be brushed by hand. Returns immediately " +
+    "with sessionId. Tell the user to brush and click Repaint, then call midjourney_repaint_status. You cannot paint the mask.",
+  {
+    image: image("The image to edit"),
+    prompt: z
+      .string()
+      .min(1)
+      .describe("What the finished image should show, including what replaces the brushed area"),
+    mode: jobParams.mode,
+    private: jobParams.private,
+    extraFlags: jobParams.extraFlags
+  },
+  "midjourney.repaint",
+  {
+    prepare: async ({ image: source, ...p }) => ({
+      ...p,
+      source: await toSource(source)
+    })
+  }
+)
+tool(
+  "midjourney_repaint_status",
+  "After midjourney_repaint, waits for the user to click Repaint and then for Midjourney's images. " +
+    "Call it only after you have told the user to brush the parts to change.",
+  {
+    sessionId: z.string().describe("sessionId from midjourney_repaint"),
+    wait: z
+      .boolean()
+      .optional()
+      .describe("Wait for the brush and the images (default true). False returns the current state"),
+    paintTimeoutMs: z
+      .number()
+      .int()
+      .min(0)
+      .max(1_800_000)
+      .optional()
+      .describe("How long to wait for the user to click Repaint (default 600000). Then timeoutMs applies to the job"),
+    timeoutMs: jobParams.timeoutMs
+  },
+  "midjourney.repaintStatus",
+  {
+    timeoutMs: (p) =>
+      p.wait === false ? 30_000 : (p.paintTimeoutMs ?? 600_000) + (p.timeoutMs ?? WAIT_MS) + 120_000,
+    prepare: async (p) => ({
+      ...p,
+      paintTimeoutMs: p.paintTimeoutMs ?? 600_000,
+      timeoutMs: p.timeoutMs ?? WAIT_MS
+    })
+  }
+)
+tool(
   "midjourney_generate",
   "Creates images on Midjourney's Create page, optionally from your images: imagePrompts guide content and composition, " +
     "styleReferences copy a look (--sref), omniReferences put a subject or character in the image (--oref), and editImage " +
@@ -450,9 +558,95 @@ tool(
     })
   }
 )
+// --- Midjourney result buttons (vary, upscale, pan, zoom) ---
+
+const resultImage = {
+  jobId: z
+    .string()
+    .describe(
+      "The finished job: its id, mj:<jobId>#<index>, or a cdn.midjourney.com/<jobId>/0_<index>.png URL. Must be the user's own job"
+    ),
+  index: z
+    .number()
+    .int()
+    .min(0)
+    .max(3)
+    .optional()
+    .describe("Which image of the grid (0-3). Default: the index in jobId, else 0")
+}
+const actionParams = {
+  mode: jobParams.mode,
+  private: jobParams.private,
+  wait: jobParams.wait,
+  timeoutMs: jobParams.timeoutMs
+}
+const actionPrompt = z
+  .string()
+  .optional()
+  .describe(
+    "Replaces the parent's prompt, like Remix. Include any parameters to keep. Default: the parent's prompt and parameters"
+  )
+const action = (prepare?: (p: Params) => Params) => ({
+  timeoutMs: jobTimeout,
+  prepare: async (p: Params) => withWait(prepare ? prepare(p) : p)
+})
+
+tool(
+  "midjourney_vary",
+  "Makes four new variations of one image from a finished Midjourney job, like its Vary (Subtle) or Vary (Strong) button.",
+  {
+    ...resultImage,
+    strength: z.enum(["subtle", "strong"]).optional().describe('Default "subtle": close to the original. "strong" changes more'),
+    ...actionParams
+  },
+  "midjourney.vary",
+  action(({ strength, ...p }) => ({ ...p, strong: strength === "strong" }))
+)
+tool(
+  "midjourney_upscale",
+  "Upscales one image from a finished Midjourney job to twice its size, like its Upscale (Subtle) or Upscale (Creative) " +
+    "button. Returns 1 image. Works for --v 5 to 8.2 and niji 5 to 7 (not --v 8, --hd or --draft images).",
+  {
+    ...resultImage,
+    kind: z
+      .enum(["subtle", "creative"])
+      .optional()
+      .describe('Default "subtle" keeps the image as it is. "creative" adds detail. On --v 5 images, subtle is 2x and creative 4x'),
+    ...actionParams
+  },
+  "midjourney.upscale",
+  action()
+)
+tool(
+  "midjourney_pan",
+  "Pans one image from a finished Midjourney job: extends it by half its width or height in one direction and fills " +
+    "the new area, like its Pan buttons. Returns 4 images. Works for --v 5 to 8.2 and niji 5 to 7 (not --v 8).",
+  {
+    ...resultImage,
+    direction: z.enum(["left", "right", "up", "down"]).describe("Side to add new content to"),
+    prompt: actionPrompt,
+    ...actionParams
+  },
+  "midjourney.pan",
+  action()
+)
+tool(
+  "midjourney_zoom_out",
+  "Zooms out one image from a finished Midjourney job: shrinks it inside a frame of the same shape and fills around " +
+    "it, like its Zoom Out buttons. Returns 4 images. Works for --v 5 to 8.2 and niji 5 to 7 (not --v 8). For a new " +
+    "aspect ratio or an image that isn't a Midjourney result, use midjourney_outcrop.",
+  {
+    ...resultImage,
+    zoom: z.number().min(1.1).max(2).optional().describe("How far to zoom out: 1.5 (default) or 2, or anything between"),
+    prompt: actionPrompt,
+    ...actionParams
+  },
+  "midjourney.zoomOut",
+  action()
+)
 tool(
   "midjourney_job_status",
-  "Checks a Midjourney job started by midjourney_outcrop or midjourney_generate; with wait, waits until its images are ready.",
+  "Checks a Midjourney job started by any midjourney_ image tool (outcrop, repaint, generate, vary, upscale, pan, zoom_out); with wait, waits until its images are ready.",
   {
     jobId: z.string(),
     wait: z.boolean().optional(),
@@ -461,12 +655,50 @@ tool(
   "midjourney.jobStatus",
   { readOnly: true, timeoutMs: jobTimeout, prepare: async (p) => (p.wait ? withWait(p) : p) }
 )
+server.registerTool(
+  "distrokid_fill_releases",
+  {
+    description:
+      "Fills DistroKid's upload form at https://distrokid.com/new/ from local release folders, one browser tab per folder. " +
+      "Each folder needs info.json, at least one .wav/.m4a/.mp3, and a square JPG, PNG, or GIF cover. " +
+      "A parent folder works when each child folder has its own info.json. " +
+      "Does not click Continue or submit. The user reviews each tab and clicks Continue.",
+    inputSchema: {
+      folders: z
+        .array(z.string())
+        .min(1)
+        .describe(
+          "Absolute paths. Each path is a release folder, or a parent whose immediate child folders each contain info.json."
+        ),
+      concurrency: z
+        .number()
+        .int()
+        .min(1)
+        .max(6)
+        .optional()
+        .describe("How many DistroKid tabs to fill at the same time. Default 3.")
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true }
+  },
+  async ({ folders, concurrency }) => {
+    try {
+      const result = await fillDistrokidReleases(bridge, folders, concurrency ?? 3)
+      return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] }
+    } catch (error) {
+      return {
+        isError: true,
+        content: [{ type: "text" as const, text: error instanceof Error ? error.message : String(error) }]
+      }
+    }
+  }
+)
+
 tool(
   "midjourney_download_images",
   "Saves a Midjourney job's images to the browser's Downloads folder as <folder>/<jobId>_<index>.png.",
   {
     jobId: z.string(),
-    indexes: z.array(z.number().int().min(0).max(3)).optional().describe("Which images (default all 4)"),
+    indexes: z.array(z.number().int().min(0).max(3)).optional().describe("Which images (default all of them: 4, or 1 for an upscale)"),
     folder: z.string().optional().describe('Subfolder of Downloads (default "midjourney")')
   },
   "midjourney.downloadImages"

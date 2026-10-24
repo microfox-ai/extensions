@@ -8,13 +8,16 @@ import { initSaverBackground } from "./lib/saverBackground"
 import { initPinterestBulkBackground } from "./lib/pinterestBulkBackground"
 import { initYouTubeBackground } from "./lib/youtubeBackground"
 import { initPinterestVideoDownloads } from "./lib/pinterestVideoDownload"
+import { initInstagramBackground } from "./lib/instagramBackground"
 import { normalizeTags, queueSparkboardIndex } from "./lib/mediamake"
+import { initMidjourneyEdit } from "./lib/midjourneyEdit"
 import { initMcpBridge } from "./lib/mcpBridge"
 
 initSaverBackground()
 initPinterestBulkBackground()
 initYouTubeBackground()
 initPinterestVideoDownloads()
+initInstagramBackground()
 
 const QUEUE_REQUEST_RATE_LIMIT_MS = 3000
 
@@ -756,3 +759,4 @@ const handleMessage = (
 
 chrome.runtime.onMessage.addListener(handleMessage)
 initMcpBridge(handleMessage)
+initMidjourneyEdit()

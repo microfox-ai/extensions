@@ -2,6 +2,9 @@
 
 export const MCP_ENABLED_KEY = "mcpBridgeEnabled"
 export const MCP_PORT_KEY = "mcpBridgePort"
+// Tells Chrome profiles apart when the extension is connected in several.
+export const MCP_PROFILE_ID_KEY = "mcpProfileId"
+export const MCP_PROFILE_NAME_KEY = "mcpProfileName"
 // In chrome.storage.session, written by the background worker.
 export const MCP_STATUS_KEY = "mcpBridgeStatus"
 export const MCP_DEFAULT_PORT = 17892

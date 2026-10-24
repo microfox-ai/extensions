@@ -4,6 +4,7 @@ import {
   MCP_DEFAULT_PORT,
   MCP_ENABLED_KEY,
   MCP_PORT_KEY,
+  MCP_PROFILE_NAME_KEY,
   MCP_STATUS_KEY,
   readMcpPort,
   type McpBridgeStatus
@@ -20,13 +21,18 @@ const STATE_TEXT: Record<McpBridgeStatus["state"], [string, string]> = {
 export function McpBridgeSettings() {
   const [enabled, setEnabled] = useState(true)
   const [port, setPort] = useState(String(MCP_DEFAULT_PORT))
+  const [profileName, setProfileName] = useState("")
   const [status, setStatus] = useState<McpBridgeStatus | null>(null)
 
   useEffect(() => {
-    chrome.storage.local.get([MCP_ENABLED_KEY, MCP_PORT_KEY], (result) => {
-      setEnabled(result[MCP_ENABLED_KEY] !== false)
-      setPort(String(readMcpPort(result[MCP_PORT_KEY])))
-    })
+    chrome.storage.local.get(
+      [MCP_ENABLED_KEY, MCP_PORT_KEY, MCP_PROFILE_NAME_KEY],
+      (result) => {
+        setEnabled(result[MCP_ENABLED_KEY] !== false)
+        setPort(String(readMcpPort(result[MCP_PORT_KEY])))
+        setProfileName(String(result[MCP_PROFILE_NAME_KEY] ?? ""))
+      }
+    )
     chrome.storage.session.get(MCP_STATUS_KEY, (result) =>
       setStatus(result[MCP_STATUS_KEY] ?? null)
     )
@@ -74,6 +80,26 @@ export function McpBridgeSettings() {
           onBlur={savePort}
           style={{ width: 90, padding: "4px" }}
         />
+      </div>
+      <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6 }}>
+        <label style={{ fontSize: "12px" }}>Profile name:</label>
+        <input
+          type="text"
+          value={profileName}
+          disabled={!enabled}
+          placeholder="e.g. Work"
+          onChange={(e) => setProfileName(e.target.value)}
+          onBlur={() =>
+            chrome.storage.local.set({
+              [MCP_PROFILE_NAME_KEY]: profileName.trim()
+            })
+          }
+          style={{ flex: 1, padding: "4px" }}
+        />
+      </div>
+      <div style={{ marginTop: 4, fontSize: "11px", color: "#6b7280" }}>
+        When the extension is connected in more than one Chrome profile, Claude
+        asks which to use by this name (or the profile's Google account).
       </div>
     </div>
   )

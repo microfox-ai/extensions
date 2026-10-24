@@ -1,6 +1,6 @@
 # Get into zone MCP server
 
-Lets Claude (Claude Code, Claude Desktop, or any MCP client) use the [Get into zone](../get-into-zone) extension running in your browser: bulk-download Pinterest, download YouTube videos, save media to Mediamake, switch overlays on or off, upload Suno tracks and drive Midjourney.
+Lets Claude (Claude Code, Claude Desktop, or any MCP client) use the [Get into zone](../get-into-zone) extension running in your browser: bulk-download Pinterest, download YouTube videos and Instagram posts, save media to Mediamake, switch overlays on or off, upload Suno tracks and drive Midjourney.
 
 ```
 Claude ──stdio──▶ MCP server (this folder) ◀──WebSocket 127.0.0.1:17892── extension service worker ──▶ your tabs
@@ -59,26 +59,37 @@ With Claude Code, open this repo and ask Claude to "set up get-into-zone": the [
 
 Claude Code and Claude Desktop can both use it at once: the first server to start listens on the port and later ones relay through it. If the first one exits, another takes over and the extension reconnects.
 
-The extension can also be connected from several Chrome profiles at once. `list_tabs` lists the tabs of every profile, marked with a `profile` number that matches `get_status`. A tool given a `tabId` runs in the profile that has that tab; a tool without one runs in the profile whose window you used last (marked `default` in `get_status`).
+The extension can also be connected from several Chrome profiles (accounts) at once. Each Claude session works in one profile only:
+
+- With one profile connected, every tool uses it.
+- With two or more connected, tools refuse to run until the session picks one. Claude asks you which profile to use (`list_profiles` shows each one's name or Google account, open tab count and active tab), then calls `use_profile` with your answer. From then on every tool in that session, `list_tabs` included, runs in that profile only. Another Claude session can pick a different one.
+- If the chosen profile disconnects, tools wait up to 35 seconds for it to come back, then ask whether to switch.
+
+To tell profiles apart, give each one a name in the popup's **Settings → Profile name** (otherwise Claude shows the profile's Google account). The extension asks for the `identity.email` permission to read that account.
 
 ## Tools
 
 | Area | Tools |
 | --- | --- |
-| Status and tabs | `get_status`, `list_tabs`, `open_tab` |
+| Status and profiles | `get_status`, `list_profiles`, `use_profile` |
+| Tabs | `list_tabs`, `open_tab` |
 | Settings | `get_settings`, `update_settings`, `list_projects` |
 | Mediamake | `save_media_to_mediamake` |
 | Pinterest | `pinterest_bulk_start`, `pinterest_bulk_stop`, `pinterest_bulk_status`, `pinterest_analyze_image`, `pinterest_save_analysis`, `pinterest_list_analyses` |
 | YouTube | `youtube_get_video`, `youtube_download`, `youtube_list_downloads`, `youtube_cancel_download`, `youtube_clear_finished` |
+| Instagram | `instagram_get_post`, `instagram_download` |
 | Overlays (Saver tab) | `saver_get`, `saver_set`, `saver_remove_rule`, `saver_reset` |
 | Suno | `suno_upload_track` |
+| DistroKid | `distrokid_fill_releases` |
 | Midjourney (prompt automation) | `midjourney_submit_prompts`, `midjourney_scrape`, `midjourney_queue_size`, `midjourney_list_queue`, `midjourney_run_queue`, `midjourney_load_prompts` |
-| Midjourney (images) | `midjourney_outcrop`, `midjourney_generate`, `midjourney_job_status`, `midjourney_download_images` |
+| Midjourney (images) | `midjourney_outcrop`, `midjourney_repaint`, `midjourney_repaint_status`, `midjourney_generate`, `midjourney_vary`, `midjourney_upscale`, `midjourney_pan`, `midjourney_zoom_out`, `midjourney_job_status`, `midjourney_download_images` |
 
-Tools behave like the matching buttons in the popup; see the [main README](../README.md#use-get-into-zone) for what each feature does. Two notes:
+Tools behave like the matching buttons in the popup; see the [main README](../README.md#use-get-into-zone) for what each feature does.
 
 - **Pinterest bulk download** collects what the tab shows. After `pinterest_bulk_start`, the tab has to be scrolled or navigated to collect more pins. Do that yourself, or let Claude do it with Claude in Chrome (see below).
 - **YouTube** downloads only need a video URL. The extension uses any open YouTube tab to read the formats, or opens one in the background.
+- **Instagram** downloads only need a post, reel or story URL, and you must be logged in to Instagram in that Chrome profile. The extension asks Instagram from any open instagram.com tab, or opens one in the background. Story highlights aren't supported.
+- **DistroKid** fills https://distrokid.com/new/ from a release folder (`info.json`, audio, square cover). `distrokid_fill_releases` opens one tab per folder and does not click Continue.
 
 ### Midjourney image tools
 
@@ -87,11 +98,18 @@ These call midjourney.com's own API from a midjourney.com tab (one opens in the 
 | Tool | What it does | Midjourney equivalent |
 | --- | --- | --- |
 | `midjourney_outcrop` | Puts an image in a bigger frame (`aspectRatio`, `anchor`, `scale`) and fills the rest | Editor → Move → aspect ratio → Submit edit |
+| `midjourney_repaint` | Opens a brush tab. The user erases the parts to change, then clicks Repaint. Call `midjourney_repaint_status` after telling them | Editor → Erase → Submit edit |
 | `midjourney_generate` | New images, optionally with `imagePrompts`, `styleReferences` (`--sref`), `omniReferences` (`--oref`) or an `editImage` to restyle (`--edit`) | Create page, images dropped in the prompt bar |
+| `midjourney_vary` | Four variations of one result image (`strength` subtle or strong) | Vary (Subtle) / Vary (Strong) |
+| `midjourney_upscale` | One result image at twice the size (`kind` subtle or creative) | Upscale (Subtle) / Upscale (Creative) |
+| `midjourney_pan` | Extends one result image by half its width or height (`direction`) | Pan ← → ↑ ↓ |
+| `midjourney_zoom_out` | Shrinks one result image in a same-shape frame and fills around it (`zoom` 1.1–2) | Zoom Out 1.5x / 2x |
 | `midjourney_job_status` | Status of a job; `wait: true` waits for the images | |
 | `midjourney_download_images` | Saves a job's images to Downloads | Download |
 
 Images can be an `https://` URL, an absolute local file path (read by the MCP server), or `mj:<jobId>#<index>` for an earlier result. Jobs wait up to 4 minutes by default and return the four image URLs (`https://cdn.midjourney.com/<jobId>/0_<index>.png`). Longer relaxed jobs return their status; poll them with `midjourney_job_status`.
+
+The vary, upscale, pan and zoom tools take one of your own finished results (`jobId` plus `index`, or a `cdn.midjourney.com/<jobId>/0_<index>.png` URL) and reuse its prompt. Upscales return one image. On `--v 8.1`/`8.2`, pan and zoom are sent as Editor jobs, as midjourney.com does; older versions use Midjourney's pan and zoom jobs. `--v 8` has no upscale, pan or zoom.
 
 ## Skills
 
@@ -100,8 +118,10 @@ Images can be an `https://` URL, an absolute local file path (read by the MCP se
 | Skill | For requests like |
 | --- | --- |
 | [`midjourney-outcrop`](skills/midjourney-outcrop/SKILL.md) | "make this 16:9", "extend the background", "zoom out" |
+| [`midjourney-repaint`](skills/midjourney-repaint/SKILL.md) | "erase the sign", "change just the jacket", "repaint this face" |
 | [`midjourney-style-reference`](skills/midjourney-style-reference/SKILL.md) | "make a poster in the style of this image" |
 | [`midjourney-restyle`](skills/midjourney-restyle/SKILL.md) | "turn this photo into anime / watercolor / pixel art" |
+| [`midjourney-iterate`](skills/midjourney-iterate/SKILL.md) | "vary the second one", "upscale that", "pan left", "zoom out 2x" |
 
 Install them for every project (symlinks into `~/.claude/skills`, so edits here apply right away; `-- --copy` copies instead):
 

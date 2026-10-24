@@ -7,7 +7,7 @@ export const SAVER_RULES_KEY = "saverRules"
 // "all" is the master switch: it covers every overlay (Save button, AI
 // buttons, the download buttons and the Suno upload panel). "save", "ai" and
 // "youtube" are individual savers. "youtube" covers every download button
-// (YouTube and Pinterest videos); the id is what saved rules store.
+// (YouTube, Pinterest videos and Instagram); the id is what saved rules store.
 export type SaverFeature = "all" | "save" | "ai" | "youtube"
 export type SaverScope = "page" | "site" | "window" | "all"
 
@@ -52,6 +52,13 @@ export const isSunoHost = (hostname: string) => hostname === "suno.com"
 
 export const isYouTubeHost = (hostname: string) =>
   hostname === "youtube.com" || hostname.endsWith(".youtube.com")
+
+export const isInstagramHost = (hostname: string) =>
+  hostname === "instagram.com" || hostname.endsWith(".instagram.com")
+
+// Sites whose pages carry the extension's download buttons.
+export const hasDownloadButtons = (hostname: string) =>
+  isYouTubeHost(hostname) || isPinterestHost(hostname) || isInstagramHost(hostname)
 
 // The key a rule at `scope` would have for this context, or null when the
 // scope doesn't apply (e.g. no window id yet, or a chrome:// page).
@@ -107,10 +114,7 @@ export function isAnySaverActive(rules: SaverRule[], ctx: SaverContext) {
   if (isSunoHost(url.hostname)) return true
   if (isSaverActive(rules, "save", ctx)) return true
   const pinterest = isPinterestHost(url.hostname)
-  if (
-    (pinterest || isYouTubeHost(url.hostname)) &&
-    isSaverActive(rules, "youtube", ctx)
-  ) {
+  if (hasDownloadButtons(url.hostname) && isSaverActive(rules, "youtube", ctx)) {
     return true
   }
   return pinterest && isSaverActive(rules, "ai", ctx)

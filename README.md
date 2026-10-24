@@ -112,6 +112,16 @@ Notes:
 - The whole file is held in memory until it's saved, so very long videos at high quality need a lot of RAM.
 - Videos that need sign-in (age-restricted, members-only, private) and paid or DRM-protected content can't be downloaded. Only download videos you have the right to save.
 
+### Download Instagram photos and videos
+
+You need to be logged in to Instagram in this browser.
+
+**On instagram.com:** hover a photo or video in the feed, on a post page, in a profile or explore grid, on a reel, or in a story. **Download** saves the slide you're looking at; on carousels, **All** saves every slide. Files go to Downloads as `<username> - <post code> - <slide>.jpg` (or `.mp4`).
+
+**From the popup's Instagram tab:** open a post, reel or story, or paste its link, then download one item or **Download all**.
+
+Story highlights aren't supported. Only download posts you have the right to save.
+
 ### Turn overlays on or off (Saver tab)
 
 The **Saver** tab controls where overlays appear. It has four switches:
@@ -119,7 +129,7 @@ The **Saver** tab controls where overlays appear. It has four switches:
 - **All savers**: every overlay, including the Suno upload panel
 - **Save button**: the Save buttons
 - **AI analyse**: the Save + AI, AI Only, and View AI buttons
-- **Download buttons**: the Download buttons on YouTube thumbnails, under the YouTube video title, and on Pinterest video pins
+- **Download buttons**: the Download buttons on YouTube thumbnails, under the YouTube video title, on Pinterest video pins, and on Instagram photos and videos
 
 Pick where a change applies with **Apply changes to**, then flip a switch:
 
@@ -141,7 +151,7 @@ Shortcuts:
 
 ### Let Claude use the extension (MCP)
 
-With the [MCP server](mcp) set up, Claude can run everything above for you ("download this YouTube video at 720p", "bulk-download this Pinterest board"). In **Settings**, **Let Claude use this extension (MCP)** turns this on or off; it shows **Connected to Claude** while the server runs. Setup steps are in [`mcp/README.md`](mcp/README.md).
+With the [MCP server](mcp) set up, Claude can run everything above for you ("download this YouTube video at 720p", "bulk-download this Pinterest board", "save every slide of this Instagram post"). In **Settings**, **Let Claude use this extension (MCP)** turns this on or off; it shows **Connected to Claude** while the server runs. Setup steps are in [`mcp/README.md`](mcp/README.md).
 
 ### Automate Midjourney (Midjourney tab)
 

@@ -4,8 +4,8 @@
   "name": "get-into-zone",
   "display_name": "Get into zone",
   "version": "0.0.0",
-  "description": "Let Claude use the Get into zone browser extension: Pinterest bulk download, YouTube downloads, Mediamake, Suno and Midjourney.",
-  "long_description": "Connects Claude to the Get into zone extension running in your Chrome. Claude can bulk-download Pinterest pins, download YouTube videos, save media to Mediamake, switch on-page saver overlays, upload Suno tracks and drive Midjourney, all in your real browser profile with your sign-ins.\n\nThe extension connects to this server over a local WebSocket on 127.0.0.1. In the extension popup, Settings → Let Claude use this extension (MCP) shows Connected to Claude once it is running.",
+  "description": "Let Claude use the Get into zone browser extension: Pinterest bulk download, YouTube and Instagram downloads, Mediamake, Suno and Midjourney.",
+  "long_description": "Connects Claude to the Get into zone extension running in your Chrome. Claude can bulk-download Pinterest pins, download YouTube videos and Instagram posts, save media to Mediamake, switch on-page saver overlays, upload Suno tracks and drive Midjourney, all in your real browser profile with your sign-ins.\n\nThe extension connects to this server over a local WebSocket on 127.0.0.1. In the extension popup, Settings → Let Claude use this extension (MCP) shows Connected to Claude once it is running.",
   "author": {
     "name": "TheMoonDevs"
   },
@@ -41,7 +41,7 @@
       "required": false
     }
   },
-  "keywords": ["pinterest", "youtube", "download", "midjourney", "suno", "browser"],
+  "keywords": ["pinterest", "youtube", "instagram", "download", "midjourney", "suno", "browser"],
   "compatibility": {
     "platforms": ["darwin", "win32", "linux"],
     "runtimes": {

@@ -11,18 +11,27 @@ import {
 import {
   MCP_ENABLED_KEY,
   MCP_PORT_KEY,
+  MCP_PROFILE_ID_KEY,
+  MCP_PROFILE_NAME_KEY,
   MCP_STATUS_KEY,
   readMcpPort,
   type McpBridgeState
 } from "./mcp"
+import { downloadsFor, parseInstagramUrl, type IgPost } from "./instagram"
+import { downloadInstagramFiles, getInstagramPost } from "./instagramBackground"
 import { mediamakeFetch, queueSparkboardIndex } from "./mediamake"
 import {
   downloadImages,
   frameSize,
   generate,
   outcrop,
-  waitForJob
+  pan,
+  upscale,
+  vary,
+  waitForJob,
+  zoomOut
 } from "./midjourneyApi"
+import { repaintStatus, startRepaint } from "./midjourneyEdit"
 import { parseTags, sanitizeFolder, type BulkSession } from "./pinterestBulk"
 import {
   listBulkSessions,
@@ -43,6 +52,7 @@ import {
   type SaverFeature,
   type SaverScope
 } from "./saverRules"
+import { distrokidCommands } from "./distrokidBridge"
 import { openTab } from "./tabs"
 import { buildOptions, parseVideoId, type YtMode, type YtVideo } from "./youtube"
 import {
@@ -173,6 +183,58 @@ async function youtubeVideo(params: { tabId?: number; url?: string }) {
 }
 
 const MODES: YtMode[] = ["both", "video", "audio"]
+
+// --- Instagram ---
+
+// The lookup runs in any instagram.com tab (one opens in the background if
+// none is), so a link is enough; without one, the given or active tab's URL.
+async function instagramPost(params: { tabId?: number; url?: string }) {
+  const url =
+    params.url ??
+    (typeof params.tabId === "number" ? undefined : (await activeTab().catch(() => undefined))?.url)
+  if (typeof params.tabId !== "number" && !parseInstagramUrl(url)) {
+    throw new Error("Pass an Instagram post, reel or story URL, or the id of a tab showing one.")
+  }
+  return getInstagramPost({ url, tabId: params.tabId }, true)
+}
+
+const instagramSummary = (post: IgPost) => ({
+  mediaId: post.mediaId,
+  code: post.code,
+  username: post.username,
+  caption: post.caption,
+  link: post.code ? `https://www.instagram.com/p/${post.code}/` : undefined,
+  items: post.items.map((item, index) => ({
+    number: index + 1,
+    kind: item.kind,
+    width: item.width,
+    height: item.height,
+    url: item.url
+  }))
+})
+
+async function instagramDownload(params: {
+  tabId?: number
+  url?: string
+  items?: number[]
+}) {
+  const post = await instagramPost(params)
+  const numbers = params.items?.length
+    ? [...new Set(params.items)]
+    : post.items.map((_, index) => index + 1)
+  const picked = numbers.map((number) => post.items[number - 1])
+  if (picked.some((item) => !item)) {
+    throw new Error(`Item numbers run from 1 to ${post.items.length}.`)
+  }
+  const downloadIds = await downloadInstagramFiles(downloadsFor(post, picked))
+  const saved = await Promise.all(
+    downloadIds.map(async (downloadId, index) => {
+      const [file] = await chrome.downloads.search({ id: downloadId })
+      return { number: numbers[index], kind: picked[index].kind, path: file?.filename, downloadId }
+    })
+  )
+  return { username: post.username, code: post.code, saved }
+}
 
 const optionSummary = (video: YtVideo, mode: YtMode) =>
   buildOptions(video, mode).map(({ streams, ...option }) => ({
@@ -386,6 +448,9 @@ const commands: Record<string, (params: any) => Promise<unknown>> = {
   "youtube.cancelDownload": async ({ jobId }) => cancelJob(String(jobId)),
   "youtube.clearFinished": async () => clearFinished(),
 
+  "instagram.getPost": async (params) => instagramSummary(await instagramPost(params)),
+  "instagram.download": instagramDownload,
+
   "saver.get": async (params) => saverState(await saverContext(params)),
   "saver.set": async (params) => {
     const ctx = await saverContext(params)
@@ -482,11 +547,19 @@ const commands: Record<string, (params: any) => Promise<unknown>> = {
     return mediamakeFetch(`/api/midjourney-prompts/${id}/prompts?includeTag=true`)
   },
   "midjourney.outcrop": outcrop,
+  "midjourney.repaint": startRepaint,
+  "midjourney.repaintStatus": repaintStatus,
   "midjourney.generate": generate,
+  "midjourney.vary": vary,
+  "midjourney.upscale": upscale,
+  "midjourney.pan": pan,
+  "midjourney.zoomOut": zoomOut,
   "midjourney.jobStatus": async ({ jobId, wait, timeoutMs }) =>
     waitForJob(String(jobId), 4, wait ? timeoutMs : 0),
   "midjourney.downloadImages": downloadImages,
-  "midjourney.frameSize": async ({ aspectRatio }) => frameSize(String(aspectRatio))
+  "midjourney.frameSize": async ({ aspectRatio }) => frameSize(String(aspectRatio)),
+
+  ...distrokidCommands
 }
 
 // --- Connection ---
@@ -506,6 +579,25 @@ async function loadPrefs() {
 
 const send = (ws: WebSocket, message: unknown) => {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message))
+}
+
+// The server asks Claude to have the user pick a profile when several are
+// connected, so it needs a stable id and something to call each one.
+async function profileInfo() {
+  const stored = await chrome.storage.local.get([MCP_PROFILE_ID_KEY, MCP_PROFILE_NAME_KEY])
+  let profileId = stored[MCP_PROFILE_ID_KEY]
+  if (typeof profileId !== "string" || !profileId) {
+    profileId = crypto.randomUUID()
+    await chrome.storage.local.set({ [MCP_PROFILE_ID_KEY]: profileId })
+  }
+  const user = await chrome.identity
+    ?.getProfileUserInfo({ accountStatus: chrome.identity.AccountStatus.ANY })
+    .catch(() => undefined)
+  return {
+    profileId,
+    profileName: String(stored[MCP_PROFILE_NAME_KEY] ?? "").trim(),
+    email: user?.email || undefined
+  }
 }
 
 async function onFrame(ws: WebSocket, raw: unknown) {
@@ -550,17 +642,15 @@ async function connect() {
   const ws = new WebSocket(`ws://127.0.0.1:${port}`)
   socket = ws
   setStatus("connecting", port)
-  ws.onopen = () => {
+  ws.onopen = async () => {
     retryMs = 2000
     setStatus("connected", port)
     send(ws, {
       type: "hello",
       role: "extension",
       version: chrome.runtime.getManifest().version,
-      extensionId: chrome.runtime.id
-    })
-    chrome.windows.getLastFocused().then((window) => {
-      if (window.focused) send(ws, { type: "focus", focused: true })
+      extensionId: chrome.runtime.id,
+      ...(await profileInfo())
     })
     // Traffic every 20s keeps the service worker alive while connected.
     pingTimer = setInterval(() => send(ws, { type: "ping" }), PING_MS)
@@ -597,18 +687,10 @@ export function initMcpBridge(handler: MessageHandler) {
 
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace !== "local") return
-    if (changes[MCP_ENABLED_KEY] || changes[MCP_PORT_KEY]) {
+    if (changes[MCP_ENABLED_KEY] || changes[MCP_PORT_KEY] || changes[MCP_PROFILE_NAME_KEY]) {
       disconnect()
       retryMs = 2000
       connect()
-    }
-  })
-
-  // Each Chrome profile connects separately; the server sends calls without a
-  // tabId to the profile the user was in last.
-  chrome.windows.onFocusChanged.addListener((windowId) => {
-    if (socket && windowId !== chrome.windows.WINDOW_ID_NONE) {
-      send(socket, { type: "focus", focused: true })
     }
   })
 

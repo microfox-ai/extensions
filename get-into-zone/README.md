@@ -10,6 +10,9 @@ This is a [Plasmo extension](https://docs.plasmo.com/) project bootstrapped with
 | `componenets/` | One component per popup tab (`SaverTab.tsx`, `MidjourneyTab.tsx`, ...) |
 | `content.ts` | Content script: Save / AI overlays on images, the Suno upload panel, the Pinterest bulk-download collector |
 | `background.ts` | Service worker: API calls, Midjourney queue, Suno upload |
+| `lib/midjourneyApi.ts` | Midjourney image jobs: Editor outcrop and repaint, Create-page generate, and vary, upscale, pan and zoom on a result |
+| `lib/midjourneyEdit.ts` | Repaint sessions: opens the brush tab and submits once the user erases a region |
+| `tabs/midjourney-edit.tsx` | Brush page where the user marks the parts of an image Midjourney should repaint |
 | `lib/mediamake.ts` | Mediamake sparkboard-index upload, shared by the Save overlay and bulk download |
 | `lib/pinterestBulk.ts` | Pinterest bulk download: session types, pin image and video URL parsing, page keys |
 | `lib/pinterestBulkBackground.ts` | Pinterest bulk download sessions (one per tab): per-page limits, skipping revisited pages, the download / upload queue |
@@ -23,6 +26,10 @@ This is a [Plasmo extension](https://docs.plasmo.com/) project bootstrapped with
 | `lib/youtubeBackground.ts` | YouTube download jobs: offscreen document, progress in `chrome.storage.session`, saving to Downloads |
 | `lib/mp4Merge.ts` | Muxes a video-only and an audio-only fragmented MP4 into one file, no re-encoding |
 | `tabs/youtube-offscreen.tsx` | Offscreen document that fetches YouTube streams in ranged chunks and merges them |
+| `lib/instagram.ts` | Instagram: post / reel / story URL parsing, shortcode to media id, the in-page media lookup (needs a logged-in session), file names |
+| `lib/instagramBackground.ts` | Instagram lookups for the popup (run in an open instagram.com tab) and saving files to Downloads |
+| `contents/instagram.ts` | Content script on Instagram: Download / All buttons on hovered photos and videos, result toasts |
+| `componenets/InstagramTab.tsx` | Popup tab: load the current or a pasted post, download one slide or all |
 | `lib/saverRules.ts` | Saver toggle rules (page / site / window / everywhere) shared by popup, content script, and background |
 | `lib/saverBackground.ts` | Toolbar "OFF" badge, right-click menu, window-rule cleanup |
 

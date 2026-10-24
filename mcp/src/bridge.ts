@@ -7,15 +7,25 @@
 // a peer takes over the port.
 //
 // Each Chrome profile runs its own copy of the extension, so several can be
-// connected at once. A call with a tabId goes to the profile that has that tab;
-// other calls go to the profile whose window was focused last.
+// connected at once. Each copy of this server (one per Claude session) works
+// with one profile: the only one connected, or the one picked with
+// useProfile. With two or more connected and none picked, calls fail with a
+// message telling Claude to ask the user which profile to use.
 
 import { WebSocket, WebSocketServer } from "ws"
 
 // The extension retries every 30s at most, so a new hub may wait that long.
 const EXTENSION_WAIT_MS = 35_000
+const TAB_LOOKUP_MS = 3000
 
-interface ExtensionInfo {
+export interface Profile {
+  // Stable per Chrome profile (stored by the extension).
+  id: string
+  // What to call it: the name set in the extension's Settings, else the
+  // profile's Google account, else a short id.
+  label: string
+  name?: string
+  email?: string
   version?: string
   extensionId?: string
   connectedAt: string
@@ -23,14 +33,8 @@ interface ExtensionInfo {
 
 interface Extension {
   ws: WebSocket
-  info: ExtensionInfo
-  // When a window of this profile was last focused (0 = not known).
-  focusedAt: number
+  profile: Profile
 }
-
-// Calls answered by every profile, with the results joined into one list.
-const LIST_METHODS = new Set(["tabs.list", "pinterest.bulkStatus"])
-const OWNER_LOOKUP_MS = 5000
 
 interface Pending {
   ws: WebSocket
@@ -51,14 +55,27 @@ const parse = (raw: unknown) => {
   }
 }
 
+const describe = (p: Profile, i: number) =>
+  `${i + 1}. ${p.label}${p.email && p.email !== p.label ? ` (${p.email})` : ""} — id ${p.id}`
+
+const chooseMessage = (profiles: Profile[]) =>
+  `The Get into zone extension is connected in ${profiles.length} Chrome profiles:\n` +
+  profiles.map(describe).join("\n") +
+  "\nAsk the user which profile to use for this session (list_profiles shows each one's open tab), " +
+  "then call use_profile with their choice and retry. Don't pick one yourself."
+
 export class Bridge {
   private mode: "hub" | "peer" | null = null
   private starting?: Promise<void>
   private hub?: WebSocket
   private extensions: Extension[] = []
+  // Every profile seen since the hub started, so errors can name one that left.
+  private known = new Map<string, Profile>()
   private waiters = new Set<() => void>()
   private pending = new Map<number, Pending>()
   private nextId = 1
+  // The profile this session uses, once picked.
+  private chosen?: Profile
 
   constructor(
     private port: number,
@@ -66,10 +83,17 @@ export class Bridge {
   ) {}
 
   /** Calls a method on the extension (see get-into-zone/lib/mcpBridge.ts). */
-  async call(method: string, params: unknown = {}, timeoutMs = 60_000) {
+  async call(method: string, params: any = {}, timeoutMs = 60_000) {
     await this.ensure()
-    if (this.mode === "hub") return this.callExtension(method, params, timeoutMs)
-    return this.request(this.hub!, method, { params, timeoutMs }, timeoutMs + EXTENSION_WAIT_MS + 5000)
+    if (method === "bridge.status") {
+      return { ...((await this.forward(method)) as object), sessionProfile: this.chosen ?? null }
+    }
+    if (method === "bridge.profiles") {
+      const profiles = (await this.forward(method)) as Profile[]
+      return profiles.map((p) => ({ ...p, usedByThisSession: p.id === this.chosen?.id }))
+    }
+    if (method === "bridge.useProfile") return this.useProfile(params?.profile)
+    return this.forward(method, params, timeoutMs, await this.target())
   }
 
   ensure(): Promise<void> {
@@ -83,6 +107,56 @@ export class Bridge {
         this.starting = undefined
       })
     return this.starting
+  }
+
+  /** The profile id to send a call to, or undefined to use the only one. */
+  private async target() {
+    if (this.chosen) return this.chosen.id
+    const profiles = await this.connectedProfiles()
+    if (profiles.length > 1) throw new Error(chooseMessage(profiles))
+    return undefined
+  }
+
+  private async connectedProfiles() {
+    const { profiles } = (await this.forward("bridge.status")) as { profiles?: Profile[] }
+    if (!profiles) {
+      throw new Error(
+        `The bridge on port ${this.port} was started by an older copy of this server. Quit and reopen the Claude apps using it.`
+      )
+    }
+    return profiles
+  }
+
+  private async useProfile(query: unknown) {
+    const profiles = await this.connectedProfiles()
+    const text = String(query ?? "").trim().toLowerCase()
+    if (!text) throw new Error("Pass the profile to use (number, id, name or email from list_profiles).")
+    const index = /^\d+$/.test(text) ? Number(text) - 1 : -1
+    const match =
+      profiles[index] ??
+      profiles.find((p) => p.id.toLowerCase() === text) ??
+      profiles.find((p) => [p.label, p.name, p.email].some((v) => v?.toLowerCase() === text)) ??
+      profiles.find((p) => [p.label, p.name, p.email].some((v) => v?.toLowerCase().includes(text)))
+    if (!match) {
+      throw new Error(
+        profiles.length
+          ? `No connected profile matches "${query}". Connected:\n${profiles.map(describe).join("\n")}`
+          : "No Chrome profile has the extension connected right now."
+      )
+    }
+    this.chosen = match
+    return { using: match, note: "Every tool in this session now runs in this Chrome profile only." }
+  }
+
+  /** Sends a call to the hub's extension handling, here or over the peer socket. */
+  private forward(method: string, params: unknown = {}, timeoutMs = 60_000, profile?: string) {
+    if (this.mode === "hub") return this.callExtension(method, params, timeoutMs, profile)
+    return this.request(
+      this.hub!,
+      method,
+      { params, timeoutMs, profile },
+      timeoutMs + EXTENSION_WAIT_MS + 5000
+    )
   }
 
   private becomeHub() {
@@ -143,29 +217,14 @@ export class Bridge {
       if (message.type === "ping") return send(ws, { type: "pong" })
       if (message.type === "hello" && !role) {
         role = message.role === "extension" ? "extension" : "peer"
-        if (role === "extension") {
-          this.extensions.push({
-            ws,
-            info: {
-              version: message.version,
-              extensionId: message.extensionId,
-              connectedAt: new Date().toISOString()
-            },
-            focusedAt: 0
-          })
-          console.error(`[bridge] extension ${message.version ?? ""} connected`)
-          this.waiters.forEach((wake) => wake())
-        }
+        if (role === "extension") this.addExtension(ws, message)
         return
       }
-      if (role === "extension" && message.type === "focus") {
-        const extension = this.extensions.find((e) => e.ws === ws)
-        if (extension && message.focused) extension.focusedAt = Date.now()
-      } else if (role === "extension" && message.type === "response") {
+      if (role === "extension" && message.type === "response") {
         this.onResponse(message)
       } else if (role === "peer" && message.type === "request") {
-        const { id, method, params, timeoutMs } = message
-        this.callExtension(method, params, Number(timeoutMs) || 60_000).then(
+        const { id, method, params, timeoutMs, profile } = message
+        this.callExtension(method, params, Number(timeoutMs) || 60_000, profile || undefined).then(
           (result) => send(ws, { type: "response", id, ok: true, result }),
           (error: Error) => send(ws, { type: "response", id, ok: false, error: error.message })
         )
@@ -177,80 +236,105 @@ export class Bridge {
     })
   }
 
+  private addExtension(ws: WebSocket, hello: any) {
+    // Older extensions don't send a profile id; each connection is its own profile then.
+    const id = String(hello.profileId || `connection-${this.nextId++}`)
+    const name = typeof hello.profileName === "string" && hello.profileName.trim() ? hello.profileName.trim() : undefined
+    const email = typeof hello.email === "string" && hello.email ? hello.email : undefined
+    const profile: Profile = {
+      id,
+      label: name ?? email ?? `Profile ${id.slice(0, 8)}`,
+      name,
+      email,
+      version: hello.version,
+      extensionId: hello.extensionId,
+      connectedAt: new Date().toISOString()
+    }
+    // The same profile reconnecting (its worker restarted) replaces the old socket.
+    for (const old of this.extensions.filter((e) => e.profile.id === id)) old.ws.close()
+    this.extensions = this.extensions.filter((e) => e.profile.id !== id)
+    this.extensions.push({ ws, profile })
+    this.known.set(id, profile)
+    console.error(`[bridge] extension ${profile.version ?? ""} connected (${profile.label})`)
+    this.waiters.forEach((wake) => wake())
+  }
+
   private status() {
     return {
       port: this.port,
       bridgePid: process.pid,
-      extensions: this.extensions.map((e, i) => ({
-        profile: i + 1,
-        ...e.info,
-        default: this.extensions.length > 1 && e === this.focused()
-      }))
+      profiles: this.extensions.map((e) => e.profile)
     }
   }
 
-  private async callExtension(method: string, params: any, timeoutMs: number) {
+  /** Each connected profile with its active tab, to help the user tell them apart. */
+  private profiles() {
+    return Promise.all(
+      this.extensions.map(async ({ ws, profile }, i) => {
+        const tabs = (await this.request(ws, "tabs.list", { params: {} }, TAB_LOOKUP_MS).catch(() => [])) as {
+          active?: boolean
+          title?: string
+          url?: string
+        }[]
+        const active = tabs.find((tab) => tab.active)
+        return {
+          number: i + 1,
+          ...profile,
+          openTabs: tabs.length,
+          activeTab: active ? { title: active.title, url: active.url } : undefined
+        }
+      })
+    )
+  }
+
+  private async callExtension(method: string, params: any, timeoutMs: number, profileId?: string) {
     if (method === "bridge.status") return this.status()
-    await this.waitForExtension()
-    const tabId = typeof params?.tabId === "number" ? params.tabId : undefined
-    if (this.extensions.length > 1 && LIST_METHODS.has(method) && tabId === undefined) {
-      return this.callAll(method, params, timeoutMs)
-    }
-    const extension = (tabId !== undefined && (await this.tabOwner(tabId))) || this.focused()
+    if (method === "bridge.profiles") return this.profiles()
+    const extension = await this.extensionFor(profileId)
     return this.request(extension.ws, method, { params }, timeoutMs)
   }
 
-  /** The profile focused most recently, or the newest one if none has said. */
-  private focused() {
-    return this.extensions.reduce((best, e) => (e.focusedAt >= best.focusedAt ? e : best))
+  /** The extension of the given profile, or the only one connected; waits for it to connect. */
+  private async extensionFor(profileId?: string): Promise<Extension> {
+    const find = () => (profileId ? this.extensions.find((e) => e.profile.id === profileId) : this.extensions[0])
+    if (!find()) await this.waitForExtension(() => Boolean(find()), profileId)
+    if (!profileId && this.extensions.length > 1) {
+      throw new Error(chooseMessage(this.extensions.map((e) => e.profile)))
+    }
+    return find()!
   }
 
-  private async tabOwner(tabId: number) {
-    if (this.extensions.length < 2) return undefined
-    const owners = await Promise.all(
-      this.extensions.map((e) =>
-        this.request(e.ws, "tabs.list", { params: {} }, OWNER_LOOKUP_MS).then(
-          (tabs) => (tabs as { id: number }[]).some((tab) => tab.id === tabId),
-          () => false
-        )
-      )
-    )
-    const candidates = this.extensions.filter((_, i) => owners[i])
-    return candidates.length ? candidates.reduce((best, e) => (e.focusedAt >= best.focusedAt ? e : best)) : undefined
-  }
-
-  /** Asks every profile and joins the lists, marking each entry with its profile. */
-  private async callAll(method: string, params: unknown, timeoutMs: number) {
-    const lists = await Promise.all(
-      this.extensions.map((e, i) =>
-        this.request(e.ws, method, { params }, timeoutMs).then(
-          (items) => (items as object[]).map((item) => ({ ...item, profile: i + 1 })),
-          () => []
-        )
-      )
-    )
-    return lists.flat()
-  }
-
-  private waitForExtension() {
-    if (this.extensions.length) return Promise.resolve()
+  private waitForExtension(ready: () => boolean, profileId?: string) {
     return new Promise<void>((resolve, reject) => {
       const wake = () => {
+        if (!ready()) return
         clearTimeout(timer)
         this.waiters.delete(wake)
         resolve()
       }
       const timer = setTimeout(() => {
         this.waiters.delete(wake)
-        reject(
-          new Error(
-            "The Get into zone extension isn't connected. Open Chrome (or Edge, Brave, Arc) with the extension installed, " +
-              `and check that Settings → "Let Claude use this extension" is on with port ${this.port}.`
-          )
-        )
+        reject(new Error(profileId ? this.missingProfileMessage(profileId) : this.notConnectedMessage()))
       }, EXTENSION_WAIT_MS)
       this.waiters.add(wake)
     })
+  }
+
+  private notConnectedMessage() {
+    return (
+      "The Get into zone extension isn't connected. Open Chrome (or Edge, Brave, Arc) with the extension installed, " +
+      `and check that Settings → "Let Claude use this extension" is on with port ${this.port}.`
+    )
+  }
+
+  private missingProfileMessage(profileId: string) {
+    const label = this.known.get(profileId)?.label ?? profileId
+    const others = this.extensions.map((e) => e.profile)
+    return (
+      `The Chrome profile chosen for this session ("${label}") isn't connected. Ask the user to open a window of that ` +
+      "profile, or whether to switch to another profile with use_profile." +
+      (others.length ? `\nConnected now:\n${others.map(describe).join("\n")}` : "")
+    )
   }
 
   private request(ws: WebSocket, method: string, body: Record<string, unknown>, timeoutMs: number) {

@@ -14,10 +14,10 @@ import { useEffect, useState, type ReactNode } from "react"
 import {
   SAVER_RULES_KEY,
   SCOPE_ORDER,
+  hasDownloadButtons,
   isAnySaverActive,
   isPinterestHost,
   isSaverActive,
-  isYouTubeHost,
   loadSaverRules,
   readSaverRules,
   resolveSaverFeature,
@@ -68,7 +68,7 @@ const FEATURES: {
   {
     id: "youtube",
     label: "Download buttons",
-    hint: "Download buttons on YouTube videos and Pinterest video pins",
+    hint: "Download buttons on YouTube videos, Pinterest video pins and Instagram posts",
     icon: <MonitorPlay size={16} />
   }
 ]
@@ -300,13 +300,8 @@ export function SaverTab() {
     if (feature === "ai" && isWebPage && !isPinterestHost(hostname)) {
       return `${base} · only appears on Pinterest`
     }
-    if (
-      feature === "youtube" &&
-      isWebPage &&
-      !isYouTubeHost(hostname) &&
-      !isPinterestHost(hostname)
-    ) {
-      return `${base} · only appears on YouTube and Pinterest`
+    if (feature === "youtube" && isWebPage && !hasDownloadButtons(hostname)) {
+      return `${base} · only appears on YouTube, Pinterest and Instagram`
     }
     return base
   }

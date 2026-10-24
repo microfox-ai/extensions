@@ -1,8 +1,12 @@
-// Midjourney jobs through midjourney.com's own API: outcrop (Editor), and
-// Create-tab jobs with image prompts, style / omni references or an edit
-// reference. Requests run inside a midjourney.com tab so the user's session
-// applies. Endpoints, headers and payloads mirror what the site's own code
-// sends (read from its bundle, Oct 2026).
+// Midjourney jobs through midjourney.com's own API: Editor jobs (outcrop and
+// repaint) and Create-tab jobs with image prompts, style / omni references or
+// an edit reference. Requests run inside a midjourney.com tab so the user's
+// session applies. Endpoints, headers and payloads mirror what the site's own
+// code sends (read from its bundle, Oct 2026).
+//
+// An Editor upload is a PNG with transparency where Midjourney should paint.
+// Outcrop leaves the new margin empty. Repaint leaves holes where the user
+// brushed; that brush step happens in a Chrome tab, not here.
 
 import { openTab } from "./tabs"
 
@@ -89,6 +93,33 @@ export function frameSize(aspectRatio: string) {
 
 const resultUrl = (jobId: string, index: number) => `${CDN}/${jobId}/0_${index}.png`
 
+// A job's PNGs reach the CDN a few seconds after the job completes, and
+// Cloudflare caches the 404 from a request made before then for minutes. A
+// fresh query string skips that cached 404.
+const READY_WAIT_MS = 40_000
+const freshUrl = (url: string) => `${url}${url.includes("?") ? "&" : "?"}t=${Date.now()}`
+
+async function isImage(url: string) {
+  try {
+    const resp = await fetch(url, { method: "HEAD", cache: "no-store" })
+    return resp.ok && Boolean(resp.headers.get("content-type")?.startsWith("image/"))
+  } catch {
+    return false
+  }
+}
+
+/** A URL that serves the job's image, once Midjourney has it on the CDN. */
+async function readyResultUrl(jobId: string, index: number, deadline = Date.now() + READY_WAIT_MS) {
+  for (;;) {
+    const url = freshUrl(resultUrl(jobId, index))
+    if (await isImage(url)) return url
+    if (Date.now() > deadline) {
+      throw new Error(`Image ${index} of job ${jobId} isn't on Midjourney's CDN yet; try again in a minute.`)
+    }
+    await sleep(2000)
+  }
+}
+
 function base64ToBlob(base64: string, mimeType = "image/png") {
   const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))
   return new Blob([bytes], { type: mimeType })
@@ -106,7 +137,7 @@ async function blobToBase64(blob: Blob) {
 async function loadSource(source: MjSource): Promise<Blob> {
   if ("base64" in source) return base64ToBlob(source.base64, source.mimeType)
   if ("code" in source) throw new Error("A style code can only be a style reference.")
-  const url = "url" in source ? source.url : resultUrl(source.jobId, source.index ?? 0)
+  const url = "url" in source ? source.url : await readyResultUrl(source.jobId, source.index ?? 0)
   const resp = await fetch(url)
   if (!resp.ok) throw new Error(`Couldn't load the image (${resp.status}): ${url.split("?")[0]}`)
   const blob = await resp.blob()
@@ -223,7 +254,13 @@ async function jobStatusInPage(jobIds: string[]) {
   return (Array.isArray(jobs) ? jobs : []).map((j: any) => ({
     id: j.id,
     status: j.current_status,
-    percentage: j.percentage_complete
+    percentage: j.percentage_complete,
+    fullCommand: typeof j.full_command === "string" ? j.full_command : undefined,
+    jobType: typeof j.job_type === "string" ? j.job_type : undefined,
+    eventType: typeof j.event_type === "string" ? j.event_type : undefined,
+    batchSize: Number(j.batch_size) || undefined,
+    parentId: typeof j.parent_id === "string" ? j.parent_id : undefined,
+    parentGrid: typeof j.parent_grid === "number" ? j.parent_grid : undefined
   }))
 }
 
@@ -306,7 +343,7 @@ const hasFlag = (flags: string, name: string) => new RegExp(`(^|\\s)--${name}(\\
 
 // Drops a flag and its values, e.g. "--ar 16:9" or "--sref url1 url2".
 const dropFlag = (flags: string, name: string) =>
-  flags.replace(new RegExp(`(^|\\s)--${name}((\\s+(?!--)\\S+)*)`, "g"), " ")
+  flags.replace(new RegExp(`(^|\\s)--${name}(?=\\s|$)((\\s+(?!--)\\S+)*)`, "g"), " ")
 
 const joinPrompt = (...parts: (string | undefined | false)[]) =>
   parts
@@ -316,7 +353,7 @@ const joinPrompt = (...parts: (string | undefined | false)[]) =>
     .trim()
 
 // The text before any "--" parameters, and those parameters merged into extraFlags.
-function splitPrompt(prompt: unknown, extraFlags = "") {
+export function splitPrompt(prompt: unknown, extraFlags = "") {
   const raw = typeof prompt === "string" ? prompt.trim() : ""
   const at = raw.search(/(^|\s)--\w/)
   const text = (at < 0 ? raw : raw.slice(0, at)).trim()
@@ -347,22 +384,15 @@ export interface JobResult {
   placement?: Placement
 }
 
-async function imageExists(url: string) {
-  try {
-    return (await fetch(url, { method: "HEAD" })).ok
-  } catch {
-    return false
-  }
-}
-
 export async function waitForJob(jobId: string, batchSize = 4, timeoutMs = 10 * 60_000) {
   const deadline = Date.now() + timeoutMs
-  const imageUrls = Array.from({ length: batchSize }, (_, i) => resultUrl(jobId, i))
   for (;;) {
     const jobs = await runInPage(jobStatusInPage, [[jobId]])
     const job = jobs?.find((j) => j.id === jobId)
+    // Upscales make one image, grids four.
+    const imageUrls = Array.from({ length: job?.batchSize ?? batchSize }, (_, i) => resultUrl(jobId, i))
     if (job && FAILED.has(job.status)) return { jobId, status: job.status, imageUrls: [] }
-    if (job?.status === "completed" || (!job && (await imageExists(imageUrls[0])))) {
+    if (job?.status === "completed" || (!job && (await isImage(freshUrl(imageUrls[0]))))) {
       return { jobId, status: "completed", imageUrls }
     }
     if (Date.now() > deadline) {
@@ -397,17 +427,27 @@ export interface OutcropParams {
   timeoutMs?: number
 }
 
-/** Extends an image to a new aspect ratio, like the Editor's Move + aspect ratio + Submit edit. */
-export async function outcrop(params: OutcropParams): Promise<JobResult> {
-  const { text, flags: allFlags } = splitPrompt(params.prompt, params.extraFlags)
-  const frame = frameSize(params.aspectRatio || "16:9")
-  const { png, placement } = await composite(await loadSource(params.source), frame, params)
-  const editUrl = await upload(png, true)
+type EditorParams = {
+  mode?: MjMode
+  private?: boolean
+  extraFlags?: string
+  wait?: boolean
+  timeoutMs?: number
+}
 
+/** Uploads an Editor PNG (transparent where Midjourney should paint) and submits it. */
+export async function submitEditorEdit(
+  png: Blob,
+  frameAr: string,
+  prompt: string,
+  params: EditorParams
+): Promise<JobResult> {
+  const { text, flags: allFlags } = splitPrompt(prompt, params.extraFlags)
+  const editUrl = await upload(png, true)
   const flags = dropFlag(dropFlag(allFlags, "ar"), "edit")
-  const prompt = joinPrompt(
+  const fullPrompt = joinPrompt(
     text,
-    `--ar ${frame.ar}`,
+    `--ar ${frameAr}`,
     flags,
     `--edit ${editUrl}`,
     !hasFlag(flags, "v") && `--v ${EDIT_VERSION}`
@@ -423,12 +463,39 @@ export async function outcrop(params: OutcropParams): Promise<JobResult> {
       lightboxOpen: null
     },
     t: "edit_diffusion",
-    prompt,
+    prompt: fullPrompt,
     editorPageRequest: true,
     parentJob: null,
     imageWasEdited: true
   })
-  return { ...(await finish(job, prompt, params)), placement }
+  return finish(job, fullPrompt, params)
+}
+
+/**
+ * The image scaled to the Editor frame for its own aspect ratio, fully opaque.
+ * Repaint punches holes in this after the user brushes.
+ */
+export async function prepareEditorImage(source: MjSource) {
+  const bitmap = await createImageBitmap(await loadSource(source))
+  try {
+    const frame = frameSize(`${bitmap.width}:${bitmap.height}`)
+    const canvas = new OffscreenCanvas(frame.width, frame.height)
+    const ctx = canvas.getContext("2d")!
+    ctx.imageSmoothingQuality = "high"
+    ctx.drawImage(bitmap, 0, 0, frame.width, frame.height)
+    return { png: await canvas.convertToBlob({ type: "image/png" }), ...frame }
+  } finally {
+    bitmap.close()
+  }
+}
+
+/** Extends an image to a new aspect ratio, like the Editor's Move + aspect ratio + Submit edit. */
+export async function outcrop(params: OutcropParams): Promise<JobResult> {
+  splitPrompt(params.prompt, params.extraFlags)
+  const frame = frameSize(params.aspectRatio || "16:9")
+  const { png, placement } = await composite(await loadSource(params.source), frame, params)
+  const result = await submitEditorEdit(png, frame.ar, params.prompt, params)
+  return { ...result, placement }
 }
 
 export interface GenerateParams {
@@ -496,24 +563,287 @@ export async function generate(params: GenerateParams): Promise<JobResult> {
   return finish(job, prompt, params)
 }
 
-/** Saves a job's images to the Downloads folder. */
+// --- Actions on a finished image ----------------------------------------------
+// The buttons under a result: Vary, Upscale, Pan and Zoom Out. Vary and
+// Upscale are server jobs on the parent image. For --v 8.1 and 8.2 the site
+// builds Pan and Zoom Out in the browser as Editor jobs (the image in a bigger
+// frame, transparent around it), the same job as outcrop. Older versions have
+// server pan and outpaint jobs.
+
+export interface ActionParams {
+  /** A job id, mj:<jobId>#<index>, or a cdn.midjourney.com image URL. */
+  jobId: string
+  index?: number
+  mode?: MjMode
+  private?: boolean
+  wait?: boolean
+  timeoutMs?: number
+}
+
+export type PanDirection = "left" | "right" | "up" | "down"
+
+type JobInfo = NonNullable<Awaited<ReturnType<typeof jobStatusInPage>>>[number]
+
+const JOB_ID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
+// The site's pan directions.
+const PAN_DIRECTIONS: Record<PanDirection, number> = { down: 0, right: 1, up: 2, left: 3 }
+// Where the original stays in an Editor pan: opposite the new content.
+const PAN_ANCHORS: Record<PanDirection, Anchor> = {
+  left: "right",
+  right: "left",
+  up: "bottom",
+  down: "top"
+}
+// What the site sends when no images are attached to the prompt.
+const ACTION_METADATA = {
+  isMobile: null,
+  imagePrompts: null,
+  imageReferences: null,
+  characterReferences: null,
+  depthReferences: null,
+  lightboxOpen: null
+}
+const VERSION_FLAGS = ["v", "version", "niji"]
+// Flags a new grid from a parent shouldn't inherit.
+const ONE_OFF_FLAGS = ["r", "repeat", "fast", "relax", "turbo"]
+// The site clears these too before an Editor pan or zoom.
+const EDITOR_DROP_FLAGS = ["ar", "aspect", "edit", "seed", "sameseed", "stop", "q", "quality", "tile", "draft", "hd"]
+
+function parseJobRef(params: ActionParams) {
+  const raw = String(params.jobId ?? "").trim()
+  const jobId = JOB_ID.exec(raw)?.[0]?.toLowerCase()
+  if (!jobId) throw new Error(`"${raw}" isn't a Midjourney job id.`)
+  const inRef = /(?:#|\/0_)(\d)(?:\.\w+)?(?:\?.*)?$/.exec(raw)
+  return { jobId, index: params.index ?? (inRef ? Number(inRef[1]) : 0) }
+}
+
+async function finishedJob(jobId: string, index: number) {
+  const jobs = await runInPage(jobStatusInPage, [[jobId]])
+  if (!jobs) {
+    throw new Error("Couldn't read the job from Midjourney. Sign in to midjourney.com in this browser first.")
+  }
+  const job = jobs.find((j) => j.id === jobId)
+  if (!job) throw new Error(`Midjourney has no job ${jobId}.`)
+  if (job.status !== "completed") {
+    throw new Error(`Job ${jobId} is ${job.status ?? "not finished"}. Wait until it completes.`)
+  }
+  const count = job.batchSize ?? 4
+  if (!Number.isInteger(index) || index < 0 || index >= count) {
+    throw new Error(`Job ${jobId} has ${count} image${count === 1 ? "" : "s"}; there is no index ${index}.`)
+  }
+  return job
+}
+
+// "8.2", "7", "niji 6", … from the prompt's flags, else from the job type
+// (e.g. "v8-2_diffusion", "v7_1024_outpaint_strong_anime").
+function jobVersion(job: JobInfo) {
+  const command = job.fullCommand ?? ""
+  const niji = /(?:^|\s)--niji\s+(\d+)/.exec(command)
+  if (niji) return `niji ${niji[1]}`
+  const flag = /(?:^|\s)--(?:v|version)\s+([\d.]+)/.exec(command)
+  if (flag) return flag[1]
+  const type = /^v(\d+)(?:[-r](\d+))?_/.exec(job.jobType ?? "")
+  if (!type) return undefined
+  if (/anime|niji/.test(job.jobType!)) return `niji ${type[1]}`
+  return type[2] ? `${type[1]}.${type[2]}` : type[1]
+}
+
+const versionFlag = (version: string) =>
+  version.startsWith("niji ") ? `--niji ${version.slice(5)}` : `--v ${version}`
+
+/** The parent's prompt (or the one given) with one-off flags dropped and its version pinned. */
+function actionPrompt(raw: string, version: string, fallbackText: string, drop: string[]) {
+  const at = raw.search(/(^|\s)--\w/)
+  const text = (at < 0 ? raw : raw.slice(0, at)).trim()
+  let flags = at < 0 ? "" : raw.slice(at)
+  for (const name of [...VERSION_FLAGS, ...ONE_OFF_FLAGS, ...drop]) flags = dropFlag(flags, name)
+  return joinPrompt(text || fallbackText, flags, versionFlag(version))
+}
+
+function upscaleType(version: string | undefined, kind: "subtle" | "creative") {
+  switch (version) {
+    case "8.2":
+      return `v8r2_2x_${kind}`
+    case "8.1":
+      return `v8r1_2x_${kind}`
+    case "7":
+    case "niji 7":
+      return `v7_2x_${kind}`
+    case "6.1":
+      return `v6r1_2x_${kind}`
+    case "6":
+    case "niji 6":
+      return `v6_2x_${kind}`
+    case "5":
+    case "5.1":
+    case "5.2":
+    case "niji 5":
+      return kind === "subtle" ? "v5_2x" : "v5_4x"
+  }
+  throw new Error(
+    version
+      ? `Midjourney has no web upscaler for ${versionFlag(version)} images.`
+      : "Couldn't tell which Midjourney version made this image, so there's no upscaler to pick."
+  )
+}
+
+/** Vary (Subtle) or Vary (Strong): four new takes on one image. */
+export async function vary(params: ActionParams & { strong?: boolean }): Promise<JobResult> {
+  const { jobId, index } = parseJobRef(params)
+  const parent = await finishedJob(jobId, index)
+  const job = await submit({
+    ...jobOptions(params),
+    metadata: ACTION_METADATA,
+    t: "vary",
+    strong: Boolean(params.strong),
+    v8_1_hd: null,
+    v8_2_hd: null,
+    id: jobId,
+    index
+  })
+  return finish(job, parent.fullCommand ?? "", params)
+}
+
+/** Upscale (Subtle) or Upscale (Creative): one image at twice the size. */
+export async function upscale(
+  params: ActionParams & { kind?: "subtle" | "creative" }
+): Promise<JobResult> {
+  const ref = parseJobRef(params)
+  const parent = await finishedJob(ref.jobId, ref.index)
+  let { jobId, index } = ref
+  // The site's own U buttons on older grids make "virtual" upscales; those
+  // upscale from the grid they came from.
+  if (parent.eventType?.endsWith("_virtual") && parent.parentId) {
+    jobId = parent.parentId
+    index = parent.parentGrid ?? index
+  } else if (parent.eventType?.startsWith("diffusion_upsample")) {
+    throw new Error("That image is already an upscale.")
+  }
+  if (/_hd_/.test(parent.jobType ?? "")) throw new Error("--hd images are already full size and can't be upscaled.")
+  if (/draft/.test(parent.jobType ?? "")) throw new Error("Draft images can't be upscaled. Vary or rerun it without --draft first.")
+  const job = await submit({
+    ...jobOptions(params),
+    metadata: ACTION_METADATA,
+    t: "upscale",
+    type: upscaleType(jobVersion(parent), params.kind === "creative" ? "creative" : "subtle"),
+    id: jobId,
+    index
+  })
+  return finish(job, parent.fullCommand ?? "", params)
+}
+
+async function extend(
+  params: ActionParams & { prompt?: string },
+  how: { pan: PanDirection } | { zoom: number }
+): Promise<JobResult> {
+  const { jobId, index } = parseJobRef(params)
+  const parent = await finishedJob(jobId, index)
+  const version = jobVersion(parent)
+  const what = "pan" in how ? "pan" : "zoom out"
+  const fallbackText = "pan" in how ? `pan ${how.pan}` : "zoom out"
+  const raw = params.prompt?.trim() || parent.fullCommand || ""
+
+  if (version === "8.1" || version === "8.2") {
+    const blob = await loadSource({ jobId, index })
+    const bitmap = await createImageBitmap(blob)
+    const { width, height } = bitmap
+    bitmap.close()
+    const grow = "pan" in how ? 1.5 : how.zoom
+    const wider = "zoom" in how || how.pan === "left" || how.pan === "right"
+    const taller = "zoom" in how || how.pan === "up" || how.pan === "down"
+    const frame = frameSize(
+      `${Math.round(wider ? width * grow : width)}:${Math.round(taller ? height * grow : height)}`
+    )
+    const { png, placement } = await composite(blob, frame, {
+      anchor: "pan" in how ? PAN_ANCHORS[how.pan] : "center",
+      scale: "zoom" in how ? 1 / how.zoom : 1
+    })
+    const prompt = actionPrompt(raw, version, fallbackText, EDITOR_DROP_FLAGS)
+    const result = await submitEditorEdit(png, frame.ar, prompt, params)
+    return { ...result, placement }
+  }
+
+  const serverVersions = ["5", "5.1", "5.2", "niji 5", "6", "6.1", "niji 6", "7", "niji 7"]
+  if (!version || !serverVersions.includes(version)) {
+    throw new Error(
+      `Midjourney can't ${what} ${version ? `${versionFlag(version)} images` : "this image"}. Use midjourney_outcrop instead.`
+    )
+  }
+  const newPrompt = actionPrompt(raw, version, fallbackText, [])
+  const job = await submit({
+    ...jobOptions(params),
+    metadata: ACTION_METADATA,
+    ...("pan" in how
+      ? { t: "pan", newPrompt, direction: PAN_DIRECTIONS[how.pan], fraction: 0.5, stitch: true }
+      : // The site's zoom factor: the original's size in the new frame, in percent.
+        { t: "outpaint", newPrompt, zoomFactor: Math.round(50 + (100 - (how.zoom - 1) * 100) / 2) }),
+    id: jobId,
+    index
+  })
+  return finish(job, newPrompt, params)
+}
+
+/** Pan: extends one image by half its width or height in one direction. */
+export function pan(params: ActionParams & { direction: PanDirection; prompt?: string }) {
+  if (!(params.direction in PAN_DIRECTIONS)) {
+    throw new Error('Pan direction must be "left", "right", "up" or "down".')
+  }
+  return extend(params, { pan: params.direction })
+}
+
+/** Zoom Out: shrinks one image inside a frame of the same shape and fills around it. */
+export function zoomOut(params: ActionParams & { zoom?: number; prompt?: string }) {
+  const zoom = clamp(Number(params.zoom) || 1.5, 1.1, 2)
+  return extend(params, { zoom })
+}
+
+// Resolves with the saved file's path once a download finishes.
+function downloadFinished(downloadId: number) {
+  return new Promise<string>((resolve, reject) => {
+    const settle = (item?: chrome.downloads.DownloadItem) => {
+      if (item?.state === "complete") {
+        chrome.downloads.onChanged.removeListener(onChanged)
+        resolve(item.filename)
+      } else if (item?.state === "interrupted") {
+        chrome.downloads.onChanged.removeListener(onChanged)
+        reject(new Error(`Download failed: ${item.error ?? "interrupted"}`))
+      }
+    }
+    const check = () => chrome.downloads.search({ id: downloadId }).then(([item]) => settle(item))
+    const onChanged = (delta: chrome.downloads.DownloadDelta) => {
+      if (delta.id === downloadId && delta.state) check()
+    }
+    chrome.downloads.onChanged.addListener(onChanged)
+    check()
+  })
+}
+
+/**
+ * Saves a job's images to the Downloads folder. Each one is saved only once
+ * the CDN serves it, and one at a time: starting a download right after one
+ * that failed has stopped the extension's service worker.
+ */
 export async function downloadImages(params: {
   jobId: string
   indexes?: number[]
   folder?: string
 }) {
-  const indexes = params.indexes?.length ? params.indexes : [0, 1, 2, 3]
+  let indexes = params.indexes ?? []
+  if (!indexes.length) {
+    const [job] = (await runInPage(jobStatusInPage, [[params.jobId]])) ?? []
+    indexes = Array.from({ length: job?.batchSize ?? 4 }, (_, i) => i)
+  }
   const folder = (params.folder || "midjourney").replace(/^\/+|\/+$/g, "")
+  const deadline = Date.now() + READY_WAIT_MS
   const files = []
   for (const index of indexes) {
-    const filename = `${folder}/${params.jobId}_${index}.png`
-    await chrome.downloads.download({
-      url: resultUrl(params.jobId, index),
-      filename,
+    const downloadId = await chrome.downloads.download({
+      url: await readyResultUrl(params.jobId, index, deadline),
+      filename: `${folder}/${params.jobId}_${index}.png`,
       conflictAction: "uniquify",
       saveAs: false
     })
-    files.push(filename)
+    files.push(await downloadFinished(downloadId))
   }
   return { files }
 }
