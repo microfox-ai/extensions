@@ -7,11 +7,17 @@ import { AgentsTab } from "./componenets/AgentsTab"
 import { SaverTab } from "./componenets/SaverTab"
 import { SettingsTab } from "./componenets/SettingsTab"
 import { PinterestTab } from "./componenets/PinterestTab"
+import { YouTubeTab } from "./componenets/YouTubeTab"
+import { InstagramTab } from "./componenets/InstagramTab"
+import { DistroKidTab } from "./componenets/DistroKidTab"
 
 type MainTab =
   | "midjourney"
   | "pinterest"
+  | "youtube"
+  | "instagram"
   | "suno"
+  | "distrokid"
   | "agents"
   | "saver"
   | "settings"
@@ -31,7 +37,25 @@ const TABS: {
     activeColor: "#E60023",
     component: PinterestTab
   },
+  {
+    id: "youtube",
+    label: "YouTube",
+    activeColor: "#FF0000",
+    component: YouTubeTab
+  },
+  {
+    id: "instagram",
+    label: "Instagram",
+    activeColor: "#E1306C",
+    component: InstagramTab
+  },
   { id: "suno", label: "Suno", component: SunoTab, hidden: true },
+  {
+    id: "distrokid",
+    label: "DistroKid",
+    activeColor: "#0073C7",
+    component: DistroKidTab
+  },
   { id: "agents", label: "AI Agents", component: AgentsTab, hidden: true },
   { id: "saver", label: "Saver", component: SaverTab },
   { id: "settings", label: "Settings", component: SettingsTab }

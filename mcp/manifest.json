@@ -1,0 +1,51 @@
+{
+  "$schema": "https://raw.githubusercontent.com/modelcontextprotocol/mcpb/main/dist/mcpb-manifest.schema.json",
+  "manifest_version": "0.3",
+  "name": "get-into-zone",
+  "display_name": "Get into zone",
+  "version": "0.0.0",
+  "description": "Let Claude use the Get into zone browser extension: Pinterest bulk download, YouTube and Instagram downloads, Mediamake, Suno and Midjourney.",
+  "long_description": "Connects Claude to the Get into zone extension running in your Chrome. Claude can bulk-download Pinterest pins, download YouTube videos and Instagram posts, save media to Mediamake, switch on-page saver overlays, upload Suno tracks and drive Midjourney, all in your real browser profile with your sign-ins.\n\nThe extension connects to this server over a local WebSocket on 127.0.0.1. In the extension popup, Settings → Let Claude use this extension (MCP) shows Connected to Claude once it is running.",
+  "author": {
+    "name": "TheMoonDevs"
+  },
+  "icon": "icon.png",
+  "server": {
+    "type": "node",
+    "entry_point": "server/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/index.js"],
+      "env": {
+        "GET_INTO_ZONE_PORT": "${user_config.port}",
+        "GET_INTO_ZONE_EXTENSION_ID": "${user_config.extension_id}"
+      }
+    }
+  },
+  "tools_generated": false,
+  "user_config": {
+    "port": {
+      "type": "number",
+      "title": "Port",
+      "description": "Local port the extension connects to. Change it in the extension's Settings too.",
+      "default": 17892,
+      "min": 1024,
+      "max": 65535,
+      "required": false
+    },
+    "extension_id": {
+      "type": "string",
+      "title": "Extension id (optional)",
+      "description": "Accept only this extension id, as shown on chrome://extensions. Leave empty to accept any extension.",
+      "default": "",
+      "required": false
+    }
+  },
+  "keywords": ["pinterest", "youtube", "instagram", "download", "midjourney", "suno", "browser"],
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "node": ">=18"
+    }
+  }
+}

@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react"
 
+import { PinterestBulkDownload } from "./PinterestBulkDownload"
+
 interface PinterestAnalysis {
   id: string
   imageUrl: string
@@ -62,6 +64,8 @@ export function PinterestTab() {
 
   return (
     <div>
+      <PinterestBulkDownload />
+
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <h2 style={{ margin: 0, fontSize: 16 }}>📌 Pinterest AI Analyses</h2>
         <button

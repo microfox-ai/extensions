@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react"
 
+import { McpBridgeSettings } from "./McpBridgeSettings"
+
 const DEFAULT_API_ENDPOINT =
   process.env.NODE_ENV === "production"
     ? "https://mediamake-mediamake.vercel.app/"
@@ -161,6 +163,7 @@ export function SettingsTab() {
           )}
         </select>
       </div>
+      <McpBridgeSettings />
       <p style={{ marginTop: 16, fontSize: "12px", color: "#666" }}>
         Turn the on-page Save and AI overlays on or off from the Saver tab.
       </p>

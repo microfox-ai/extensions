@@ -4,6 +4,7 @@ import {
   Eye,
   EyeOff,
   Globe,
+  MonitorPlay,
   Power,
   Sparkles,
   X
@@ -13,6 +14,7 @@ import { useEffect, useState, type ReactNode } from "react"
 import {
   SAVER_RULES_KEY,
   SCOPE_ORDER,
+  hasDownloadButtons,
   isAnySaverActive,
   isPinterestHost,
   isSaverActive,
@@ -62,6 +64,12 @@ const FEATURES: {
     label: "AI analyse",
     hint: "Save + AI, AI Only and View AI buttons",
     icon: <Sparkles size={16} />
+  },
+  {
+    id: "youtube",
+    label: "Download buttons",
+    hint: "Download buttons on YouTube videos, Pinterest video pins and Instagram posts",
+    icon: <MonitorPlay size={16} />
   }
 ]
 
@@ -291,6 +299,9 @@ export function SaverTab() {
       : "On by default"
     if (feature === "ai" && isWebPage && !isPinterestHost(hostname)) {
       return `${base} · only appears on Pinterest`
+    }
+    if (feature === "youtube" && isWebPage && !hasDownloadButtons(hostname)) {
+      return `${base} · only appears on YouTube, Pinterest and Instagram`
     }
     return base
   }

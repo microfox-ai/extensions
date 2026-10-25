@@ -7,6 +7,12 @@ import {
   type SaverFeature,
   type SaverRule
 } from "./lib/saverRules"
+import {
+  pinImageIdFromElement,
+  pinVideoIdFromElement,
+  pinterestPageKey,
+  type BulkItemKind
+} from "./lib/pinterestBulk"
 
 console.log("Content script loaded.")
 
@@ -1078,6 +1084,121 @@ if (isPinterestPage) {
   )
 }
 
+// Pinterest bulk download: while the popup has a session running for this tab,
+// report every page the tab visits and the pin images and videos on it. The
+// background worker applies the per-page limit, skips pages already visited
+// this session and does the saving.
+function initPinterestBulkCollector() {
+  let pageKey: string | null = null
+  let collecting = false
+  let includeVideos = false
+  let sentKeys = new Set<string>()
+  let scanTimer: number | undefined
+  let urlTimer: number | undefined
+
+  const scan = () => {
+    scanTimer = undefined
+    if (!collecting || !pageKey) return
+    const items: { kind: BulkItemKind; id: string; alt: string }[] = []
+    const add = (kind: BulkItemKind, id: string | null, alt: string) => {
+      if (!id || sentKeys.has(`${kind}:${id}`)) return
+      sentKeys.add(`${kind}:${id}`)
+      items.push({ kind, id, alt })
+    }
+
+    const videoCards = new Set<Element>()
+    if (includeVideos) {
+      document
+        .querySelectorAll<HTMLVideoElement | HTMLImageElement>("video[poster], img")
+        .forEach((el) => {
+          const id = pinVideoIdFromElement(el)
+          if (!id) return
+          const card = el.closest("[data-grid-item]")
+          if (card) videoCards.add(card)
+          add("video", id, card?.querySelector("img[alt]")?.getAttribute("alt") || "")
+        })
+    }
+    document.querySelectorAll("img").forEach((img) => {
+      // A video pin's cover image is skipped when its video is being saved.
+      const card = img.closest("[data-grid-item]")
+      if (card && videoCards.has(card)) return
+      add("image", pinImageIdFromElement(img), img.alt || "")
+    })
+
+    if (items.length === 0) return
+    const key = pageKey
+    chrome.runtime.sendMessage(
+      {
+        action: "pinterestBulkAddItems",
+        pageKey: key,
+        pageUrl: window.location.href,
+        items
+      },
+      (response) => {
+        if (chrome.runtime.lastError) return
+        if (pageKey === key && response?.done) collecting = false
+      }
+    )
+  }
+
+  const scheduleScan = () => {
+    if (!collecting || scanTimer !== undefined) return
+    scanTimer = window.setTimeout(scan, 400)
+  }
+
+  const enterPage = () => {
+    const key = pinterestPageKey(window.location.href)
+    pageKey = key
+    collecting = false
+    sentKeys = new Set()
+    chrome.runtime.sendMessage(
+      { action: "pinterestBulkEnterPage", pageKey: key },
+      (response) => {
+        if (chrome.runtime.lastError || pageKey !== key) return
+        collecting = Boolean(response?.collect)
+        includeVideos = Boolean(response?.videos)
+        scheduleScan()
+      }
+    )
+  }
+
+  // Infinite scroll adds pins, and lazy images get their src late.
+  const observer = new MutationObserver(scheduleScan)
+
+  const setActive = (active: boolean) => {
+    observer.disconnect()
+    window.clearInterval(urlTimer)
+    pageKey = null
+    collecting = false
+    if (!active) return
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["src", "srcset", "poster"]
+    })
+    // Pinterest navigates without reloading the page.
+    urlTimer = window.setInterval(() => {
+      if (pinterestPageKey(window.location.href) !== pageKey) enterPage()
+    }, 500)
+    enterPage()
+  }
+
+  const sync = () =>
+    chrome.runtime.sendMessage({ action: "pinterestBulkStatus" }, (response) => {
+      if (chrome.runtime.lastError) return
+      setActive(Boolean(response?.active))
+    })
+
+  chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
+    if (request?.action !== "pinterestBulkSync") return
+    sync()
+    // The background treats a missing reply as "content script not loaded".
+    sendResponse({ ok: true })
+  })
+  sync()
+}
+
 function createOverlayButton(
   mediaElement: HTMLImageElement | HTMLVideoElement
 ) {
@@ -1330,6 +1451,7 @@ if (isPinterestPage) {
     })
   })
   pinterestObserver.observe(document.body, { childList: true, subtree: true })
+  initPinterestBulkCollector()
 } else {
   // Initial run
   processMediaElements()

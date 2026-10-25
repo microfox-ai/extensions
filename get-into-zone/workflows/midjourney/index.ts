@@ -72,12 +72,13 @@ export function startMidjourneyWorkflow(
     }
 
     // Case 1: reuse tab already on the correct folder
-    if (sameFolderTab && sameFolderTab.id) {
-      chrome.tabs.update(sameFolderTab.id, { active: true }, () => {
+    const sameFolderTabId = sameFolderTab?.id
+    if (sameFolderTabId !== undefined) {
+      chrome.tabs.update(sameFolderTabId, { active: true }, () => {
         // Tab is already on the correct folder; tiny delay to let UI settle
         setTimeout(() => {
           executeWorkflow(
-            sameFolderTab.id!,
+            sameFolderTabId,
             prompt,
             useLastImage,
             normalizedTag,
@@ -91,9 +92,10 @@ export function startMidjourneyWorkflow(
     const desiredUrl = buildUrlForFolder(normalizedTag)
 
     // Case 2: navigate an existing /imagine tab to the desired folder URL
-    if (anyImagineTab && anyImagineTab.id) {
+    const anyImagineTabId = anyImagineTab?.id
+    if (anyImagineTabId !== undefined) {
       chrome.tabs.update(
-        anyImagineTab.id,
+        anyImagineTabId,
         { active: true, url: desiredUrl },
         () => {
           const listener = (
@@ -101,21 +103,19 @@ export function startMidjourneyWorkflow(
             changeInfo: chrome.tabs.TabChangeInfo
           ) => {
             if (
-              updatedTabId === anyImagineTab.id &&
+              updatedTabId === anyImagineTabId &&
               changeInfo.status === "complete"
             ) {
-              if (anyImagineTab.id !== undefined) {
-                // Wait a bit after navigation so the folder filter applies
-                setTimeout(() => {
-                  executeWorkflow(
-                    anyImagineTab.id!,
-                    prompt,
-                    useLastImage,
-                    normalizedTag,
-                    queueItemId
-                  )
-                }, FOLDER_SWITCH_SETTLE_MS)
-              }
+              // Wait a bit after navigation so the folder filter applies
+              setTimeout(() => {
+                executeWorkflow(
+                  anyImagineTabId,
+                  prompt,
+                  useLastImage,
+                  normalizedTag,
+                  queueItemId
+                )
+              }, FOLDER_SWITCH_SETTLE_MS)
               chrome.tabs.onUpdated.removeListener(listener)
             }
           }
