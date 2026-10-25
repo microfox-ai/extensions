@@ -5,7 +5,6 @@ Simple Repo For Developing Extensions to support accelerated automations on loca
 | Folder | What it is |
 | --- | --- |
 | [`get-into-zone/`](get-into-zone) | **Get into zone**: a Chrome extension that adds Save / AI overlays to images on any site, automates Midjourney prompts, and sends media to Mediamake |
-| [`midjourney-gen-workflow1/`](midjourney-gen-workflow1) | Standalone Midjourney generation script |
 
 ## Install Get into zone
 
