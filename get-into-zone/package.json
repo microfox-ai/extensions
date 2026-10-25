@@ -1,7 +1,7 @@
 {
   "name": "get-into-zone",
   "displayName": "Get into zone",
-  "version": "0.1.1",
+  "version": "0.2.3",
   "description": "utitlities to fast up get-into-zone",
   "author": "subhakar",
   "scripts": {
@@ -37,7 +37,12 @@
       "scripting",
       "storage",
       "activeTab",
-      "contextMenus"
+      "contextMenus",
+      "downloads",
+      "offscreen",
+      "alarms",
+      "identity",
+      "identity.email"
     ],
     "background": {
       "service_worker": "background.ts"

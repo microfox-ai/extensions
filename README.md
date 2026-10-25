@@ -5,7 +5,7 @@ Simple Repo For Developing Extensions to support accelerated automations on loca
 | Folder | What it is |
 | --- | --- |
 | [`get-into-zone/`](get-into-zone) | **Get into zone**: a Chrome extension that adds Save / AI overlays to images on any site, automates Midjourney prompts, and sends media to Mediamake |
-| [`midjourney-gen-workflow1/`](midjourney-gen-workflow1) | Standalone Midjourney generation script |
+| [`mcp/`](mcp) | **MCP server**: lets Claude (Claude Code, Claude Desktop) use the Get into zone extension in your browser |
 
 ## Install Get into zone
 
@@ -58,13 +58,77 @@ On Pinterest the overlay has more options:
 
 On suno.com, an **Upload to Mediamake** panel appears under the open track's Remix/Edit button.
 
+### Bulk download from Pinterest (Pinterest tab)
+
+Saves every pin image and video you browse in a Pinterest tab, page after page, until you stop it.
+
+1. Open Pinterest, then open the popup's **Pinterest** tab.
+2. Under **Bulk download**, pick where images go:
+   - **Browser downloads**: every image is saved into the same folder inside your Downloads folder (for example `Downloads/pinterest-2026-10-21`), and videos into a separate folder (default: a `videos` folder inside it)
+   - **Mediamake**: every image and video is uploaded with the same tags (pre-filled from Settings). Uses the API Endpoint, API Key and Default Project from Settings
+3. Untick **Also download videos** if you only want images.
+4. Set **Max images, and videos, per page** (empty means no limit), then click **Start downloading this tab**.
+5. Browse normally: scroll, open pins, search. Each new page contributes up to the limit, including pins loaded as you scroll.
+6. Click **Stop** when done. The panel shows saved images and videos, queued and failed counts while it runs.
+
+Rules:
+
+- A page you go back to (Back button, or clicking to it again) is skipped, so it's never downloaded twice. A page is its path, plus the query on search pages.
+- An image that already appeared on an earlier page is not saved again.
+- Images are saved at original resolution when Pinterest has it, otherwise at 736px wide.
+- Videos are saved as MP4 at up to 720p. Pinterest only plays videos as streams, so the extension finds the pin's MP4 file; for the few pins that have none, it downloads the stream and joins picture and sound into one MP4 (older pins become a `.ts` file).
+- The session belongs to that tab only and ends when you click Stop, close the tab, or quit the browser.
+
+### Download one Pinterest video
+
+Hover a video pin anywhere on Pinterest (home feed, search, boards) and click **Download** in its bottom-left corner. On a video pin's own page the button stays visible on the video. The video is saved to your Downloads folder as an MP4 of up to 720p, named after the pin, for example `Pin title [1a2b3c4d].mp4`.
+
+A progress card appears in the top-right corner of the page: × cancels a running download, **Show** opens a finished file in its folder. Turn the button off with the **Download buttons** switch in the Saver tab.
+
+### Download a YouTube video
+
+**On YouTube pages** (no popup needed):
+
+- **Under the video title** on a watch page: click **Download** to save the video in the best H.264 quality with sound (up to 1080p; the quality and size are shown next to the button). Click the arrow next to it to pick another quality, audio only, or video only.
+- **On any thumbnail** (home, search, sidebar, channel pages, Shorts): hover it and click **Download** in its bottom-left corner. That saves the same best-quality MP4 without opening the video.
+
+A progress card appears in the top-right corner of the page: × cancels a running download, **Show** opens a finished file in its folder. Live streams can be downloaded only after they end. Turn the buttons off with the **Download buttons** switch in the Saver tab.
+
+**From the popup's YouTube tab:**
+
+1. Open a YouTube video (a `watch` page, a Short, or a live replay) in the current tab, then open the popup's **YouTube** tab. It shows the video's title, channel and length.
+2. Pick what to save:
+   - **Video + audio**: one MP4 with sound, up to 1080p in H.264 (higher when YouTube offers AV1 for the video)
+   - **Video only**: picture without sound, every resolution YouTube has, including VP9 WebM up to 4K
+   - **Audio only**: M4A (AAC) or WebM (Opus)
+3. Choose a **Quality** (the estimated size is shown) and click **Download**. The file goes to your Downloads folder, named after the video, for example `Video title (1080p).mp4`.
+
+Progress shows under **Downloads** in the tab, and keeps going if you close the popup. Click × to cancel, or the folder icon to show a finished file.
+
+Notes:
+
+- YouTube stores picture and sound as separate streams; for **Video + audio** the extension downloads both and merges them into one MP4 without re-encoding.
+- The whole file is held in memory until it's saved, so very long videos at high quality need a lot of RAM.
+- Videos that need sign-in (age-restricted, members-only, private) and paid or DRM-protected content can't be downloaded. Only download videos you have the right to save.
+
+### Download Instagram photos and videos
+
+You need to be logged in to Instagram in this browser.
+
+**On instagram.com:** hover a photo or video in the feed, on a post page, in a profile or explore grid, on a reel, or in a story. **Download** saves the slide you're looking at; on carousels, **All** saves every slide. Files go to Downloads as `<username> - <post code> - <slide>.jpg` (or `.mp4`).
+
+**From the popup's Instagram tab:** open a post, reel or story, or paste its link, then download one item or **Download all**.
+
+Story highlights aren't supported. Only download posts you have the right to save.
+
 ### Turn overlays on or off (Saver tab)
 
-The **Saver** tab controls where overlays appear. It has three switches:
+The **Saver** tab controls where overlays appear. It has four switches:
 
 - **All savers**: every overlay, including the Suno upload panel
 - **Save button**: the Save buttons
 - **AI analyse**: the Save + AI, AI Only, and View AI buttons
+- **Download buttons**: the Download buttons on YouTube thumbnails, under the YouTube video title, on Pinterest video pins, and on Instagram photos and videos
 
 Pick where a change applies with **Apply changes to**, then flip a switch:
 
@@ -83,6 +147,10 @@ Shortcuts:
 
 - **Toolbar badge**: the extension icon shows **OFF** when no overlay will appear on the current tab.
 - **Right-click menu**: right-click any page, then **Hide savers** (or **Show savers** when they're off) → *On this page / On this site / In this window / Everywhere*.
+
+### Let Claude use the extension (MCP)
+
+With the [MCP server](mcp) set up, Claude can run everything above for you ("download this YouTube video at 720p", "bulk-download this Pinterest board", "save every slide of this Instagram post"). In **Settings**, **Let Claude use this extension (MCP)** turns this on or off; it shows **Connected to Claude** while the server runs. Setup steps are in [`mcp/README.md`](mcp/README.md).
 
 ### Automate Midjourney (Midjourney tab)
 

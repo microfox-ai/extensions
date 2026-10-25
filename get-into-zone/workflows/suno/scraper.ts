@@ -1,6 +1,13 @@
-export function scrapeSunoMusic() {
+export type SunoTrack = {
+  title: string | null
+  prompt: string | null
+  audioUrl: string | null
+  htmlUrl: string | null
+}
+
+export function scrapeSunoMusic(): SunoTrack[] {
   const musicItems = document.querySelectorAll('div[data-testid="clip-row"]')
-  const results = []
+  const results: SunoTrack[] = []
 
   musicItems.forEach((item) => {
     const titleElement = item.querySelector(

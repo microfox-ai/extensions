@@ -1,5 +1,6 @@
 import {
   SAVER_RULES_KEY,
+  SAVER_FEATURES,
   isAnySaverActive,
   loadSaverRules,
   readSaverRules,
@@ -183,7 +184,7 @@ export function initSaverBackground() {
     const rules = await loadSaverRules()
     const next = isAnySaverActive(rules, ctx)
       ? setSaverRule(rules, "all", scope, ctx, false)
-      : (["all", "save", "ai"] as const).reduce(
+      : SAVER_FEATURES.reduce(
           (acc, feature) => setSaverRule(acc, feature, scope, ctx, true),
           rules
         )
