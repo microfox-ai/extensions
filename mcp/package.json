@@ -1,10 +1,10 @@
 {
-  "name": "get-into-zone-mcp",
-  "version": "0.1.1",
-  "description": "MCP server that lets Claude use the Get into zone browser extension",
+  "name": "browse-hack-mcp",
+  "version": "0.2.0",
+  "description": "MCP server that lets Claude use the Browse Hack browser extension",
   "type": "module",
   "bin": {
-    "get-into-zone-mcp": "dist/index.js"
+    "browse-hack-mcp": "dist/index.js"
   },
   "files": [
     "dist"

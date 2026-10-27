@@ -1,6 +1,6 @@
-# Get into zone MCP server
+# Browse Hack MCP server
 
-Lets Claude (Claude Code, Claude Desktop, or any MCP client) use the [Get into zone](../get-into-zone) extension running in your browser: bulk-download Pinterest, download YouTube videos and Instagram posts, save media to Mediamake, switch overlays on or off, upload Suno tracks and drive Midjourney.
+Lets Claude (Claude Code, Claude Desktop, or any MCP client) use the [Browse Hack](../get-into-zone) extension running in your browser: bulk-download Pinterest, download YouTube videos and Instagram posts, save media to Mediamake, switch overlays on or off, upload Suno tracks and drive Midjourney.
 
 ```
 Claude ──stdio──▶ MCP server (this folder) ◀──WebSocket 127.0.0.1:17892── extension service worker ──▶ your tabs
@@ -10,17 +10,17 @@ The extension connects out to the server, so the server never needs browser acce
 
 ## Setup
 
-With Claude Code, open this repo and ask Claude to "set up get-into-zone": the [`get-into-zone-setup`](../.claude/skills/get-into-zone-setup/SKILL.md) skill runs the steps below and tells you which ones to do in Chrome.
+With Claude Code, open this repo and ask Claude to "set up browse-hack": the [`browse-hack-setup`](../.claude/skills/browse-hack-setup/SKILL.md) skill runs the steps below and tells you which ones to do in Chrome.
 
 ### Claude Desktop: one-click install
 
-1. Get `get-into-zone.mcpb`, or build it yourself (Node 18+):
+1. Get `browse-hack.mcpb`, or build it yourself (Node 18+):
 
    ```bash
    cd mcp && npm install && npm run pack:mcpb
    ```
 
-2. Double-click `get-into-zone.mcpb`, or drag it into Claude Desktop's **Settings → Extensions**, then click **Install**. The port and an optional extension id can be changed there later. Claude Desktop runs the server with its built-in Node, so nothing else needs installing.
+2. Double-click `browse-hack.mcpb`, or drag it into Claude Desktop's **Settings → Extensions**, then click **Install**. The port and an optional extension id can be changed there later. Claude Desktop runs the server with its built-in Node, so nothing else needs installing.
 
 3. Continue with step 3 below to load the browser extension.
 
@@ -37,7 +37,7 @@ With Claude Code, open this repo and ask Claude to "set up get-into-zone": the [
    **Claude Code**:
 
    ```bash
-   claude mcp add get-into-zone -s user -- node /absolute/path/to/extensions/mcp/dist/index.js
+   claude mcp add browse-hack -s user -- node /absolute/path/to/extensions/mcp/dist/index.js
    ```
 
    **Claude Desktop**: add this to `~/Library/Application Support/Claude/claude_desktop_config.json` (Windows: `%APPDATA%\Claude\claude_desktop_config.json`), then restart Claude Desktop:
@@ -45,7 +45,7 @@ With Claude Code, open this repo and ask Claude to "set up get-into-zone": the [
    ```json
    {
      "mcpServers": {
-       "get-into-zone": {
+       "browse-hack": {
          "command": "node",
          "args": ["/absolute/path/to/extensions/mcp/dist/index.js"]
        }
@@ -55,7 +55,7 @@ With Claude Code, open this repo and ask Claude to "set up get-into-zone": the [
 
 3. Load a build of the extension that includes the bridge (version after 0.1.0, or `npm run build` in `get-into-zone/` and load `build/chrome-mv3-prod`). In the popup, **Settings → Let Claude use this extension (MCP)** is on by default and shows **Connected to Claude** once the server runs. The extension looks for the server every 30 seconds, so the first connection can take up to that long.
 
-4. Ask Claude something like "check the get-into-zone status", then "download this YouTube video at 1080p: https://youtu.be/…".
+4. Ask Claude something like "check the browse-hack status", then "download this YouTube video at 1080p: https://youtu.be/…".
 
 Claude Code and Claude Desktop can both use it at once: the first server to start listens on the port and later ones relay through it. If the first one exits, another takes over and the extension reconnects.
 
@@ -84,7 +84,7 @@ To tell profiles apart, give each one a name in the popup's **Settings → Profi
 | Midjourney (prompt automation) | `midjourney_submit_prompts`, `midjourney_scrape`, `midjourney_queue_size`, `midjourney_list_queue`, `midjourney_run_queue`, `midjourney_load_prompts` |
 | Midjourney (images) | `midjourney_outcrop`, `midjourney_repaint`, `midjourney_repaint_status`, `midjourney_generate`, `midjourney_vary`, `midjourney_upscale`, `midjourney_pan`, `midjourney_zoom_out`, `midjourney_job_status`, `midjourney_download_images` |
 
-Tools behave like the matching buttons in the popup; see the [main README](../README.md#use-get-into-zone) for what each feature does.
+Tools behave like the matching buttons in the popup; see the [main README](../README.md#use-browse-hack) for what each feature does.
 
 - **Pinterest bulk download** collects what the tab shows. After `pinterest_bulk_start`, the tab has to be scrolled or navigated to collect more pins. Do that yourself, or let Claude do it with Claude in Chrome (see below).
 - **YouTube** downloads only need a video URL. The extension uses any open YouTube tab to read the formats, or opens one in the background.
@@ -133,15 +133,15 @@ npm run install-skills
 
 | Variable | Default | Use |
 | --- | --- | --- |
-| `GET_INTO_ZONE_PORT` | `17892` | Port to listen on. Change the port in the extension's Settings to match. |
-| `GET_INTO_ZONE_EXTENSION_ID` | any | Accept only this extension id (shown on `chrome://extensions`). |
+| `BROWSE_HACK_PORT` | `17892` | Port to listen on. Change the port in the extension's Settings to match. |
+| `BROWSE_HACK_EXTENSION_ID` | any | Accept only this extension id (shown on `chrome://extensions`). |
 
 Pass them with `-e NAME=value` in `claude mcp add`, or an `"env"` object in the Desktop config. With the `.mcpb` install, set them in the extension's settings in Claude Desktop.
 
 ## Security
 
 - The server listens on `127.0.0.1` only.
-- Web pages can open WebSockets to localhost, but the server rejects any connection that carries a web page's `Origin`. Only extensions (`chrome-extension://…`) and local processes get in. Set `GET_INTO_ZONE_EXTENSION_ID` to accept only this extension.
+- Web pages can open WebSockets to localhost, but the server rejects any connection that carries a web page's `Origin`. Only extensions (`chrome-extension://…`) and local processes get in. Set `BROWSE_HACK_EXTENSION_ID` to accept only this extension.
 - Any program on your computer can reach the port, the same as any local process can reach your browser profile. Turn the switch off in Settings when you don't want Claude to use the extension.
 - `get_settings` never returns the API key, only whether one is set.
 
@@ -150,7 +150,7 @@ Pass them with `-e NAME=value` in `claude mcp add`, or an `"env"` object in the 
 ```bash
 npm run build     # compile to dist/
 npm run inspect   # try the tools in the MCP Inspector
-npm run pack:mcpb # build get-into-zone.mcpb for Claude Desktop
+npm run pack:mcpb # build browse-hack.mcpb for Claude Desktop
 ```
 
 `pack:mcpb` bundles `src/` into a single `server/index.js` with esbuild (no `node_modules` in the bundle), copies [`manifest.json`](manifest.json) with the version from `package.json` and the tool list read from the server itself, and packs it with the [`mcpb`](https://github.com/modelcontextprotocol/mcpb) CLI. New tools show up in the bundle without editing the manifest.

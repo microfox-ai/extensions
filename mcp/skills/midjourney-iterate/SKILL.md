@@ -1,17 +1,17 @@
 ---
 name: midjourney-iterate
-description: Make more images from one of the user's Midjourney results with the buttons under it (Vary Subtle/Strong, Upscale Subtle/Creative, Pan left/right/up/down, Zoom Out 1.5x/2x) through the Get into zone browser extension. Use when the user picks an image from a Midjourney grid and wants variations or versions of it, a bigger or upscaled copy, the scene continued to one side, or a zoomed-out version.
+description: Make more images from one of the user's Midjourney results with the buttons under it (Vary Subtle/Strong, Upscale Subtle/Creative, Pan left/right/up/down, Zoom Out 1.5x/2x) through the Browse Hack browser extension. Use when the user picks an image from a Midjourney grid and wants variations or versions of it, a bigger or upscaled copy, the scene continued to one side, or a zoomed-out version.
 ---
 
 # Midjourney vary, upscale, pan and zoom
 
-Runs the buttons under a finished Midjourney image on the user's own account, in their Chrome, through the `get-into-zone` MCP server. Each call starts a new Midjourney job from one image of an existing job.
+Runs the buttons under a finished Midjourney image on the user's own account, in their Chrome, through the `browse-hack` MCP server. Each call starts a new Midjourney job from one image of an existing job.
 
 These only work on the user's own Midjourney results. For a photo or any other image, use `midjourney-outcrop` (extend or zoom out), `midjourney-restyle` or `midjourney-style-reference`.
 
 ## Before you start
 
-- The `get-into-zone` MCP tools must be available. If a tool says the extension isn't connected, call `get_status` and tell the user to open Chrome with the Get into zone extension (Settings → "Let Claude use this extension" on).
+- The `browse-hack` MCP tools must be available. If a tool says the extension isn't connected, call `get_status` and tell the user to open Chrome with the Browse Hack extension (Settings → "Let Claude use this extension" on).
 - If the extension is connected in several Chrome profiles, ask the user which one to use by each profile's Google account email (and its name, if it has one), never by its number, which the user doesn't know (from `list_profiles`; it should be the one signed in to Midjourney), call `use_profile` with their answer, then carry on. Don't pick one yourself.
 - The user must be signed in to midjourney.com in that Chrome. Every call uses their Midjourney GPU time.
 

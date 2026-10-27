@@ -1,6 +1,6 @@
 This is a [Plasmo extension](https://docs.plasmo.com/) project bootstrapped with [`plasmo init`](https://www.npmjs.com/package/plasmo).
 
-> Just want to install the extension? Download it from [Releases](https://github.com/microfox-ai/extensions/releases) and follow the [install steps](../README.md#install-get-into-zone).
+> Just want to install the extension? Download it from [Releases](https://github.com/microfox-ai/extensions/releases) and follow the [install steps](../README.md#install-browse-hack).
 
 ## Project layout
 
@@ -35,7 +35,7 @@ This is a [Plasmo extension](https://docs.plasmo.com/) project bootstrapped with
 
 ## Releasing
 
-Releases are automatic: every push to `main` that changes code here bumps the patch version and publishes a GitHub release via the repo-level [release workflow](../.github/workflows/release-get-into-zone.yml). For a minor or major release, set `version` in `package.json` before pushing. See [Releases are automatic](../README.md#releases-are-automatic).
+Releases are automatic: every push to `main` that changes code here bumps the patch version and publishes a GitHub release via the repo-level [release workflow](../.github/workflows/release-browse-hack.yml). For a minor or major release, set `version` in `package.json` before pushing. See [Releases are automatic](../README.md#releases-are-automatic).
 
 To build the same zip locally:
 

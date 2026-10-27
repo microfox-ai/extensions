@@ -1,17 +1,17 @@
 ---
 name: midjourney-style-reference
-description: Generate new Midjourney images that borrow the look of an image the user provides (style reference, --sref), optionally also using images as content prompts or a subject reference, through the Get into zone browser extension. Use when the user says things like "make something in the style of this image", "use this as style inspiration/inspo", "match this aesthetic/palette/mood", or gives an sref code.
+description: Generate new Midjourney images that borrow the look of an image the user provides (style reference, --sref), optionally also using images as content prompts or a subject reference, through the Browse Hack browser extension. Use when the user says things like "make something in the style of this image", "use this as style inspiration/inspo", "match this aesthetic/palette/mood", or gives an sref code.
 ---
 
 # Midjourney: generate with a style reference
 
-Creates new images on Midjourney's Create page using the user's image as **style inspiration**. Midjourney takes its colors, medium, texture and mood, not its content. It runs in the user's own Chrome through the `get-into-zone` MCP server, on their Midjourney account.
+Creates new images on Midjourney's Create page using the user's image as **style inspiration**. Midjourney takes its colors, medium, texture and mood, not its content. It runs in the user's own Chrome through the `browse-hack` MCP server, on their Midjourney account.
 
 To change the user's image itself (same picture, new style), use the `midjourney-restyle` skill instead.
 
 ## Before you start
 
-- The `get-into-zone` MCP tools must be available. If a tool says the extension isn't connected, call `get_status` and tell the user to open Chrome with the Get into zone extension (Settings → "Let Claude use this extension" on).
+- The `browse-hack` MCP tools must be available. If a tool says the extension isn't connected, call `get_status` and tell the user to open Chrome with the Browse Hack extension (Settings → "Let Claude use this extension" on).
 - If a tool says the extension is connected in several Chrome profiles, ask the user which profile to use by each profile's Google account email (and its name, if it has one), never by its number, which the user doesn't know (from `list_profiles`; it should be the one signed in to Midjourney), call `use_profile` with their answer, then carry on. Don't pick one yourself.
 - The user must be signed in to midjourney.com in that Chrome. Every job uses their Midjourney GPU time.
 

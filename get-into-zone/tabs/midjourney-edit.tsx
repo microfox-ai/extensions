@@ -61,7 +61,7 @@ export default function MidjourneyEdit() {
   restoreRef.current = restore
 
   useEffect(() => {
-    document.title = "Repaint — Get into zone"
+    document.title = "Repaint — Browse Hack"
   }, [])
 
   useEffect(() => {

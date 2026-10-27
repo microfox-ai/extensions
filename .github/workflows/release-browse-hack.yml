@@ -1,4 +1,4 @@
-name: Release Get into zone extension
+name: Release Browse Hack extension
 
 # Builds the Chrome extension in get-into-zone/ and publishes it as a
 # downloadable zip on GitHub Releases. Fully automatic on every push to main
@@ -24,7 +24,7 @@ permissions:
 
 # Serialize releases so two pushes can't claim the same version.
 concurrency:
-  group: release-get-into-zone
+  group: release-browse-hack
   cancel-in-progress: false
 
 jobs:
@@ -74,9 +74,9 @@ jobs:
           npm run build
           npm run package
           mkdir -p ../dist
-          cp build/chrome-mv3-prod.zip "../dist/get-into-zone-${{ steps.version.outputs.tag }}-chrome.zip"
-          # Stable name so the README can link to .../releases/latest/download/get-into-zone-chrome.zip
-          cp build/chrome-mv3-prod.zip ../dist/get-into-zone-chrome.zip
+          cp build/chrome-mv3-prod.zip "../dist/browse-hack-${{ steps.version.outputs.tag }}-chrome.zip"
+          # Stable name so the README can link to .../releases/latest/download/browse-hack-chrome.zip
+          cp build/chrome-mv3-prod.zip ../dist/browse-hack-chrome.zip
 
       # Pushes made with the workflow token don't trigger workflows, so this
       # commit won't start another release.
@@ -86,7 +86,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json
-          git commit -m "chore(release): get-into-zone ${{ steps.version.outputs.tag }}"
+          git commit -m "chore(release): browse-hack ${{ steps.version.outputs.tag }}"
           git push origin "HEAD:${GITHUB_REF_NAME}"
 
       - name: Publish GitHub release
@@ -95,17 +95,17 @@ jobs:
           cat > ../dist/notes.md <<EOF
           ## Install
 
-          1. Download **get-into-zone-${TAG}-chrome.zip** below and unzip it.
+          1. Download **browse-hack-${TAG}-chrome.zip** below and unzip it.
           2. Open \`chrome://extensions\` and turn on **Developer mode** (top right).
           3. Click **Load unpacked** and pick the unzipped folder (the one with \`manifest.json\`).
 
           Updating? Replace the contents of the folder you loaded with the new zip, then click the reload icon on the extension card. See the [README](https://github.com/${GITHUB_REPOSITORY}#readme) for details.
           EOF
           gh release create "${TAG}" \
-            ../dist/get-into-zone-${TAG}-chrome.zip \
-            ../dist/get-into-zone-chrome.zip \
+            ../dist/browse-hack-${TAG}-chrome.zip \
+            ../dist/browse-hack-chrome.zip \
             --repo "${GITHUB_REPOSITORY}" \
             --target "$(git rev-parse HEAD)" \
-            --title "Get into zone ${TAG}" \
+            --title "Browse Hack ${TAG}" \
             --notes-file ../dist/notes.md \
             --generate-notes

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// MCP server that lets Claude use the Get into zone browser extension.
+// MCP server that lets Claude use the Browse Hack browser extension.
 // Talks to the extension over a local WebSocket (see bridge.ts).
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
@@ -10,14 +10,16 @@ import { Bridge } from "./bridge.js"
 import { fillDistrokidReleases } from "./distrokid.js"
 import { toSource } from "./sources.js"
 
-const PORT = Number(process.env.GET_INTO_ZONE_PORT) || 17892
-const bridge = new Bridge(PORT, process.env.GET_INTO_ZONE_EXTENSION_ID || undefined)
+// GET_INTO_ZONE_* are the names from before the rename to Browse Hack.
+const env = (name: string) => process.env[`BROWSE_HACK_${name}`] || process.env[`GET_INTO_ZONE_${name}`]
+const PORT = Number(env("PORT")) || 17892
+const bridge = new Bridge(PORT, env("EXTENSION_ID") || undefined)
 
 const server = new McpServer(
-  { name: "get-into-zone", version: "0.1.0" },
+  { name: "browse-hack", version: "0.1.0" },
   {
     instructions:
-      "Tools for the Get into zone browser extension running in the user's Chrome: bulk-download Pinterest pins, " +
+      "Tools for the Browse Hack browser extension running in the user's Chrome: bulk-download Pinterest pins, " +
       "download YouTube videos and Instagram posts, reels and stories, save media to Mediamake, toggle on-page saver overlays, upload Suno tracks, automate Midjourney, " +
       "and fill DistroKid's new-release form from local folders (one tab per release, never clicking Continue). " +
       "midjourney_repaint opens a brush tab so the user can erase part of an image by hand; tell them to paint and click Repaint, then call midjourney_repaint_status. " +

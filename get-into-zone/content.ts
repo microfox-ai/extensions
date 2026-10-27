@@ -403,7 +403,7 @@ window.addEventListener("message", (event) => {
     }
     const { jobId, folderTag, queueItemId } = data
     console.log(
-      "[get-into-zone] MIDJOURNEY_SUBMIT_JOB_RESULT in content script",
+      "[browse-hack] MIDJOURNEY_SUBMIT_JOB_RESULT in content script",
       { jobId, folderTag, queueItemId }
     )
     if (!jobId || typeof jobId !== "string") return

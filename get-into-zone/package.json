@@ -1,8 +1,8 @@
 {
-  "name": "get-into-zone",
-  "displayName": "Get into zone",
-  "version": "0.2.4",
-  "description": "utitlities to fast up get-into-zone",
+  "name": "browse-hack",
+  "displayName": "Browse Hack",
+  "version": "0.3.0",
+  "description": "Browser automations for Claude: Pinterest, YouTube, Instagram, Midjourney, Suno, DistroKid and Mediamake",
   "author": "subhakar",
   "scripts": {
     "dev": "plasmo dev",

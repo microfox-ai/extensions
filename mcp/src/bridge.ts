@@ -1,4 +1,4 @@
-// The link between this MCP server and the Get into zone extension.
+// The link between this MCP server and the Browse Hack extension.
 //
 // The extension's service worker connects to ws://127.0.0.1:<port>. Claude
 // Desktop and Claude Code each start their own copy of this server, so the
@@ -60,7 +60,7 @@ const describe = (p: Profile) =>
   `- ${p.email ?? p.label}${p.name && p.name !== p.email ? ` (${p.name})` : ""} — id ${p.id}`
 
 const chooseMessage = (profiles: Profile[]) =>
-  `The Get into zone extension is connected in ${profiles.length} Chrome profiles:\n` +
+  `The Browse Hack extension is connected in ${profiles.length} Chrome profiles:\n` +
   profiles.map(describe).join("\n") +
   "\nAsk the user which profile to use for this session, naming each by its email (list_profiles shows each one's open tab), " +
   "then call use_profile with the email they pick and retry. Don't pick one yourself."
@@ -323,7 +323,7 @@ export class Bridge {
 
   private notConnectedMessage() {
     return (
-      "The Get into zone extension isn't connected. Open Chrome (or Edge, Brave, Arc) with the extension installed, " +
+      "The Browse Hack extension isn't connected. Open Chrome (or Edge, Brave, Arc) with the extension installed, " +
       `and check that Settings → "Let Claude use this extension" is on with port ${this.port}.`
     )
   }

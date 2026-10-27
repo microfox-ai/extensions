@@ -6,12 +6,12 @@ description: >-
   lyrics), write distrokid_lyrics.md from those lyrics, then fill
   distrokid.com/new/ from those folders. Use when the user wants to prepare a
   DistroKid upload, choose a genre, confirm song details, create the info.json
-  the Get into zone DistroKid tab uses, or upload one or many releases.
+  the Browse Hack DistroKid tab uses, or upload one or many releases.
 ---
 
 # DistroKid release info
 
-Create `info.json` in the release folder. The Get into zone popup reads that file, fills the DistroKid upload form, and stops. The user clicks Continue.
+Create `info.json` in the release folder. The Browse Hack popup reads that file, fills the DistroKid upload form, and stops. The user clicks Continue.
 
 Talk to the user. Suggest fields from the folder, then write the file only after they confirm the full draft.
 
@@ -95,12 +95,12 @@ In the same step, write `distrokid_lyrics.md` in that folder from the lyric the 
 
 Then fill the DistroKid form. Do not click Continue or Done, and do not submit.
 
-When the Get into zone extension is connected, call `distrokid_fill_releases` with the absolute path of each release folder. One parent folder is enough when every child folder has its own `info.json`. The tool opens one https://distrokid.com/new/ tab per release and fills a few at a time. It does not submit. Tell the user which tabs were filled, quote any warnings, and tell them to review each tab and click Continue themselves.
+When the Browse Hack extension is connected, call `distrokid_fill_releases` with the absolute path of each release folder. One parent folder is enough when every child folder has its own `info.json`. The tool opens one https://distrokid.com/new/ tab per release and fills a few at a time. It does not submit. Tell the user which tabs were filled, quote any warnings, and tell them to review each tab and click Continue themselves.
 
 If that tool says the extension is not connected, or the user wants to fill a single folder from the popup, tell them:
 
 1. Open https://distrokid.com/new/ and log in.
-2. Open the Get into zone popup and choose the DistroKid tab.
+2. Open the Browse Hack popup and choose the DistroKid tab.
 3. Choose this folder and click Fill.
 4. Read the warnings on the page, fix anything that looks wrong, and click Continue themselves.
 
