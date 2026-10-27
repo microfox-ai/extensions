@@ -1,0 +1,23 @@
+{
+  "kind": "mcp",
+  "slug": "get-into-zone",
+  "title": "Get into zone",
+  "summary": "Drive the Get into zone Chrome extension from Claude: Midjourney prompts and queues, Pinterest image analysis, YouTube downloads, Suno uploads, and saving media to MediaMake.",
+  "visibility": "private",
+  "status": "beta",
+  "tags": ["mcp", "chrome", "midjourney"],
+  "install": {
+    "method": "mcpb",
+    "requires": [
+      {
+        "type": "github-release",
+        "repo": "microfox-ai/extensions",
+        "asset": "get-into-zone-chrome.zip",
+        "name": "Get into zone Chrome extension",
+        "kind": "chrome-extension",
+        "guide": "https://github.com/microfox-ai/extensions#install-get-into-zone"
+      }
+    ],
+    "notes": "Needs Chrome (or Edge, Brave, Arc) with the Get into zone extension loaded. The extension is installed first."
+  }
+}
