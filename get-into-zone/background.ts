@@ -35,7 +35,7 @@ const updateQueueItemStatus = (
         ""
     if (!baseUrl || typeof baseUrl !== "string") {
       console.warn(
-        "[get-into-zone] Missing apiEndpoint in storage; cannot PATCH queue item",
+        "[browse-hack] Missing apiEndpoint in storage; cannot PATCH queue item",
         { queueItemId, payload }
       )
       return
@@ -47,7 +47,7 @@ const updateQueueItemStatus = (
       headers["Authorization"] = `Bearer ${result.apiKey}`
     }
     const url = `${baseUrl}/api/midjourney-queue/${encodeURIComponent(queueItemId)}`
-    console.log("[get-into-zone] PATCH midjourney queue item", {
+    console.log("[browse-hack] PATCH midjourney queue item", {
       url,
       payload
     })
@@ -60,7 +60,7 @@ const updateQueueItemStatus = (
         if (!res.ok) {
           const text = await res.text().catch(() => "")
           console.error(
-            "[get-into-zone] midjourney queue PATCH failed",
+            "[browse-hack] midjourney queue PATCH failed",
             res.status,
             text
           )
@@ -81,7 +81,7 @@ const queueTriggerWaiters = new Map<string, () => void>()
 
 const waitForQueueItemTriggered = (queueItemId: string) =>
   new Promise<void>((resolve) => {
-    console.log("[get-into-zone][queue] waiting for triggered status", {
+    console.log("[browse-hack][queue] waiting for triggered status", {
       queueItemId
     })
     queueTriggerWaiters.set(queueItemId, resolve)
@@ -91,7 +91,7 @@ const resolveQueueItemTriggered = (queueItemId: string) => {
   const resolve = queueTriggerWaiters.get(queueItemId)
   if (!resolve) return
   queueTriggerWaiters.delete(queueItemId)
-  console.log("[get-into-zone][queue] triggered wait resolved", {
+  console.log("[browse-hack][queue] triggered wait resolved", {
     queueItemId
   })
   resolve()
@@ -295,7 +295,7 @@ const handleMessage = (
           if (!resp.ok) {
             const text = await resp.text().catch(() => "")
             console.error(
-              "[get-into-zone] Suno upload worker failed",
+              "[browse-hack] Suno upload worker failed",
               resp.status,
               text
             )
@@ -313,7 +313,7 @@ const handleMessage = (
               data?.message || (resp.ok ? "Worker queued for transcription." : "Failed to queue worker.")
           })
         } catch (err) {
-          console.error("[get-into-zone] Failed to upload Suno track:", err)
+          console.error("[browse-hack] Failed to upload Suno track:", err)
           sendResponse({
             success: false,
             message: err instanceof Error ? err.message : "Unexpected error while triggering worker."
@@ -663,7 +663,7 @@ const handleMessage = (
               ? waitForQueueItemTriggered(queueItemId)
               : null
             if (queueItemId) {
-              console.log("[get-into-zone][queue] starting workflow for queue item", {
+              console.log("[browse-hack][queue] starting workflow for queue item", {
                 queueItemId,
                 effectiveFolderTag,
                 promptPreview: String(promptText).slice(0, 120)
@@ -741,7 +741,7 @@ const handleMessage = (
   } else if (request.action === "midjourneyJobSubmitted") {
     const { queueItemId, jobId, folderTag } = request
     console.log(
-      "[get-into-zone] midjourneyJobSubmitted in background",
+      "[browse-hack] midjourneyJobSubmitted in background",
       request
     )
     if (typeof queueItemId === "string" && typeof jobId === "string") {

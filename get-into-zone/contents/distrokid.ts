@@ -729,7 +729,7 @@ async function fillForm(
           .map((item) => `<li>${escapeHtml(item)}</li>`)
           .join("")}</ul>`
       : ""
-  note.innerHTML = `<strong>Get into zone filled this form.</strong> Review it, then click Continue yourself. Nothing was submitted.${warningHtml}`
+  note.innerHTML = `<strong>Browse Hack filled this form.</strong> Review it, then click Continue yourself. Nothing was submitted.${warningHtml}`
   document.getElementById("giz-distrokid-banner")?.remove()
   const button = document.getElementById("doneButton")
   button?.parentElement?.insertBefore(note, button)

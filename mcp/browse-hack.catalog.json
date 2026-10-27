@@ -1,0 +1,23 @@
+{
+  "kind": "mcp",
+  "slug": "browse-hack",
+  "title": "Browse Hack",
+  "summary": "Drive the Browse Hack Chrome extension from Claude: Midjourney prompts and queues, Pinterest image analysis, YouTube downloads, Suno uploads, and saving media to MediaMake.",
+  "visibility": "private",
+  "status": "beta",
+  "tags": ["mcp", "chrome", "midjourney"],
+  "install": {
+    "method": "mcpb",
+    "requires": [
+      {
+        "type": "github-release",
+        "repo": "microfox-ai/extensions",
+        "asset": "browse-hack-chrome.zip",
+        "name": "Browse Hack Chrome extension",
+        "kind": "chrome-extension",
+        "guide": "https://github.com/microfox-ai/extensions#install-browse-hack"
+      }
+    ],
+    "notes": "Needs Chrome (or Edge, Brave, Arc) with the Browse Hack extension loaded. The extension is installed first."
+  }
+}

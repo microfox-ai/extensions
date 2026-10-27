@@ -1,11 +1,11 @@
-# Get into zone: setup
+# Browse Hack: setup
 
 The Chrome extension is already loaded (the step before this one) and the
 MCP is added: from the `.mcpb` in Claude Desktop, or with `claude mcp add`
 in Claude Code (install step 4).
 
-1. Ask the person to open the Get into zone popup (puzzle-piece icon →
-   **Get into zone**; pin it while they're there), go to **Settings**, and fill in:
+1. Ask the person to open the Browse Hack popup (puzzle-piece icon →
+   **Browse Hack**; pin it while they're there), go to **Settings**, and fill in:
    - **API Endpoint**: their MediaMake URL (`$MEDIAMAKE_URL` from install step 0)
    - **API Key**: their MediaMake API key, which they copy from
      `$MEDIAMAKE_URL/core/api-keys` and paste themselves (an install code is
@@ -16,7 +16,7 @@ in Claude Code (install step 4).
 2. Make the tools show up:
    - Claude Desktop: if it was open while the MCP was installed, ask them to
      quit and reopen it.
-   - Claude Code: `claude mcp get get-into-zone` should say Connected. The
+   - Claude Code: `claude mcp get browse-hack` should say Connected. The
      tools load in the next Claude Code session, so tell them to start one.
 3. Check it works: call the MCP's `get_status` tool (in Claude Code, from
    that new session if this one doesn't have it). It should list the

@@ -1,4 +1,4 @@
-// Builds get-into-zone.mcpb, a one-click Claude Desktop extension.
+// Builds browse-hack.mcpb, a one-click Claude Desktop extension.
 // Bundles the server into one file (no node_modules), fills the manifest's
 // version and tool list from the server itself, then packs with the mcpb CLI.
 
@@ -11,7 +11,7 @@ import { build } from "esbuild"
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..")
 const stage = join(root, "build", "mcpb")
-const output = join(root, "get-into-zone.mcpb")
+const output = join(root, "browse-hack.mcpb")
 
 rmSync(stage, { recursive: true, force: true })
 mkdirSync(join(stage, "server"), { recursive: true })
@@ -49,7 +49,7 @@ function listTools(entry) {
     // A spare port so the extension never connects to this short-lived copy.
     const port = String(40000 + Math.floor(Math.random() * 20000))
     const child = spawn(process.execPath, [entry], {
-      env: { ...process.env, GET_INTO_ZONE_PORT: port },
+      env: { ...process.env, BROWSE_HACK_PORT: port },
       stdio: ["pipe", "pipe", "inherit"]
     })
     const timer = setTimeout(() => {

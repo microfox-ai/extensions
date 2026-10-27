@@ -4,21 +4,21 @@ Simple Repo For Developing Extensions to support accelerated automations on loca
 
 | Folder | What it is |
 | --- | --- |
-| [`get-into-zone/`](get-into-zone) | **Get into zone**: a Chrome extension that adds Save / AI overlays to images on any site, automates Midjourney prompts, and sends media to Mediamake |
-| [`mcp/`](mcp) | **MCP server**: lets Claude (Claude Code, Claude Desktop) use the Get into zone extension in your browser |
+| [`get-into-zone/`](get-into-zone) | **Browse Hack**: a Chrome extension that adds Save / AI overlays to images on any site, automates Midjourney prompts, and sends media to Mediamake |
+| [`mcp/`](mcp) | **MCP server**: lets Claude (Claude Code, Claude Desktop) use the Browse Hack extension in your browser |
 
-## Install Get into zone
+## Install Browse Hack
 
 Every release is published on the [Releases page](https://github.com/microfox-ai/extensions/releases) as a ready-to-load zip. It works in Chrome and other Chromium browsers (Edge, Brave, Arc).
 
 1. Download the zip:
-   - Latest version: [get-into-zone-chrome.zip](https://github.com/microfox-ai/extensions/releases/latest/download/get-into-zone-chrome.zip)
-   - A specific version: open [Releases](https://github.com/microfox-ai/extensions/releases) and download `get-into-zone-vX.Y.Z-chrome.zip`
-2. Unzip it into a folder you'll keep, for example `~/Extensions/get-into-zone`. Don't delete this folder later: Chrome loads the extension from it.
+   - Latest version: [browse-hack-chrome.zip](https://github.com/microfox-ai/extensions/releases/latest/download/browse-hack-chrome.zip)
+   - A specific version: open [Releases](https://github.com/microfox-ai/extensions/releases) and download `browse-hack-vX.Y.Z-chrome.zip`
+2. Unzip it into a folder you'll keep, for example `~/Extensions/browse-hack`. Don't delete this folder later: Chrome loads the extension from it.
 3. Open `chrome://extensions` (Edge: `edge://extensions`, Brave: `brave://extensions`).
 4. Turn on **Developer mode** (toggle in the top right).
 5. Click **Load unpacked** and select the unzipped folder (the one that contains `manifest.json`).
-6. Pin it: click the puzzle-piece icon in the toolbar, then the pin next to **Get into zone**.
+6. Pin it: click the puzzle-piece icon in the toolbar, then the pin next to **Browse Hack**.
 
 > Chrome may show a "Disable developer mode extensions" warning on startup. That's expected for extensions installed outside the Chrome Web Store; click away or choose **Keep**.
 
@@ -26,11 +26,11 @@ Every release is published on the [Releases page](https://github.com/microfox-ai
 
 1. Download the new zip.
 2. Delete the contents of the folder you loaded in step 5 and unzip the new version into **the same folder**.
-3. On `chrome://extensions`, click the reload icon on the **Get into zone** card.
+3. On `chrome://extensions`, click the reload icon on the **Browse Hack** card.
 
 Keeping the same folder keeps the same extension ID, so your settings and saver rules carry over. The installed version is shown on the extension card.
 
-## Use Get into zone
+## Use Browse Hack
 
 ### First-time setup
 
@@ -160,14 +160,14 @@ With a midjourney.com tab open, queue prompts as plain text (one per line) or JS
 
 ### Releases are automatic
 
-Every push to `main` that changes code in `get-into-zone/` publishes a new release through the [release workflow](.github/workflows/release-get-into-zone.yml). Nothing to do by hand:
+Every push to `main` that changes code in `get-into-zone/` publishes a new release through the [release workflow](.github/workflows/release-browse-hack.yml). Nothing to do by hand:
 
-- **Patch releases** (`0.1.0` → `0.1.1`): the workflow bumps the version in `package.json` and `package-lock.json`, commits it to `main` as `chore(release): get-into-zone vX.Y.Z`, tags it, and publishes the release.
+- **Patch releases** (`0.1.0` → `0.1.1`): the workflow bumps the version in `package.json` and `package-lock.json`, commits it to `main` as `chore(release): browse-hack vX.Y.Z`, tags it, and publishes the release.
 - **Minor or major releases**: set `version` in [`get-into-zone/package.json`](get-into-zone/package.json) yourself (for example `npm version minor --no-git-tag-version` in `get-into-zone/`) and push. If that version isn't released yet, the workflow releases it as is instead of bumping.
 
-Each release has install notes, an auto-generated changelog, and two assets: `get-into-zone-vX.Y.Z-chrome.zip` and `get-into-zone-chrome.zip` (the stable name the "latest" link above points to).
+Each release has install notes, an auto-generated changelog, and two assets: `browse-hack-vX.Y.Z-chrome.zip` and `browse-hack-chrome.zip` (the stable name the "latest" link above points to).
 
-Changes that don't need a new extension build don't trigger a release: Markdown files, and anything outside `get-into-zone/`. To release without a code change, open **Actions → Release Get into zone extension → Run workflow**.
+Changes that don't need a new extension build don't trigger a release: Markdown files, and anything outside `get-into-zone/`. To release without a code change, open **Actions → Release Browse Hack extension → Run workflow**.
 
 Run `git pull` after pushing so you have the bot's version-bump commit locally.
 

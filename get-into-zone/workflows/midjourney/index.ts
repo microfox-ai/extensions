@@ -515,7 +515,7 @@ function executeWorkflow(
               if (w.__mjEmittedSubmitJobKeys.has(key)) return
               w.__mjEmittedSubmitJobKeys.add(key)
 
-              console.log("[get-into-zone][midjourney][network] emit job result", {
+              console.log("[browse-hack][midjourney][network] emit job result", {
                 source,
                 jobId,
                 queueItemId: queueItemIdForEvent,
@@ -613,7 +613,7 @@ function executeWorkflow(
                             : null
                         w.__mjPendingSubmitContexts = pending
 
-                        console.log("[get-into-zone][midjourney][network] fetch /api/submit-jobs", {
+                        console.log("[browse-hack][midjourney][network] fetch /api/submit-jobs", {
                           requestPrompt,
                           matchedQueueItemId: matchedContext?.queueItemId || null,
                           jobId
@@ -633,7 +633,7 @@ function executeWorkflow(
                       })
                       .catch((error: any) => {
                         console.log(
-                          "[get-into-zone][midjourney][network] fetch submit-jobs parse error",
+                          "[browse-hack][midjourney][network] fetch submit-jobs parse error",
                           error?.message || error
                         )
                       })
@@ -718,7 +718,7 @@ function executeWorkflow(
                           : null
                       w.__mjPendingSubmitContexts = pending
 
-                      console.log("[get-into-zone][midjourney][network] xhr /api/submit-jobs", {
+                      console.log("[browse-hack][midjourney][network] xhr /api/submit-jobs", {
                         requestPrompt,
                         matchedQueueItemId: matchedContext?.queueItemId || null,
                         jobId
@@ -737,7 +737,7 @@ function executeWorkflow(
                       )
                     } catch (error: any) {
                       console.log(
-                        "[get-into-zone][midjourney][network] xhr submit-jobs parse error",
+                        "[browse-hack][midjourney][network] xhr submit-jobs parse error",
                         error?.message || error
                       )
                     }
@@ -789,7 +789,7 @@ function executeWorkflow(
                 queueItemId: typeof queueItemId === "string" ? queueItemId : null,
                 createdAt: Date.now()
               })
-              console.log("[get-into-zone][midjourney][network] queued submit context", {
+              console.log("[browse-hack][midjourney][network] queued submit context", {
                 queueItemId: typeof queueItemId === "string" ? queueItemId : null,
                 prompt: String(prompt || "").slice(0, 140),
                 pendingCount: w.__mjPendingSubmitContexts.length
@@ -802,7 +802,7 @@ function executeWorkflow(
                 )
                 if (pendingStillExists) {
                   console.warn(
-                    "[get-into-zone][midjourney][network] pending context not resolved after 20s",
+                    "[browse-hack][midjourney][network] pending context not resolved after 20s",
                     {
                       queueItemId:
                         typeof queueItemId === "string" ? queueItemId : null,
