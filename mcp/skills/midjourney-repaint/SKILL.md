@@ -14,7 +14,7 @@ To extend the picture past its edges, use `midjourney-outcrop`. To redraw the wh
 ## Before you start
 
 - The `get-into-zone` MCP tools must be available. If a tool says the extension isn't connected, call `get_status` and tell the user to open Chrome with the Get into zone extension (Settings → "Let Claude use this extension" on).
-- If a tool says the extension is connected in several Chrome profiles, ask the user which profile to use (show `list_profiles`; it should be the one signed in to Midjourney), call `use_profile` with their answer, then carry on. Don't pick one yourself.
+- If a tool says the extension is connected in several Chrome profiles, ask the user which profile to use by each profile's Google account email (and its name, if it has one), never by its number, which the user doesn't know (from `list_profiles`; it should be the one signed in to Midjourney), call `use_profile` with their answer, then carry on. Don't pick one yourself.
 - The user must be signed in to midjourney.com in that Chrome. Every repaint uses their Midjourney GPU time.
 
 ## Steps

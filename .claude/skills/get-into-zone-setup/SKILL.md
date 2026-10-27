@@ -74,7 +74,7 @@ The build lands in `get-into-zone/build/chrome-mv3-prod`. Loading it is somethin
 
 Loading from a *different* folder than before gives the extension a new ID, so its settings start empty. If the user already has it loaded from a release zip, either keep that copy (if it's 0.2.0 or newer, the MCP bridge is included) or remove it so only one copy is installed.
 
-For more than one Chrome profile, load the extension in each profile that should be usable, and suggest giving each a **Profile name** in the popup's Settings so they're easy to tell apart (otherwise they show up by Google account). Each Claude session then works in one profile: when two or more are connected, ask the user which one to use (show `list_profiles`), call `use_profile` with their answer, and never pick one for them.
+For more than one Chrome profile, load the extension in each profile that should be usable, and suggest giving each a **Profile name** in the popup's Settings so they're easy to tell apart (otherwise they show up by Google account). Each Claude session then works in one profile: when two or more are connected, ask the user which one to use, naming each by its Google account email (and its Profile name, if set), never by its number, which the user doesn't know (from `list_profiles`); call `use_profile` with their answer, and never pick one for them.
 
 ## 6. Turn on the connection
 
@@ -95,12 +95,12 @@ Then call `get_status`. Success looks like:
 { "port": 17892, "bridgePid": 12345, "profiles": [{ "id": "…", "label": "Work", "version": "0.2.0", ... }], "sessionProfile": null }
 ```
 
-With two or more profiles listed, ask the user which to use and call `use_profile` before anything else. When it works, offer a quick test, such as `list_tabs`.
+With two or more profiles listed, ask the user which to use (by email, never by number) and call `use_profile` before anything else. When it works, offer a quick test, such as `list_tabs`.
 
 ## Optional extras
 
 - **Midjourney skills**: `cd mcp && npm run install-skills` links the `midjourney-outcrop`, `midjourney-repaint`, `midjourney-style-reference`, `midjourney-restyle` and `midjourney-iterate` skills into `~/.claude/skills`.
-- **Mediamake**: saving to Mediamake needs the API endpoint and key in the popup's **Settings**. The user types the key there themselves; never ask for it in chat or write it to a file.
+- **Mediamake**: saving to Mediamake needs the API endpoint (`https://mediamake.microfox.app`) and key in the popup's **Settings**. The user types the key there themselves; never ask for it in chat or write it to a file.
 - **Accept only this extension**: set `GET_INTO_ZONE_EXTENSION_ID` to the ID shown on `chrome://extensions` (`claude mcp add … -e GET_INTO_ZONE_EXTENSION_ID=<id>`, or the extension id field in Claude Desktop's settings for the bundle).
 
 ## Troubleshooting

@@ -4,7 +4,7 @@ import { McpBridgeSettings } from "./McpBridgeSettings"
 
 const DEFAULT_API_ENDPOINT =
   process.env.NODE_ENV === "production"
-    ? "https://mediamake-mediamake.vercel.app/"
+    ? "https://mediamake.microfox.app"
     : "http://localhost:3000"
 
 export function SettingsTab() {
