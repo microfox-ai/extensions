@@ -55,14 +55,15 @@ const parse = (raw: unknown) => {
   }
 }
 
-const describe = (p: Profile, i: number) =>
-  `${i + 1}. ${p.label}${p.email && p.email !== p.label ? ` (${p.email})` : ""} — id ${p.id}`
+// Users know their profiles by Google account, not by number, so the email leads.
+const describe = (p: Profile) =>
+  `- ${p.email ?? p.label}${p.name && p.name !== p.email ? ` (${p.name})` : ""} — id ${p.id}`
 
 const chooseMessage = (profiles: Profile[]) =>
   `The Get into zone extension is connected in ${profiles.length} Chrome profiles:\n` +
   profiles.map(describe).join("\n") +
-  "\nAsk the user which profile to use for this session (list_profiles shows each one's open tab), " +
-  "then call use_profile with their choice and retry. Don't pick one yourself."
+  "\nAsk the user which profile to use for this session, naming each by its email (list_profiles shows each one's open tab), " +
+  "then call use_profile with the email they pick and retry. Don't pick one yourself."
 
 export class Bridge {
   private mode: "hub" | "peer" | null = null
@@ -130,7 +131,7 @@ export class Bridge {
   private async useProfile(query: unknown) {
     const profiles = await this.connectedProfiles()
     const text = String(query ?? "").trim().toLowerCase()
-    if (!text) throw new Error("Pass the profile to use (number, id, name or email from list_profiles).")
+    if (!text) throw new Error("Pass the profile to use (email, name, id or number from list_profiles).")
     const index = /^\d+$/.test(text) ? Number(text) - 1 : -1
     const match =
       profiles[index] ??

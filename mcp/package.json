@@ -1,6 +1,6 @@
 {
   "name": "get-into-zone-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "MCP server that lets Claude use the Get into zone browser extension",
   "type": "module",
   "bin": {

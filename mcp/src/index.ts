@@ -25,7 +25,8 @@ const server = new McpServer(
       "Downloads land in the browser's Downloads folder. Call get_status first if a tool says the extension isn't connected. " +
       "The extension may be installed in several Chrome profiles (accounts). When two or more are connected, ask the user which " +
       "profile to use for this session before doing anything else (list_profiles shows them), then call use_profile; every tool " +
-      "then runs in that profile only. Never pick a profile on the user's behalf."
+      "then runs in that profile only. Never pick a profile on the user's behalf. Name each profile to the user by its Google " +
+      "account email (plus its name, if it has one), never by number alone: users don't know their profile numbers."
   }
 )
 
@@ -92,8 +93,8 @@ tool(
 )
 tool(
   "list_profiles",
-  "Lists the Chrome profiles the extension is connected in: number, name or Google account, open tab count and active tab. " +
-    "Show these to the user when asking which profile to use.",
+  "Lists the Chrome profiles the extension is connected in: Google account email, name, open tab count and active tab. " +
+    "Show these to the user by email when asking which profile to use, never by number alone.",
   {},
   "bridge.profiles",
   { readOnly: true }
@@ -105,7 +106,7 @@ tool(
   {
     profile: z
       .union([z.string(), z.number().int()])
-      .describe("The profile's number, id, name or email, as shown by list_profiles")
+      .describe("The profile's email (preferred), name, id or number, as shown by list_profiles")
   },
   "bridge.useProfile"
 )

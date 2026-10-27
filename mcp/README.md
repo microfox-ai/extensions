@@ -62,7 +62,7 @@ Claude Code and Claude Desktop can both use it at once: the first server to star
 The extension can also be connected from several Chrome profiles (accounts) at once. Each Claude session works in one profile only:
 
 - With one profile connected, every tool uses it.
-- With two or more connected, tools refuse to run until the session picks one. Claude asks you which profile to use (`list_profiles` shows each one's name or Google account, open tab count and active tab), then calls `use_profile` with your answer. From then on every tool in that session, `list_tabs` included, runs in that profile only. Another Claude session can pick a different one.
+- With two or more connected, tools refuse to run until the session picks one. Claude asks you which profile to use, naming each by its Google account email rather than a number (`list_profiles` shows each one's email, name, open tab count and active tab), then calls `use_profile` with your answer. From then on every tool in that session, `list_tabs` included, runs in that profile only. Another Claude session can pick a different one.
 - If the chosen profile disconnects, tools wait up to 35 seconds for it to come back, then ask whether to switch.
 
 To tell profiles apart, give each one a name in the popup's **Settings → Profile name** (otherwise Claude shows the profile's Google account). The extension asks for the `identity.email` permission to read that account.
