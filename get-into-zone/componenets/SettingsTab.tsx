@@ -1,50 +1,33 @@
 import { useEffect, useState } from "react"
 
+import { authorizedFetch, signOut } from "../lib/mediamakeAuth"
 import { McpBridgeSettings } from "./McpBridgeSettings"
-
-const DEFAULT_API_ENDPOINT =
-  process.env.NODE_ENV === "production"
-    ? "https://mediamake.microfox.app"
-    : "http://localhost:3000"
+import { useAuthState } from "./SignInScreen"
 
 export function SettingsTab() {
-  const [apiEndpoint, setApiEndpoint] = useState(DEFAULT_API_ENDPOINT)
+  const auth = useAuthState()
+  const apiEndpoint = auth?.endpoint
   const [tags, setTags] = useState("")
-  const [apiKey, setApiKey] = useState("")
   const [projects, setProjects] = useState<{ id: string; displayName: string }[]>([])
   const [projectsLoading, setProjectsLoading] = useState(false)
   const [selectedProjectId, setSelectedProjectId] = useState<string>("default")
 
   useEffect(() => {
-    chrome.storage.local.get(
-      ["apiEndpoint", "tags", "apiKey", "selectedProjectId"],
-      (result) => {
-        if (typeof result.apiEndpoint === "string") {
-          setApiEndpoint(result.apiEndpoint)
-        }
-        if (typeof result.tags === "string") {
-          setTags(result.tags)
-        }
-        if (typeof result.apiKey === "string") {
-          setApiKey(result.apiKey)
-        }
-        if (typeof result.selectedProjectId === "string") {
-          setSelectedProjectId(result.selectedProjectId)
-        }
+    chrome.storage.local.get(["tags", "selectedProjectId"], (result) => {
+      if (typeof result.tags === "string") {
+        setTags(result.tags)
       }
-    )
+      if (typeof result.selectedProjectId === "string") {
+        setSelectedProjectId(result.selectedProjectId)
+      }
+    })
   }, [])
 
   useEffect(() => {
-    if (!apiEndpoint || typeof apiEndpoint !== "string") return
+    if (!apiEndpoint) return
 
     setProjectsLoading(true)
-    const headers: HeadersInit = {}
-    if (apiKey) {
-      headers["Authorization"] = `Bearer ${apiKey}`
-    }
-
-    fetch(`${apiEndpoint}/api/project`, { headers })
+    authorizedFetch(`${apiEndpoint}/api/project`)
       .then((res) => (res.ok ? res.json() : []))
       .then((data) => {
         if (Array.isArray(data)) {
@@ -65,39 +48,39 @@ export function SettingsTab() {
       .finally(() => {
         setProjectsLoading(false)
       })
-  }, [apiEndpoint, apiKey])
+  }, [apiEndpoint])
 
   const saveSettings = () => {
-    chrome.storage.local.set(
-      {
-        apiEndpoint,
-        tags,
-        apiKey,
-        selectedProjectId
-      },
-      () => {
-        console.log("Settings saved")
-      }
-    )
+    chrome.storage.local.set({ tags, selectedProjectId }, () => {
+      console.log("Settings saved")
+    })
   }
 
   return (
     <div>
       <h2>Settings</h2>
-      <div>
-        <label>API Endpoint:</label>
-        <input
-          type="text"
-          value={apiEndpoint}
-          onChange={(e) => setApiEndpoint(e.target.value)}
-          placeholder={DEFAULT_API_ENDPOINT}
-          style={{
-            width: "100%",
-            padding: "8px",
-            boxSizing: "border-box",
-            marginTop: "4px"
-          }}
-        />
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: 10,
+          background: "#f3f4f6",
+          borderRadius: 6,
+          fontSize: 12
+        }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div>
+            Signed in to Mediamake{auth?.account ? <> as <b>{auth.account}</b></> : null}
+            {auth?.via === "api-key" ? " with an API key" : ""}
+          </div>
+          <div style={{ color: "#6b7280", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {apiEndpoint}
+          </div>
+        </div>
+        <button onClick={() => signOut()} style={{ padding: "6px 10px" }}>
+          Sign out
+        </button>
       </div>
       <div style={{ marginTop: 10 }}>
         <label>Tags (comma-separated):</label>
@@ -106,21 +89,6 @@ export function SettingsTab() {
           value={tags}
           onChange={(e) => setTags(e.target.value)}
           placeholder="e.g., art, design, inspiration"
-          style={{
-            width: "100%",
-            padding: "8px",
-            boxSizing: "border-box",
-            marginTop: "4px"
-          }}
-        />
-      </div>
-      <div style={{ marginTop: 10 }}>
-        <label>API Key:</label>
-        <input
-          type="password"
-          value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
-          placeholder="Enter your API key"
           style={{
             width: "100%",
             padding: "8px",

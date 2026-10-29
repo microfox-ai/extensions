@@ -2,6 +2,8 @@
 // Used by the content script (to decide what to render), the background
 // worker (badge + context menu) and the popup Saver tab.
 
+import { SIGNED_IN_KEYS, isSignedIn } from "./mediamakeAuth"
+
 export const SAVER_RULES_KEY = "saverRules"
 
 // "all" is the master switch: it covers every overlay (Save button, AI
@@ -169,6 +171,25 @@ export const readSaverRules = (value: unknown): SaverRule[] =>
           typeof r.enabled === "boolean"
       )
     : []
+
+// While the extension is signed out of Mediamake every overlay is off, as if
+// the master switch were off everywhere.
+const SIGNED_OUT_RULES: SaverRule[] = [
+  { feature: "all", scope: "all", key: "*", enabled: false }
+]
+
+/** Calls back with the rules the content scripts follow, now and on every change. */
+export function watchSaverRules(onRules: (rules: SaverRule[]) => void) {
+  const keys = [SAVER_RULES_KEY, ...SIGNED_IN_KEYS]
+  const read = () =>
+    chrome.storage.local.get(keys, (values) =>
+      onRules(isSignedIn(values) ? readSaverRules(values[SAVER_RULES_KEY]) : SIGNED_OUT_RULES)
+    )
+  read()
+  chrome.storage.onChanged.addListener((changes, namespace) => {
+    if (namespace === "local" && keys.some((key) => changes[key])) read()
+  })
+}
 
 export const loadSaverRules = () =>
   new Promise<SaverRule[]>((resolve) => {

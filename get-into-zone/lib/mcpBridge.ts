@@ -21,9 +21,17 @@ import { downloadsFor, parseInstagramUrl, type IgPost } from "./instagram"
 import { downloadInstagramFiles, getInstagramPost } from "./instagramBackground"
 import { mediamakeFetch, queueSparkboardIndex } from "./mediamake"
 import {
+  ACCOUNT_KEY,
+  SIGNED_IN_KEYS,
+  authState,
+  mediamakeEndpoint,
+  signIn
+} from "./mediamakeAuth"
+import {
   downloadImages,
   frameSize,
   generate,
+  jobStatuses,
   outcrop,
   pan,
   upscale,
@@ -71,11 +79,21 @@ type MessageHandler = (
 
 const RECONNECT_ALARM = "mcp-bridge-reconnect"
 const PING_MS = 20_000
+// The server answers every ping. Nothing heard for this long means the
+// connection is dead (e.g. the computer slept), so drop it and reconnect.
+const SILENCE_MS = 65_000
 const MAX_RETRY_MS = 30_000
+
+// The only methods that work before the extension is signed in to Mediamake.
+const SIGNED_OUT_METHODS = new Set(["extension.info", "auth.status", "auth.signIn"])
+const SIGNED_OUT_MESSAGE =
+  "Browse Hack isn't signed in to Mediamake, and every tool needs that. Ask the user to open the Browse Hack " +
+  "popup and click Sign in to Mediamake, or call sign_in_to_mediamake to open the sign-in window for them."
 
 let handleMessage: MessageHandler
 let socket: WebSocket | null = null
 let pingTimer: ReturnType<typeof setInterval> | undefined
+let lastHeardAt = 0
 let retryTimer: ReturnType<typeof setTimeout> | undefined
 let retryMs = 2000
 
@@ -115,12 +133,7 @@ const getTab = async (tabId?: number) =>
   typeof tabId === "number" ? chrome.tabs.get(tabId) : activeTab()
 
 async function loadSettings() {
-  return chrome.storage.local.get([
-    "apiEndpoint",
-    "apiKey",
-    "tags",
-    "selectedProjectId"
-  ])
+  return chrome.storage.local.get(["tags", "selectedProjectId"])
 }
 
 const projectFilter = async (projectId?: string, allProjects?: boolean) => {
@@ -333,17 +346,34 @@ const commands: Record<string, (params: any) => Promise<unknown>> = {
   "tabs.open": async ({ url, active, waitForLoad }) =>
     tabSummary(await openTab(url, active !== false, waitForLoad !== false)),
 
+  "auth.status": async () => authState(),
+  "auth.signIn": async ({ force }) => {
+    const state = await authState()
+    if (state.signedIn && !force) return { ...state, note: "Already signed in." }
+    return signIn()
+  },
+
   "settings.get": async () => {
     const settings = await loadSettings()
+    const auth = await authState()
     return {
-      apiEndpoint: settings.apiEndpoint ?? "",
-      apiKeySet: Boolean(settings.apiKey),
+      apiEndpoint: auth.endpoint,
+      signedInVia: auth.via,
+      mediamakeAccount: auth.account,
       tags: settings.tags ?? "",
       selectedProjectId: settings.selectedProjectId ?? ""
     }
   },
   "settings.update": async (params) => {
-    const keys = ["apiEndpoint", "apiKey", "tags", "selectedProjectId"]
+    if (
+      typeof params.apiEndpoint === "string" &&
+      params.apiEndpoint.trim().replace(/\/+$/, "") !== (await mediamakeEndpoint())
+    ) {
+      throw new Error(
+        "The Mediamake URL can't change while signed in. Sign out in the popup's Settings, change it there, and sign in again."
+      )
+    }
+    const keys = ["tags", "selectedProjectId"]
     const update = Object.fromEntries(
       keys
         .filter((key) => typeof params[key] === "string")
@@ -556,6 +586,7 @@ const commands: Record<string, (params: any) => Promise<unknown>> = {
   "midjourney.zoomOut": zoomOut,
   "midjourney.jobStatus": async ({ jobId, wait, timeoutMs }) =>
     waitForJob(String(jobId), 4, wait ? timeoutMs : 0),
+  "midjourney.jobStatuses": jobStatuses,
   "midjourney.downloadImages": downloadImages,
   "midjourney.frameSize": async ({ aspectRatio }) => frameSize(String(aspectRatio)),
 
@@ -600,7 +631,15 @@ async function profileInfo() {
   }
 }
 
+// The server shows each profile's Mediamake sign-in (list_profiles, get_status).
+async function signInInfo() {
+  const { signedIn } = await authState()
+  const { [ACCOUNT_KEY]: account } = await chrome.storage.local.get(ACCOUNT_KEY)
+  return { signedIn, mediamakeAccount: signedIn && typeof account === "string" ? account : undefined }
+}
+
 async function onFrame(ws: WebSocket, raw: unknown) {
+  lastHeardAt = Date.now()
   let message: any
   try {
     message = JSON.parse(String(raw))
@@ -611,6 +650,9 @@ async function onFrame(ws: WebSocket, raw: unknown) {
   const command = commands[message.method]
   try {
     if (!command) throw new Error(`Unknown method: ${message.method}`)
+    if (!SIGNED_OUT_METHODS.has(message.method) && !(await authState()).signedIn) {
+      throw new Error(SIGNED_OUT_MESSAGE)
+    }
     const result = await command(message.params ?? {})
     send(ws, { type: "response", id: message.id, ok: true, result })
   } catch (error) {
@@ -650,10 +692,15 @@ async function connect() {
       role: "extension",
       version: chrome.runtime.getManifest().version,
       extensionId: chrome.runtime.id,
-      ...(await profileInfo())
+      ...(await profileInfo()),
+      ...(await signInInfo())
     })
+    lastHeardAt = Date.now()
     // Traffic every 20s keeps the service worker alive while connected.
-    pingTimer = setInterval(() => send(ws, { type: "ping" }), PING_MS)
+    pingTimer = setInterval(() => {
+      if (Date.now() - lastHeardAt > SILENCE_MS) dropConnection(ws)
+      else send(ws, { type: "ping" })
+    }, PING_MS)
   }
   ws.onmessage = (event) => onFrame(ws, event.data)
   ws.onclose = () => {
@@ -663,6 +710,17 @@ async function connect() {
     setStatus("disconnected", port)
     scheduleRetry()
   }
+}
+
+// Gives up on a silent connection without waiting for its close handshake.
+function dropConnection(ws: WebSocket) {
+  if (socket !== ws) return
+  socket = null
+  clearInterval(pingTimer)
+  ws.close()
+  loadPrefs().then(({ port }) => setStatus("disconnected", port))
+  retryMs = 2000
+  scheduleRetry()
 }
 
 function disconnect() {
@@ -691,6 +749,9 @@ export function initMcpBridge(handler: MessageHandler) {
       disconnect()
       retryMs = 2000
       connect()
+    } else if (socket && [...SIGNED_IN_KEYS, ACCOUNT_KEY].some((key) => changes[key])) {
+      const ws = socket
+      signInInfo().then((info) => send(ws, { type: "status", ...info }))
     }
   })
 

@@ -34,14 +34,19 @@ Keeping the same folder keeps the same extension ID, so your settings and saver 
 
 ### First-time setup
 
-Open the extension popup, go to **Settings**, and fill in:
+Browse Hack works once it's signed in to your Mediamake account. Until then the popup shows only **Sign in to Mediamake**, the on-page buttons stay hidden, and Claude's tools ask you to sign in.
 
-- **API Endpoint**: your Mediamake URL (defaults to the hosted instance)
-- **API Key**: your Mediamake API key. The extension sends it with every request to the Mediamake APIs (saving media, loading projects, the Midjourney queue) to authorize them
+1. Open the extension popup and click **Sign in to Mediamake**. A Mediamake window opens: sign in (if you aren't already), then click **Allow**. The window closes; open the popup again.
+2. You stay signed in while you use the extension: the sign-in renews itself, and you're only asked again after 30 days without using it, or after you sign out.
+3. Prefer an API key? Click **Use a Mediamake API key instead** on the sign-in screen and paste one. Every Mediamake user can make any number of keys on Mediamake's **API keys** page (one per app or computer), and disable or delete them there.
+4. Using your own Mediamake (for example `http://localhost:3000`)? Change **Mediamake URL** on the sign-in screen before signing in.
+
+Then, in **Settings**:
+
 - **Tags**: comma-separated tags added to everything you save
 - **Default Project**: the Mediamake project uploads go to
 
-Click **Save Settings**.
+Click **Save Settings**. Settings also shows the account you're signed in as, with **Sign out**.
 
 ### Save media from any page
 
@@ -65,7 +70,7 @@ Saves every pin image and video you browse in a Pinterest tab, page after page, 
 1. Open Pinterest, then open the popup's **Pinterest** tab.
 2. Under **Bulk download**, pick where images go:
    - **Browser downloads**: every image is saved into the same folder inside your Downloads folder (for example `Downloads/pinterest-2026-10-21`), and videos into a separate folder (default: a `videos` folder inside it)
-   - **Mediamake**: every image and video is uploaded with the same tags (pre-filled from Settings). Uses the API Endpoint, API Key and Default Project from Settings
+   - **Mediamake**: every image and video is uploaded with the same tags (pre-filled from Settings). Uses your Mediamake sign-in and the Default Project from Settings
 3. Untick **Also download videos** if you only want images.
 4. Set **Max images, and videos, per page** (empty means no limit), then click **Start downloading this tab**.
 5. Browse normally: scroll, open pins, search. Each new page contributes up to the limit, including pins loaded as you scroll.

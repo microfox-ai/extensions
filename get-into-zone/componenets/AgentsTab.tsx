@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react"
 
+import { authorizedFetch } from "../lib/mediamakeAuth"
+
 export function AgentsTab() {
   const [agents, setAgents] = useState<any[]>([])
   const [selectedAgent, setSelectedAgent] = useState<any | null>(null)
@@ -11,16 +13,12 @@ export function AgentsTab() {
   const [isLoadingAgents, setIsLoadingAgents] = useState(false)
   const [isExecutingAgent, setIsExecutingAgent] = useState(false)
   const [agentApiUrl, setAgentApiUrl] = useState("http://localhost:3000")
-  const [apiKey, setApiKey] = useState("")
   const [jsonError, setJsonError] = useState("")
 
   useEffect(() => {
-    chrome.storage.local.get(["apiEndpoint", "apiKey"], (result) => {
+    chrome.storage.local.get(["apiEndpoint"], (result) => {
       if (typeof result.apiEndpoint === "string") {
         setAgentApiUrl(result.apiEndpoint)
-      }
-      if (typeof result.apiKey === "string") {
-        setApiKey(result.apiKey)
       }
     })
   }, [])
@@ -38,10 +36,7 @@ export function AgentsTab() {
       const headers: HeadersInit = {
         "Content-Type": "application/json"
       }
-      if (apiKey) {
-        headers["Authorization"] = `Bearer ${apiKey}`
-      }
-      const response = await fetch(`${agentApiUrl}/api/agents`, {
+      const response = await authorizedFetch(`${agentApiUrl}/api/agents`, {
         headers
       })
       const data = await response.json()
@@ -76,9 +71,6 @@ export function AgentsTab() {
       const headers: HeadersInit = {
         "Content-Type": "application/json"
       }
-      if (apiKey) {
-        headers["Authorization"] = `Bearer ${apiKey}`
-      }
 
       let requestBody: any
       if (agentInputMode === "json") {
@@ -102,7 +94,7 @@ export function AgentsTab() {
         }
       }
 
-      const response = await fetch(
+      const response = await authorizedFetch(
         `${agentApiUrl}/api/studio/chat/agent${selectedAgent.path}`,
         {
           method: "POST",

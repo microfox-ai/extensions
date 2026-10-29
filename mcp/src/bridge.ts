@@ -17,6 +17,10 @@ import { WebSocket, WebSocketServer } from "ws"
 // The extension retries every 30s at most, so a new hub may wait that long.
 const EXTENSION_WAIT_MS = 35_000
 const TAB_LOOKUP_MS = 3000
+// The extension pings every 20s. One silent for longer is gone (the computer
+// slept, Chrome froze): drop it so its pending calls fail now instead of
+// hanging until their timeouts, and let it reconnect.
+const EXTENSION_SILENCE_MS = 65_000
 
 export interface Profile {
   // Stable per Chrome profile (stored by the extension).
@@ -29,11 +33,15 @@ export interface Profile {
   version?: string
   extensionId?: string
   connectedAt: string
+  // Whether the extension is signed in to Mediamake; every tool needs it.
+  signedIn?: boolean
+  mediamakeAccount?: string
 }
 
 interface Extension {
   ws: WebSocket
   profile: Profile
+  lastHeardAt: number
 }
 
 interface Pending {
@@ -42,6 +50,15 @@ interface Pending {
   reject: (error: Error) => void
   timer: NodeJS.Timeout
 }
+
+// Older extensions don't report a Mediamake sign-in.
+const signInOf = (message: any): Pick<Profile, "signedIn" | "mediamakeAccount"> =>
+  typeof message.signedIn === "boolean"
+    ? {
+        signedIn: message.signedIn,
+        mediamakeAccount: typeof message.mediamakeAccount === "string" ? message.mediamakeAccount : undefined
+      }
+    : {}
 
 const send = (ws: WebSocket, message: unknown) => {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message))
@@ -178,6 +195,7 @@ export class Bridge {
         server.off("error", reject)
         server.on("error", (error) => console.error("[bridge]", error))
         server.on("connection", (ws) => this.onConnection(ws))
+        setInterval(() => this.dropSilentExtensions(), 15_000).unref()
         this.mode = "hub"
         console.error(`[bridge] listening on 127.0.0.1:${this.port}`)
         resolve()
@@ -215,6 +233,8 @@ export class Bridge {
     ws.on("message", (raw) => {
       const message = parse(raw)
       if (!message) return
+      const extension = this.extensions.find((e) => e.ws === ws)
+      if (extension) extension.lastHeardAt = Date.now()
       if (message.type === "ping") return send(ws, { type: "pong" })
       if (message.type === "hello" && !role) {
         role = message.role === "extension" ? "extension" : "peer"
@@ -223,6 +243,8 @@ export class Bridge {
       }
       if (role === "extension" && message.type === "response") {
         this.onResponse(message)
+      } else if (role === "extension" && message.type === "status" && extension) {
+        Object.assign(extension.profile, signInOf(message))
       } else if (role === "peer" && message.type === "request") {
         const { id, method, params, timeoutMs, profile } = message
         this.callExtension(method, params, Number(timeoutMs) || 60_000, profile || undefined).then(
@@ -249,15 +271,25 @@ export class Bridge {
       email,
       version: hello.version,
       extensionId: hello.extensionId,
-      connectedAt: new Date().toISOString()
+      connectedAt: new Date().toISOString(),
+      ...signInOf(hello)
     }
     // The same profile reconnecting (its worker restarted) replaces the old socket.
     for (const old of this.extensions.filter((e) => e.profile.id === id)) old.ws.close()
     this.extensions = this.extensions.filter((e) => e.profile.id !== id)
-    this.extensions.push({ ws, profile })
+    this.extensions.push({ ws, profile, lastHeardAt: Date.now() })
     this.known.set(id, profile)
     console.error(`[bridge] extension ${profile.version ?? ""} connected (${profile.label})`)
     this.waiters.forEach((wake) => wake())
+  }
+
+  private dropSilentExtensions() {
+    for (const { ws, profile, lastHeardAt } of this.extensions) {
+      if (Date.now() - lastHeardAt < EXTENSION_SILENCE_MS) continue
+      console.error(`[bridge] no word from the extension (${profile.label}) for a minute; dropping it`)
+      // Closes the socket at once; the close handler fails its pending calls.
+      ws.terminate()
+    }
   }
 
   private status() {

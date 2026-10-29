@@ -8,6 +8,7 @@ import { z } from "zod"
 
 import { Bridge } from "./bridge.js"
 import { fillDistrokidReleases } from "./distrokid.js"
+import { batchStatus, pauseBatch, startBatch } from "./midjourneyBatch.js"
 import { toSource } from "./sources.js"
 
 // GET_INTO_ZONE_* are the names from before the rename to Browse Hack.
@@ -22,6 +23,8 @@ const server = new McpServer(
       "Tools for the Browse Hack browser extension running in the user's Chrome: bulk-download Pinterest pins, " +
       "download YouTube videos and Instagram posts, reels and stories, save media to Mediamake, toggle on-page saver overlays, upload Suno tracks, automate Midjourney, " +
       "and fill DistroKid's new-release form from local folders (one tab per release, never clicking Continue). " +
+      "Every tool needs the extension signed in to Mediamake; if a tool says it isn't, call sign_in_to_mediamake and tell the " +
+      "user to sign in and click Allow in the window that opens. For more than a few Midjourney prompts, use midjourney_batch_start. " +
       "midjourney_repaint opens a brush tab so the user can erase part of an image by hand; tell them to paint and click Repaint, then call midjourney_repaint_status. " +
       "Tools act on the user's real browser tabs; most take an optional tabId (see list_tabs) and default to the active tab. " +
       "Downloads land in the browser's Downloads folder. Call get_status first if a tool says the extension isn't connected. " +
@@ -84,11 +87,35 @@ function tool(
   )
 }
 
+// Tools that run here (reading local files, batches) instead of in the extension.
+function localTool(name: string, description: string, inputSchema: Shape, run: (params: Params) => Promise<unknown>, readOnly = false) {
+  server.registerTool(
+    name,
+    {
+      description,
+      inputSchema,
+      annotations: { readOnlyHint: readOnly, destructiveHint: false, openWorldHint: true }
+    },
+    async (params: Params) => {
+      try {
+        const result = await run(params)
+        return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] }
+      } catch (error) {
+        return {
+          isError: true,
+          content: [{ type: "text" as const, text: error instanceof Error ? error.message : String(error) }]
+        }
+      }
+    }
+  )
+}
+
 // --- Status, tabs and settings ---
 
 tool(
   "get_status",
-  "Shows whether the extension is connected, the Chrome profiles it's connected in, and which one this session uses.",
+  "Shows whether the extension is connected, the Chrome profiles it's connected in (with each one's Mediamake sign-in), " +
+    "and which one this session uses.",
   {},
   "bridge.status",
   { readOnly: true }
@@ -130,18 +157,26 @@ tool(
   "tabs.open"
 )
 tool(
+  "sign_in_to_mediamake",
+  "Opens Mediamake's sign-in window in Chrome and waits (up to 10 minutes) for the user to sign in and click Allow. " +
+    "Every other tool needs the extension signed in. Tell the user to look for the window before calling it. " +
+    "Returns the account it signed in as. Already signed in: returns that, unless force is true (to switch accounts).",
+  { force: z.boolean().optional().describe("Sign in again even when already signed in") },
+  "auth.signIn",
+  { timeoutMs: 10 * 60_000 }
+)
+tool(
   "get_settings",
-  "Reads the extension's Mediamake settings: API endpoint, whether an API key is set, default tags and default project.",
+  "Reads the extension's settings: the Mediamake URL and account it's signed in to (and whether by sign-in or API key), default tags and default project.",
   {},
   "settings.get",
   { readOnly: true }
 )
 tool(
   "update_settings",
-  "Changes the extension's Mediamake settings. Only the fields you pass are changed.",
+  "Changes the extension's default tags and default Mediamake project. Only the fields you pass are changed. " +
+    "Signing in, API keys and the Mediamake URL are changed by the user in the popup.",
   {
-    apiEndpoint: z.string().optional().describe("Mediamake URL"),
-    apiKey: z.string().optional().describe("Mediamake API key"),
     tags: z.string().optional().describe("Comma-separated default tags"),
     selectedProjectId: z.string().optional().describe("Default Mediamake project id (see list_projects)")
   },
@@ -658,53 +693,98 @@ tool(
   "midjourney.jobStatus",
   { readOnly: true, timeoutMs: jobTimeout, prepare: async (p) => (p.wait ? withWait(p) : p) }
 )
-server.registerTool(
+localTool(
   "distrokid_fill_releases",
+  "Fills DistroKid's upload form at https://distrokid.com/new/ from local release folders, one browser tab per folder. " +
+    "Each folder needs info.json, at least one .wav/.m4a/.mp3, and a square JPG, PNG, or GIF cover. " +
+    "A parent folder works when each child folder has its own info.json. " +
+    "Does not click Continue or submit. The user reviews each tab and clicks Continue.",
   {
-    description:
-      "Fills DistroKid's upload form at https://distrokid.com/new/ from local release folders, one browser tab per folder. " +
-      "Each folder needs info.json, at least one .wav/.m4a/.mp3, and a square JPG, PNG, or GIF cover. " +
-      "A parent folder works when each child folder has its own info.json. " +
-      "Does not click Continue or submit. The user reviews each tab and clicks Continue.",
-    inputSchema: {
-      folders: z
-        .array(z.string())
-        .min(1)
-        .describe(
-          "Absolute paths. Each path is a release folder, or a parent whose immediate child folders each contain info.json."
-        ),
-      concurrency: z
-        .number()
-        .int()
-        .min(1)
-        .max(6)
-        .optional()
-        .describe("How many DistroKid tabs to fill at the same time. Default 3.")
-    },
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true }
+    folders: z
+      .array(z.string())
+      .min(1)
+      .describe(
+        "Absolute paths. Each path is a release folder, or a parent whose immediate child folders each contain info.json."
+      ),
+    concurrency: z
+      .number()
+      .int()
+      .min(1)
+      .max(6)
+      .optional()
+      .describe("How many DistroKid tabs to fill at the same time. Default 3.")
   },
-  async ({ folders, concurrency }) => {
-    try {
-      const result = await fillDistrokidReleases(bridge, folders, concurrency ?? 3)
-      return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] }
-    } catch (error) {
-      return {
-        isError: true,
-        content: [{ type: "text" as const, text: error instanceof Error ? error.message : String(error) }]
-      }
-    }
-  }
+  ({ folders, concurrency }) => fillDistrokidReleases(bridge, folders, concurrency ?? 3)
 )
 
 tool(
   "midjourney_download_images",
-  "Saves a Midjourney job's images to the browser's Downloads folder as <folder>/<jobId>_<index>.png.",
+  "Saves a Midjourney job's images to the browser's Downloads folder as <folder>/<jobId>_<index>.png, or " +
+    "<folder>/<name>-<index>.png with a name (replacing an older file of that name). Returns each file's path.",
   {
     jobId: z.string(),
     indexes: z.array(z.number().int().min(0).max(3)).optional().describe("Which images (default all of them: 4, or 1 for an upscale)"),
-    folder: z.string().optional().describe('Subfolder of Downloads (default "midjourney")')
+    folder: z.string().optional().describe('Subfolder of Downloads (default "midjourney")'),
+    name: z.string().optional().describe('File name before "-<index>.png", e.g. "pin-001-a"')
   },
-  "midjourney.downloadImages"
+  "midjourney.downloadImages",
+  { timeoutMs: 180_000 }
+)
+
+// --- Midjourney batches ---
+
+const batchFolder = z
+  .string()
+  .describe("Absolute path of the batch folder: images, state.json and run.log go here. It identifies the batch")
+const batchJob = z.object({
+  name: z.string().describe('Unique; images are saved as <name>-<index>.png, e.g. "pin-001-a"'),
+  prompt: z.string().min(1),
+  imagePrompts: z.array(z.string()).max(5).optional().describe("Image URLs, absolute file paths or mj:<jobId>#<index>"),
+  styleReferences: z.array(z.string()).max(5).optional().describe("Images or sref codes (--sref)"),
+  omniReferences: z.array(z.string()).max(1).optional().describe("A subject image (--oref)"),
+  extraFlags: z.string().optional().describe('Parameters for this job only, e.g. "--ar 2:3"')
+})
+
+localTool(
+  "midjourney_batch_start",
+  "Runs many Midjourney prompts in the background with one call: keeps a few jobs in Midjourney at a time (relaxed " +
+    "mode by default), waits for each, and saves its 4 images to the folder as <name>-<index>.png. Returns right away. " +
+    "Survives Chrome or the extension going away (it waits and carries on) and keeps the Mac awake while it runs. " +
+    "Starting it again on the same folder resumes it (jobs already done are skipped, jobs in Midjourney are picked up) " +
+    "and adds any new jobs. Use jobsFile for long lists.",
+  {
+    folder: batchFolder,
+    jobs: z.array(batchJob).optional(),
+    jobsFile: z
+      .string()
+      .optional()
+      .describe("JSON file with the jobs: an array or { jobs: [...] }. Relative image paths are relative to it"),
+    concurrency: z.number().int().min(1).max(12).optional().describe("Jobs in Midjourney at once (default 6)"),
+    mode: z.enum(["relaxed", "fast", "turbo"]).optional().describe('GPU speed; default "relaxed"'),
+    private: z.boolean().optional().describe("Stealth mode (Pro and Mega plans)"),
+    extraFlags: z.string().optional().describe('Parameters for every job, e.g. "--v 7 --stylize 250"'),
+    retryFailed: z.boolean().optional().describe("Send failed jobs again")
+  },
+  (params) => startBatch(bridge, params as any)
+)
+localTool(
+  "midjourney_batch_status",
+  "Shows a batch's progress: jobs to do, in Midjourney, saved and failed, what it's waiting for, and recent errors. " +
+    "waitMs waits until the batch finishes (or that long) first, instead of checking again and again.",
+  {
+    folder: batchFolder,
+    waitMs: z.number().int().min(0).max(600_000).optional().describe("Wait up to this long for the batch to finish"),
+    details: z.boolean().optional().describe("Include every job")
+  },
+  (params) => batchStatus(bridge, params as any),
+  true
+)
+localTool(
+  "midjourney_batch_pause",
+  "Pauses a batch: no new jobs are sent, the ones in Midjourney finish and are saved, then it stops. With now, it " +
+    "stops at once (jobs in Midjourney are saved when it resumes). Resume with midjourney_batch_start on the same folder.",
+  { folder: batchFolder, now: z.boolean().optional() },
+  async (params) => pauseBatch(bridge, params as any)
 )
 
 await server.connect(new StdioServerTransport())

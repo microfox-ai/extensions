@@ -100,7 +100,7 @@ With two or more profiles listed, ask the user which to use (by email, never by 
 ## Optional extras
 
 - **Midjourney skills**: `cd mcp && npm run install-skills` links the `midjourney-outcrop`, `midjourney-repaint`, `midjourney-style-reference`, `midjourney-restyle` and `midjourney-iterate` skills into `~/.claude/skills`.
-- **Mediamake**: saving to Mediamake needs the API endpoint (`https://mediamake.microfox.app`) and key in the popup's **Settings**. The user types the key there themselves; never ask for it in chat or write it to a file.
+- **Mediamake sign-in**: every feature needs the extension signed in to Mediamake. The user clicks **Sign in to Mediamake** in the popup (or call `sign_in_to_mediamake`) and clicks **Allow** in the window that opens. An API key pasted on the sign-in screen works too; the user pastes it themselves, never in chat or a file.
 - **Accept only this extension**: set `BROWSE_HACK_EXTENSION_ID` to the ID shown on `chrome://extensions` (`claude mcp add … -e BROWSE_HACK_EXTENSION_ID=<id>`, or the extension id field in Claude Desktop's settings for the bundle).
 
 ## Troubleshooting

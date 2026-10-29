@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react"
 
+import { authorizedFetch } from "../lib/mediamakeAuth"
+
 const exampleJson = {
     prompts: [
         {
@@ -37,7 +39,6 @@ export function MidjourneyTab() {
     const [scrapedData, setScrapedData] = useState("")
     const [agentApiUrl, setAgentApiUrl] = useState("http://localhost:3000")
     const [isLoadingDb, setIsLoadingDb] = useState(false)
-    const [apiKey, setApiKey] = useState("")
     const [selectedProjectId, setSelectedProjectId] = useState<string>("default")
     const [loadFromAllProjects, setLoadFromAllProjects] = useState(false)
 
@@ -61,7 +62,6 @@ export function MidjourneyTab() {
                 "useLastImage",
                 "maxQueueSize",
                 "apiEndpoint",
-                "apiKey",
                 "selectedProjectId",
                 "overwriteQueueFolder",
                 "loadFromAllProjects"
@@ -93,9 +93,6 @@ export function MidjourneyTab() {
                 }
                 if (typeof result.apiEndpoint === "string") {
                     setAgentApiUrl(result.apiEndpoint)
-                }
-                if (typeof result.apiKey === "string") {
-                    setApiKey(result.apiKey)
                 }
                 if (typeof result.selectedProjectId === "string") {
                     setSelectedProjectId(result.selectedProjectId)
@@ -178,11 +175,7 @@ export function MidjourneyTab() {
             const url = `${agentApiUrl}/api/midjourney-prompts/${encodeURIComponent(
                 id
             )}/prompts?includeTag=true`
-            const headers: HeadersInit = {}
-            if (apiKey) {
-                headers["Authorization"] = `Bearer ${apiKey}`
-            }
-            const res = await fetch(url, { headers })
+            const res = await authorizedFetch(url)
             if (!res.ok) {
                 throw new Error(`HTTP ${res.status}: ${res.statusText}`)
             }
@@ -232,11 +225,7 @@ export function MidjourneyTab() {
             const url = `${agentApiUrl}/api/midjourney-prompts/${encodeURIComponent(
                 id
             )}/prompts?includeTag=true`
-            const headers: HeadersInit = {}
-            if (apiKey) {
-                headers["Authorization"] = `Bearer ${apiKey}`
-            }
-            const res = await fetch(url, { headers })
+            const res = await authorizedFetch(url)
             if (!res.ok) {
                 throw new Error(`HTTP ${res.status}: ${res.statusText}`)
             }
@@ -337,13 +326,8 @@ export function MidjourneyTab() {
             ) {
                 params.append("projectId", selectedProjectId)
             }
-            const headers: HeadersInit = {}
-            if (apiKey) {
-                headers["Authorization"] = `Bearer ${apiKey}`
-            }
-            const res = await fetch(
-                `${agentApiUrl}/api/midjourney-queue/pending?${params.toString()}`,
-                { headers }
+            const res = await authorizedFetch(
+                `${agentApiUrl}/api/midjourney-queue/pending?${params.toString()}`
             )
             if (!res.ok) {
                 throw new Error(`HTTP ${res.status}: ${res.statusText}`)
@@ -427,7 +411,6 @@ export function MidjourneyTab() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [
         agentApiUrl,
-        apiKey,
         selectedProjectId,
         loadFromAllProjects,
         requestsToTrigger,

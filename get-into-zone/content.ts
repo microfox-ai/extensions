@@ -1,9 +1,8 @@
 import {
-  SAVER_RULES_KEY,
   isPinterestHost,
   isSaverActive,
   isSunoHost,
-  readSaverRules,
+  watchSaverRules,
   type SaverFeature,
   type SaverRule
 } from "./lib/saverRules"
@@ -66,8 +65,8 @@ function applySaverRules() {
   if (isSunoPage) injectSunoUploadUI()
 }
 
-chrome.storage.local.get(SAVER_RULES_KEY, (result) => {
-  saverRules = readSaverRules(result[SAVER_RULES_KEY])
+watchSaverRules((rules) => {
+  saverRules = rules
   applySaverRules()
 })
 
@@ -85,13 +84,6 @@ chrome.runtime.onMessage.addListener((request) => {
     typeof request.windowId === "number"
   ) {
     saverWindowId = request.windowId
-    applySaverRules()
-  }
-})
-
-chrome.storage.onChanged.addListener((changes, namespace) => {
-  if (namespace === "local" && changes[SAVER_RULES_KEY]) {
-    saverRules = readSaverRules(changes[SAVER_RULES_KEY].newValue)
     applySaverRules()
   }
 })
@@ -1292,16 +1284,8 @@ function createOverlayButton(
       button.disabled = false
     }
 
-    chrome.storage.local.get(["apiEndpoint", "tags", "apiKey"], (result) => {
-      const { apiEndpoint, tags, apiKey } = result
-      if (!apiEndpoint || !apiKey) {
-        console.error("API endpoint or API key is not set.")
-        alert(
-          "API endpoint or API key is not set. Please configure it in the extension popup."
-        )
-        resetButtonState()
-        return
-      }
+    chrome.storage.local.get(["tags"], (result) => {
+      const { tags } = result
 
       let mediaUrl = mediaElement.src
       if (mediaUrl.startsWith("https://cdn.midjourney.com/")) {
@@ -1375,8 +1359,7 @@ function createOverlayButton(
             chrome.runtime.sendMessage(
               {
                 action: "sendApiRequest",
-                endpoint: apiEndpoint + "/api/media-files/midjourney",
-                apiKey: apiKey,
+                path: "/api/media-files/midjourney",
                 payload: payload
               },
               (response) => {
