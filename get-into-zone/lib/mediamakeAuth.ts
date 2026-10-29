@@ -3,13 +3,17 @@
 //
 // "Sign in to Mediamake" runs Mediamake's OAuth flow, the same one its Claude
 // connector uses: the extension registers itself as an OAuth client once,
-// opens Mediamake's sign-in and Allow page in a Chrome window, and trades the
-// code for an access token (1 hour) and a refresh token (30 days). Every
-// refresh brings a new 30-day refresh token, so the extension stays signed in
-// for as long as it's used. A Mediamake API key saved instead works too.
+// named after its Chrome profile (Mediamake's Signed-in Devices page lists
+// sign-ins by that name), opens Mediamake's sign-in and Allow page in a
+// Chrome window, and trades the code for an access token (1 hour) and a
+// refresh token (30 days). Every refresh brings a new 30-day refresh token,
+// so the extension stays signed in for as long as it's used. A Mediamake API
+// key saved instead works too.
 //
 // Tokens are refreshed only in the background worker. The popup, tab pages
 // and content scripts get headers from it through mediamakeHeaders().
+
+import { MCP_PROFILE_NAME_KEY, chromeProfileEmail } from "./mcp"
 
 export const DEFAULT_ENDPOINT =
   process.env.NODE_ENV === "production"
@@ -43,6 +47,8 @@ interface OAuthClient {
   endpoint: string
   clientId: string
   redirectUri: string
+  /** The client_name it was registered with. Missing on clients saved before 0.4.1. */
+  name?: string
 }
 
 export interface AuthState {
@@ -114,16 +120,33 @@ async function postForm(endpoint: string, path: string, params: Record<string, s
   return { ok: resp.ok, status: resp.status, data: await resp.json().catch(() => ({})) }
 }
 
-/** The extension's OAuth client on this Mediamake, registered on first use. */
+/**
+ * What Mediamake calls this install, e.g. "Browse Hack (you@gmail.com)": the
+ * Chrome profile's Google account, after its name in the popup if it has one.
+ */
+async function clientName() {
+  const { [MCP_PROFILE_NAME_KEY]: name } = await chrome.storage.local.get(MCP_PROFILE_NAME_KEY)
+  const profile = [String(name ?? "").trim(), await chromeProfileEmail()].filter(Boolean).join(" · ")
+  return profile ? `Browse Hack (${profile})` : "Browse Hack (Chrome extension)"
+}
+
+/**
+ * The extension's OAuth client on this Mediamake, registered on first use. A
+ * client saved under another name is registered again (at sign-in only, so
+ * nobody is signed out for it).
+ */
 async function oauthClient(endpoint: string): Promise<OAuthClient> {
   const redirectUri = chrome.identity.getRedirectURL()
+  const name = await clientName()
   const { [CLIENT_KEY]: saved } = await chrome.storage.local.get(CLIENT_KEY)
-  if (saved?.endpoint === endpoint && saved.redirectUri === redirectUri) return saved
+  if (saved?.endpoint === endpoint && saved.redirectUri === redirectUri && saved.name === name) {
+    return saved
+  }
   const resp = await reach(endpoint, `${endpoint}/oauth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      client_name: "Browse Hack (Chrome extension)",
+      client_name: name,
       redirect_uris: [redirectUri],
       token_endpoint_auth_method: "none",
       grant_types: ["authorization_code", "refresh_token"],
@@ -136,7 +159,7 @@ async function oauthClient(endpoint: string): Promise<OAuthClient> {
       `Mediamake at ${endpoint} didn't accept the sign-in (${data.error_description || resp.status}).`
     )
   }
-  const client = { endpoint, clientId: data.client_id, redirectUri }
+  const client = { endpoint, clientId: data.client_id, redirectUri, name }
   await chrome.storage.local.set({ [CLIENT_KEY]: client })
   return client
 }
@@ -223,12 +246,15 @@ async function runSignIn(): Promise<AuthState> {
     }
     const session = toSession(endpoint, client.clientId, data)
     const account = await whoAmI(endpoint, session.accessToken)
+    const { [SESSION_KEY]: replaced } = await chrome.storage.local.get(SESSION_KEY)
     await chrome.storage.local.remove([API_KEY_KEY, ACCOUNT_KEY])
     await chrome.storage.local.set({
       [SESSION_KEY]: session,
       [ENDPOINT_KEY]: endpoint,
       ...(account ? { [ACCOUNT_KEY]: account } : {})
     })
+    // Signing in again while signed in: the old sign-in leaves Mediamake's devices list.
+    if (replaced?.refreshToken) await revoke(replaced)
     return authState()
   } finally {
     clearInterval(keepAlive)
@@ -318,17 +344,19 @@ export async function saveApiKey(apiKey: string, endpoint?: string) {
   return authState()
 }
 
+/** Ends a sign-in on Mediamake (best effort). */
+const revoke = (session: Session) =>
+  fetch(`${session.endpoint}/oauth/revoke`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ token: session.refreshToken, client_id: session.clientId })
+  }).catch(() => undefined)
+
 /** Signs out: revokes the sign-in (best effort) and forgets it and any API key. */
 export async function signOut() {
   const { [SESSION_KEY]: session } = await chrome.storage.local.get(SESSION_KEY)
   await chrome.storage.local.remove([SESSION_KEY, API_KEY_KEY, ACCOUNT_KEY])
-  if (session?.refreshToken) {
-    await fetch(`${session.endpoint}/oauth/revoke`, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ token: session.refreshToken, client_id: session.clientId })
-    }).catch(() => undefined)
-  }
+  if (session?.refreshToken) await revoke(session)
 }
 
 /** Calls back with whether the extension is signed in, now and on every change. */
