@@ -2,10 +2,9 @@ import type { PlasmoCSConfig } from "plasmo"
 
 import type { PinVideoJob } from "../lib/pinterestVideoDownload"
 import {
-  SAVER_RULES_KEY,
   isPinterestHost,
   isSaverActive,
-  readSaverRules,
+  watchSaverRules,
   type SaverRule
 } from "../lib/saverRules"
 import { formatBytes } from "../lib/youtube"
@@ -452,15 +451,9 @@ function init() {
   window.addEventListener("scroll", place, { capture: true, passive: true })
   window.addEventListener("resize", place, { passive: true })
 
-  chrome.storage.local.get(SAVER_RULES_KEY, (result) => {
-    saverRules = readSaverRules(result[SAVER_RULES_KEY])
+  watchSaverRules((rules) => {
+    saverRules = rules
     place()
-  })
-  chrome.storage.onChanged.addListener((changes, namespace) => {
-    if (namespace === "local" && changes[SAVER_RULES_KEY]) {
-      saverRules = readSaverRules(changes[SAVER_RULES_KEY].newValue)
-      place()
-    }
   })
   chrome.runtime.sendMessage({ action: "getSaverContext" }, (response) => {
     if (chrome.runtime.lastError) return

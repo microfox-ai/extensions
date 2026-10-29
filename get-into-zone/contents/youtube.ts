@@ -1,9 +1,8 @@
 import type { PlasmoCSConfig } from "plasmo"
 
 import {
-  SAVER_RULES_KEY,
   isSaverActive,
-  readSaverRules,
+  watchSaverRules,
   type SaverRule
 } from "../lib/saverRules"
 import {
@@ -439,15 +438,9 @@ function init() {
   document.addEventListener("yt-navigate-finish", refresh)
   setInterval(syncWatchBar, 1000)
 
-  chrome.storage.local.get(SAVER_RULES_KEY, (result) => {
-    saverRules = readSaverRules(result[SAVER_RULES_KEY])
+  watchSaverRules((rules) => {
+    saverRules = rules
     refresh()
-  })
-  chrome.storage.onChanged.addListener((changes, namespace) => {
-    if (namespace === "local" && changes[SAVER_RULES_KEY]) {
-      saverRules = readSaverRules(changes[SAVER_RULES_KEY].newValue)
-      refresh()
-    }
   })
   chrome.runtime.sendMessage({ action: "getSaverContext" }, (response) => {
     if (chrome.runtime.lastError) return

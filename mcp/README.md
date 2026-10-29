@@ -71,7 +71,7 @@ To tell profiles apart, give each one a name in the popup's **Settings → Profi
 
 | Area | Tools |
 | --- | --- |
-| Status and profiles | `get_status`, `list_profiles`, `use_profile` |
+| Status, profiles and sign-in | `get_status`, `list_profiles`, `use_profile`, `sign_in_to_mediamake` |
 | Tabs | `list_tabs`, `open_tab` |
 | Settings | `get_settings`, `update_settings`, `list_projects` |
 | Mediamake | `save_media_to_mediamake` |
@@ -83,8 +83,11 @@ To tell profiles apart, give each one a name in the popup's **Settings → Profi
 | DistroKid | `distrokid_fill_releases` |
 | Midjourney (prompt automation) | `midjourney_submit_prompts`, `midjourney_scrape`, `midjourney_queue_size`, `midjourney_list_queue`, `midjourney_run_queue`, `midjourney_load_prompts` |
 | Midjourney (images) | `midjourney_outcrop`, `midjourney_repaint`, `midjourney_repaint_status`, `midjourney_generate`, `midjourney_vary`, `midjourney_upscale`, `midjourney_pan`, `midjourney_zoom_out`, `midjourney_job_status`, `midjourney_download_images` |
+| Midjourney (batches) | `midjourney_batch_start`, `midjourney_batch_status`, `midjourney_batch_pause` |
 
 Tools behave like the matching buttons in the popup; see the [main README](../README.md#use-browse-hack) for what each feature does.
+
+Every tool needs the extension signed in to Mediamake (see [First-time setup](../README.md#first-time-setup)). When it isn't, tools say so; `sign_in_to_mediamake` opens the sign-in window in Chrome for the user to click **Allow**. `get_status` and `list_profiles` show each profile's sign-in.
 
 - **Pinterest bulk download** collects what the tab shows. After `pinterest_bulk_start`, the tab has to be scrolled or navigated to collect more pins. Do that yourself, or let Claude do it with Claude in Chrome (see below).
 - **YouTube** downloads only need a video URL. The extension uses any open YouTube tab to read the formats, or opens one in the background.
@@ -108,6 +111,15 @@ These call midjourney.com's own API from a midjourney.com tab (one opens in the 
 | `midjourney_download_images` | Saves a job's images to Downloads | Download |
 
 Images can be an `https://` URL, an absolute local file path (read by the MCP server), or `mj:<jobId>#<index>` for an earlier result. Jobs wait up to 4 minutes by default and return the four image URLs (`https://cdn.midjourney.com/<jobId>/0_<index>.png`). Longer relaxed jobs return their status; poll them with `midjourney_job_status`.
+
+### Midjourney batches
+
+For more than a few prompts, `midjourney_batch_start` takes the whole list (`jobs`, or a `jobsFile` for long lists) and a `folder`, and returns at once. In the background it keeps `concurrency` jobs (default 6) in Midjourney, relaxed by default, polls them together, and saves each job's images to the folder as `<name>-<index>.png`. Each job has its own prompt and, like `midjourney_generate`, optional `imagePrompts`, `styleReferences`, `omniReferences` and `extraFlags`; a reference image used by many jobs is uploaded once.
+
+- Progress, saved and failed jobs, and recent errors: `midjourney_batch_status` (`waitMs` waits for the batch to finish). Every step is also in `<folder>/state.json` and `<folder>/run.log`.
+- If Chrome closes, the extension restarts or the computer sleeps, calls time out after a few minutes at most and are retried without counting against the job; jobs already in Midjourney are picked up again. On a Mac the batch keeps the computer awake while it runs.
+- Moderation refusals fail a job at once with Midjourney's reason; jobs Midjourney errors on are sent again, up to 4 times. `retryFailed` sends failed jobs again.
+- `midjourney_batch_pause` stops sending new jobs and lets the ones in Midjourney finish (`now` stops at once). `midjourney_batch_start` on the same folder resumes, also from a new Claude session, and adds any new jobs. A batch runs in the MCP server of the session that started it, so it stops when that session ends; resume it the same way.
 
 The vary, upscale, pan and zoom tools take one of your own finished results (`jobId` plus `index`, or a `cdn.midjourney.com/<jobId>/0_<index>.png` URL) and reuse its prompt. Upscales return one image. On `--v 8.1`/`8.2`, pan and zoom are sent as Editor jobs, as midjourney.com does; older versions use Midjourney's pan and zoom jobs. `--v 8` has no upscale, pan or zoom.
 
@@ -143,7 +155,8 @@ Pass them with `-e NAME=value` in `claude mcp add`, or an `"env"` object in the 
 - The server listens on `127.0.0.1` only.
 - Web pages can open WebSockets to localhost, but the server rejects any connection that carries a web page's `Origin`. Only extensions (`chrome-extension://…`) and local processes get in. Set `BROWSE_HACK_EXTENSION_ID` to accept only this extension.
 - Any program on your computer can reach the port, the same as any local process can reach your browser profile. Turn the switch off in Settings when you don't want Claude to use the extension.
-- `get_settings` never returns the API key, only whether one is set.
+- `get_settings` never returns the Mediamake sign-in or API key, only the account and how it's signed in. Claude can't set an API key; the user does that in the popup.
+- If the extension goes silent for a minute (Chrome froze, the computer slept), the server drops its connection so pending calls fail instead of hanging, and the extension reconnects.
 
 ## Develop
 

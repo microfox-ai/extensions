@@ -171,12 +171,6 @@ export async function startBulkSession(request: any) {
 
   const destination: BulkDestination =
     request.destination === "mediamake" ? "mediamake" : "browser"
-  if (destination === "mediamake") {
-    const { apiEndpoint } = await chrome.storage.local.get("apiEndpoint")
-    if (typeof apiEndpoint !== "string" || !apiEndpoint) {
-      return { success: false, message: "Set the API Endpoint in Settings first." }
-    }
-  }
 
   const limit = Number(request.perPageLimit)
   const folder = sanitizeFolder(String(request.folder ?? ""))

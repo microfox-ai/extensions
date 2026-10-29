@@ -1,3 +1,5 @@
+import { authorizedFetch, mediamakeEndpoint } from "./mediamakeAuth"
+
 export const normalizeTags = (input: unknown): string[] => {
   if (Array.isArray(input)) {
     const clean = input
@@ -42,32 +44,16 @@ export interface MediamakeResult {
 }
 
 async function loadConfig() {
-  const result = await chrome.storage.local.get([
-    "apiEndpoint",
-    "apiKey",
-    "selectedProjectId"
-  ])
-  const baseUrl =
-    typeof result.apiEndpoint === "string"
-      ? result.apiEndpoint.replace(/\/+$/, "")
-      : ""
-  const headers: Record<string, string> = {}
-  if (result.apiKey && typeof result.apiKey === "string") {
-    headers["Authorization"] = `Bearer ${result.apiKey}`
-  }
-  return { result, baseUrl, headers }
+  const result = await chrome.storage.local.get(["selectedProjectId"])
+  return { result, baseUrl: await mediamakeEndpoint() }
 }
 
-// A JSON request to the Mediamake API, authorized with the API key from Settings.
+// A JSON request to the Mediamake API, with the extension's Mediamake sign-in.
 export async function mediamakeFetch(path: string, init: RequestInit = {}) {
-  const { baseUrl, headers } = await loadConfig()
-  if (!baseUrl) throw new Error("Missing API Endpoint in Settings.")
-  const resp = await fetch(`${baseUrl}${path}`, {
+  const { baseUrl } = await loadConfig()
+  const resp = await authorizedFetch(`${baseUrl}${path}`, {
     ...init,
-    headers: {
-      ...(init.body ? { "Content-Type": "application/json" } : {}),
-      ...headers
-    }
+    headers: init.body ? { "Content-Type": "application/json" } : {}
   })
   const data = await resp.json().catch(() => null)
   if (!resp.ok) {
@@ -81,10 +67,9 @@ export async function getUploadUrl(
   filename: string,
   contentType: string
 ): Promise<{ uploadUrl: string; publicUrl: string }> {
-  const { baseUrl, headers } = await loadConfig()
-  if (!baseUrl) throw new Error("Missing API Endpoint in Settings.")
+  const { baseUrl } = await loadConfig()
   const query = new URLSearchParams({ filename, contentType })
-  const resp = await fetch(`${baseUrl}/api/upload-url?${query}`, { headers })
+  const resp = await authorizedFetch(`${baseUrl}/api/upload-url?${query}`)
   const data = await resp.json().catch(() => ({}))
   if (!resp.ok || !data?.uploadUrl || !data?.publicUrl) {
     throw new Error(data?.error || `Upload URL request failed: ${resp.status}`)
@@ -95,15 +80,7 @@ export async function getUploadUrl(
 export async function queueSparkboardIndex(
   request: SparkboardIndexRequest
 ): Promise<MediamakeResult> {
-  const { result, baseUrl, headers: authHeaders } = await loadConfig()
-  if (!baseUrl) {
-    return { success: false, message: "Missing API Endpoint in Settings." }
-  }
-
-  const headers: HeadersInit = {
-    "Content-Type": "application/json",
-    ...authHeaders
-  }
+  const { result, baseUrl } = await loadConfig()
 
   const projectId =
     typeof result.selectedProjectId === "string" &&
@@ -142,9 +119,9 @@ export async function queueSparkboardIndex(
 
   const endpoint = `${baseUrl}/api/workflows/workers/sparkboard-index`
   try {
-    const resp = await fetch(endpoint, {
+    const resp = await authorizedFetch(endpoint, {
       method: "POST",
-      headers,
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         input,
         await: false

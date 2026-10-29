@@ -10,9 +10,15 @@ import { initYouTubeBackground } from "./lib/youtubeBackground"
 import { initPinterestVideoDownloads } from "./lib/pinterestVideoDownload"
 import { initInstagramBackground } from "./lib/instagramBackground"
 import { normalizeTags, queueSparkboardIndex } from "./lib/mediamake"
+import {
+  authorizedFetch,
+  initMediamakeAuth,
+  mediamakeEndpoint
+} from "./lib/mediamakeAuth"
 import { initMidjourneyEdit } from "./lib/midjourneyEdit"
 import { initMcpBridge } from "./lib/mcpBridge"
 
+initMediamakeAuth()
 initSaverBackground()
 initPinterestBulkBackground()
 initYouTubeBackground()
@@ -27,33 +33,15 @@ const updateQueueItemStatus = (
   onSuccess?: () => void
 ) => {
   if (!queueItemId) return
-  chrome.storage.local.get(
-    ["apiEndpoint", "apiKey"],
-    (result) => {
-      const baseUrl =
-        (typeof result.apiEndpoint === "string" && result.apiEndpoint) ||
-        ""
-    if (!baseUrl || typeof baseUrl !== "string") {
-      console.warn(
-        "[browse-hack] Missing apiEndpoint in storage; cannot PATCH queue item",
-        { queueItemId, payload }
-      )
-      return
-    }
-    const headers: HeadersInit = {
-      "Content-Type": "application/json"
-    }
-    if (result.apiKey && typeof result.apiKey === "string") {
-      headers["Authorization"] = `Bearer ${result.apiKey}`
-    }
+  mediamakeEndpoint().then((baseUrl) => {
     const url = `${baseUrl}/api/midjourney-queue/${encodeURIComponent(queueItemId)}`
     console.log("[browse-hack] PATCH midjourney queue item", {
       url,
       payload
     })
-    fetch(url, {
+    authorizedFetch(url, {
       method: "PATCH",
-      headers,
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     })
       .then(async (res) => {
@@ -122,17 +110,9 @@ const handleMessage = (
     })
   } else if (request.action === "uploadSunoTrackToMediamake") {
     chrome.storage.local.get(
-      ["apiEndpoint", "apiKey", "selectedProjectId"],
+      ["selectedProjectId"],
       async (result) => {
-        const baseUrl =
-          (typeof result.apiEndpoint === "string" && result.apiEndpoint) || ""
-        if (!baseUrl || typeof baseUrl !== "string") {
-          sendResponse({
-            success: false,
-            message: "Missing API Endpoint in Settings."
-          })
-          return
-        }
+        const baseUrl = await mediamakeEndpoint()
 
         let audioUrl: string | null =
           typeof request.audioUrl === "string" && request.audioUrl
@@ -240,13 +220,6 @@ const handleMessage = (
           return
         }
 
-        const headers: HeadersInit = {
-          "Content-Type": "application/json"
-        }
-        if (result.apiKey && typeof result.apiKey === "string") {
-          headers["Authorization"] = `Bearer ${result.apiKey}`
-        }
-
         const projectId =
           typeof result.selectedProjectId === "string" &&
           result.selectedProjectId.trim() !== ""
@@ -276,9 +249,9 @@ const handleMessage = (
         const uploadUrl = `${baseUrl.replace(/\/+$/, "")}/api/workflows/workers/transcriber`
 
         try {
-          const resp = await fetch(uploadUrl, {
+          const resp = await authorizedFetch(uploadUrl, {
             method: "POST",
-            headers,
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               input: {
                 audioUrl,
@@ -327,24 +300,9 @@ const handleMessage = (
     request.action === "analyzePinterestImage"
   ) {
     chrome.storage.local.get(
-      ["apiEndpoint", "apiKey", "selectedProjectId", "tags"],
+      ["selectedProjectId", "tags"],
       async (result) => {
-        const baseUrl =
-          (typeof result.apiEndpoint === "string" && result.apiEndpoint) || ""
-        if (!baseUrl || typeof baseUrl !== "string") {
-          sendResponse({
-            success: false,
-            message: "Missing API Endpoint in Settings."
-          })
-          return
-        }
-
-        const headers: HeadersInit = {
-          "Content-Type": "application/json"
-        }
-        if (result.apiKey && typeof result.apiKey === "string") {
-          headers["Authorization"] = `Bearer ${result.apiKey}`
-        }
+        const baseUrl = await mediamakeEndpoint()
         const projectId =
           typeof result.selectedProjectId === "string" &&
           result.selectedProjectId.trim().length > 0
@@ -362,9 +320,9 @@ const handleMessage = (
         }
 
         try {
-          const resp = await fetch(endpoint, {
+          const resp = await authorizedFetch(endpoint, {
             method: "POST",
-            headers,
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload)
           })
           const data = await resp.json().catch(() => ({}))
@@ -393,18 +351,9 @@ const handleMessage = (
     return true
   } else if (request.action === "savePinterestAnalysis") {
     chrome.storage.local.get(
-      ["apiEndpoint", "apiKey", "selectedProjectId"],
+      ["selectedProjectId"],
       async (result) => {
-        const baseUrl =
-          (typeof result.apiEndpoint === "string" && result.apiEndpoint) || ""
-        if (!baseUrl) {
-          sendResponse({ success: false, message: "Missing API Endpoint in Settings." })
-          return
-        }
-        const headers: HeadersInit = { "Content-Type": "application/json" }
-        if (result.apiKey && typeof result.apiKey === "string") {
-          headers["Authorization"] = `Bearer ${result.apiKey}`
-        }
+        const baseUrl = await mediamakeEndpoint()
         const projectId =
           typeof result.selectedProjectId === "string" &&
           result.selectedProjectId.trim().length > 0
@@ -413,9 +362,9 @@ const handleMessage = (
 
         const endpoint = `${baseUrl.replace(/\/+$/, "")}/api/pinterest-analyses`
         try {
-          const resp = await fetch(endpoint, {
+          const resp = await authorizedFetch(endpoint, {
             method: "POST",
-            headers,
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               imageUrl: request.imageUrl,
               pageUrl: request.pageUrl,
@@ -443,24 +392,13 @@ const handleMessage = (
     )
     return true
   } else if (request.action === "fetchPinterestAnalyses") {
-    chrome.storage.local.get(
-      ["apiEndpoint", "apiKey"],
-      async (result) => {
-        const baseUrl =
-          (typeof result.apiEndpoint === "string" && result.apiEndpoint) || ""
-        if (!baseUrl) {
-          sendResponse({ success: false, message: "Missing API Endpoint in Settings." })
-          return
-        }
-        const headers: HeadersInit = {}
-        if (result.apiKey && typeof result.apiKey === "string") {
-          headers["Authorization"] = `Bearer ${result.apiKey}`
-        }
+    mediamakeEndpoint().then(
+      async (baseUrl) => {
         const limit = typeof request.limit === "number" ? request.limit : 50
         const offset = typeof request.offset === "number" ? request.offset : 0
         const endpoint = `${baseUrl.replace(/\/+$/, "")}/api/pinterest-analyses?limit=${limit}&offset=${offset}`
         try {
-          const resp = await fetch(endpoint, { headers })
+          const resp = await authorizedFetch(endpoint)
           const data = await resp.json().catch(() => ({}))
           if (!resp.ok) {
             sendResponse({ success: false, message: data?.error || `Fetch failed: ${resp.status}` })
@@ -503,12 +441,8 @@ const handleMessage = (
 
         const markPromptProcessed = (recordId: string, promptIndex: number) => {
           if (!recordId || promptIndex < 0) return
-          chrome.storage.local.get(["apiEndpoint"], (result) => {
-            const baseUrl = result.apiEndpoint
-            if (!baseUrl || typeof baseUrl !== "string") {
-              return
-            }
-            fetch(
+          mediamakeEndpoint().then((baseUrl) => {
+            authorizedFetch(
               `${baseUrl}/api/midjourney-prompts/${encodeURIComponent(
                 recordId
               )}/mark-processed`,
@@ -717,14 +651,14 @@ const handleMessage = (
     })
     return true
   } else if (request.action === "sendApiRequest") {
-    fetch(request.endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${request.apiKey}`
-      },
-      body: JSON.stringify(request.payload)
-    })
+    mediamakeEndpoint()
+      .then((baseUrl) =>
+        authorizedFetch(`${baseUrl}${request.path}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(request.payload)
+        })
+      )
       .then((response) => {
         if (!response.ok) {
           throw new Error("Network response was not ok " + response.statusText)

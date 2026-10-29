@@ -291,8 +291,17 @@ const UPLOAD_ERRORS: Record<number, string> = {
   429: "Midjourney is rate-limiting uploads; try again in a minute."
 }
 
+// Batches send the same reference image with many prompts; it's uploaded once.
+const uploaded = new Map<string, string>()
+const UPLOAD_CACHE_SIZE = 500
+
 async function upload(blob: Blob, editor: boolean) {
   if (blob.size > 20_000_000) throw new Error("Images must be under 20 MB.")
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", await blob.arrayBuffer()))
+  const cacheKey = `${editor ? "e" : "u"}:${Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("")}`
+  const cached = uploaded.get(cacheKey)
+  if (cached) return cached
+
   const mimeType = blob.type || "image/png"
   const ext = mimeType.split("/")[1]?.replace("jpeg", "jpg") || "png"
   const result = await runInPage(uploadInPage, [
@@ -304,7 +313,10 @@ async function upload(blob: Blob, editor: boolean) {
   if (!result?.ok) {
     throw new Error(UPLOAD_ERRORS[result?.status ?? 0] ?? `Upload failed (${result?.status}): ${result?.error}`)
   }
-  return `${CDN}/${editor ? "e" : "u"}/${result.bucketPathname.replace(/^\//, "")}`
+  const url = `${CDN}/${editor ? "e" : "u"}/${result.bucketPathname.replace(/^\//, "")}`
+  if (uploaded.size >= UPLOAD_CACHE_SIZE) uploaded.delete(uploaded.keys().next().value!)
+  uploaded.set(cacheKey, url)
+  return url
 }
 
 let lastSubmit = 0
@@ -400,6 +412,16 @@ export async function waitForJob(jobId: string, batchSize = 4, timeoutMs = 10 * 
     }
     await sleep(POLL_MS)
   }
+}
+
+/** The status of several jobs in one request (batches poll every job in flight at once). */
+export async function jobStatuses(params: { jobIds: string[] }) {
+  const ids = (params.jobIds ?? []).map(String).slice(0, 50)
+  const jobs = await runInPage(jobStatusInPage, [ids])
+  if (!jobs) {
+    throw new Error("Couldn't read the jobs from Midjourney. Sign in to midjourney.com in this browser first.")
+  }
+  return jobs.map(({ id, status, percentage }) => ({ id, status, percentage }))
 }
 
 async function finish(
@@ -819,14 +841,17 @@ function downloadFinished(downloadId: number) {
 }
 
 /**
- * Saves a job's images to the Downloads folder. Each one is saved only once
- * the CDN serves it, and one at a time: starting a download right after one
- * that failed has stopped the extension's service worker.
+ * Saves a job's images to the Downloads folder, as <jobId>_<index>.png or,
+ * with a name, <name>-<index>.png (replacing an earlier copy, so a retried
+ * download doesn't leave "(1)" files). Each one is saved only once the CDN
+ * serves it, and one at a time: starting a download right after one that
+ * failed has stopped the extension's service worker.
  */
 export async function downloadImages(params: {
   jobId: string
   indexes?: number[]
   folder?: string
+  name?: string
 }) {
   let indexes = params.indexes ?? []
   if (!indexes.length) {
@@ -834,13 +859,14 @@ export async function downloadImages(params: {
     indexes = Array.from({ length: job?.batchSize ?? 4 }, (_, i) => i)
   }
   const folder = (params.folder || "midjourney").replace(/^\/+|\/+$/g, "")
+  const name = params.name?.replace(/[\\/:*?"<>|]+/g, "-").trim()
   const deadline = Date.now() + READY_WAIT_MS
   const files = []
   for (const index of indexes) {
     const downloadId = await chrome.downloads.download({
       url: await readyResultUrl(params.jobId, index, deadline),
-      filename: `${folder}/${params.jobId}_${index}.png`,
-      conflictAction: "uniquify",
+      filename: name ? `${folder}/${name}-${index}.png` : `${folder}/${params.jobId}_${index}.png`,
+      conflictAction: name ? "overwrite" : "uniquify",
       saveAs: false
     })
     files.push(await downloadFinished(downloadId))

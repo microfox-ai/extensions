@@ -10,6 +10,7 @@ import { PinterestTab } from "./componenets/PinterestTab"
 import { YouTubeTab } from "./componenets/YouTubeTab"
 import { InstagramTab } from "./componenets/InstagramTab"
 import { DistroKidTab } from "./componenets/DistroKidTab"
+import { SignInScreen, useAuthState } from "./componenets/SignInScreen"
 
 type MainTab =
   | "midjourney"
@@ -61,19 +62,30 @@ const TABS: {
   { id: "settings", label: "Settings", component: SettingsTab }
 ]
 
+const popupStyle = {
+  display: "flex",
+  flexDirection: "column" as const,
+  padding: 16,
+  width: 400
+}
+
 function IndexPopup() {
   const [activeTab, setActiveTab] = useState<MainTab>("midjourney")
+  const auth = useAuthState()
   const visibleTabs = TABS.filter((tab) => !tab.hidden)
   const ActiveComponent = TABS.find((tab) => tab.id === activeTab)!.component
 
+  if (!auth) return <div style={popupStyle} />
+  if (!auth.signedIn) {
+    return (
+      <div style={popupStyle}>
+        <SignInScreen endpoint={auth.endpoint} />
+      </div>
+    )
+  }
+
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        padding: 16,
-        width: 400
-      }}>
+    <div style={popupStyle}>
       <div style={{ display: "flex", marginBottom: 16, flexWrap: "wrap", gap: 4 }}>
         {visibleTabs.map((tab) => (
           <button

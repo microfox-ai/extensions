@@ -14,8 +14,7 @@ import {
 } from "../lib/instagram"
 import {
   isSaverActive,
-  readSaverRules,
-  SAVER_RULES_KEY,
+  watchSaverRules,
   type SaverRule
 } from "../lib/saverRules"
 import { sanitizeFileName } from "../lib/youtube"
@@ -410,15 +409,9 @@ function init() {
   window.addEventListener("scroll", place, { capture: true, passive: true })
   window.addEventListener("resize", place, { passive: true })
 
-  chrome.storage.local.get(SAVER_RULES_KEY, (result) => {
-    saverRules = readSaverRules(result[SAVER_RULES_KEY])
+  watchSaverRules((rules) => {
+    saverRules = rules
     place()
-  })
-  chrome.storage.onChanged.addListener((changes, namespace) => {
-    if (namespace === "local" && changes[SAVER_RULES_KEY]) {
-      saverRules = readSaverRules(changes[SAVER_RULES_KEY].newValue)
-      place()
-    }
   })
   chrome.runtime.sendMessage({ action: "getSaverContext" }, (response) => {
     if (chrome.runtime.lastError) return

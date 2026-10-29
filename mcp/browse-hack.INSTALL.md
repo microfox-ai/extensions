@@ -5,14 +5,15 @@ MCP is added: from the `.mcpb` in Claude Desktop, or with `claude mcp add`
 in Claude Code (install step 4).
 
 1. Ask the person to open the Browse Hack popup (puzzle-piece icon →
-   **Browse Hack**; pin it while they're there), go to **Settings**, and fill in:
-   - **API Endpoint**: their MediaMake URL (`$MEDIAMAKE_URL` from install step 0)
-   - **API Key**: their MediaMake API key, which they copy from
-     `$MEDIAMAKE_URL/core/api-keys` and paste themselves (an install code is
-     not an API key; never put it here)
-   - **Default Project**: any MediaMake project they want saves to go to
-   Then **Save Settings**. Skip this if they kept an extension that was
-   already set up.
+   **Browse Hack**; pin it while they're there). Every feature needs it
+   signed in to MediaMake:
+   - If `$MEDIAMAKE_URL` isn't `https://mediamake.microfox.app`, first set
+     **Mediamake URL** at the bottom of the sign-in screen to it.
+   - Click **Sign in to Mediamake**, sign in in the window that opens and
+     click **Allow**. No API key is needed; they stay signed in while they use
+     it (30 days after they last use it).
+   - Then, in **Settings**, they can pick a **Default Project** for saves.
+   Skip this if Settings already shows them signed in.
 2. Make the tools show up:
    - Claude Desktop: if it was open while the MCP was installed, ask them to
      quit and reopen it.
