@@ -17,6 +17,14 @@ export interface McpBridgeStatus {
   at: number
 }
 
+/** The Google account this Chrome profile is signed in with, if any. */
+export async function chromeProfileEmail() {
+  const user = await chrome.identity
+    ?.getProfileUserInfo({ accountStatus: chrome.identity.AccountStatus.ANY })
+    .catch(() => undefined)
+  return user?.email || undefined
+}
+
 export const readMcpPort = (value: unknown) => {
   const port = Number(value)
   return Number.isInteger(port) && port > 0 && port < 65536

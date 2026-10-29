@@ -14,6 +14,7 @@ import {
   MCP_PROFILE_ID_KEY,
   MCP_PROFILE_NAME_KEY,
   MCP_STATUS_KEY,
+  chromeProfileEmail,
   readMcpPort,
   type McpBridgeState
 } from "./mcp"
@@ -621,13 +622,10 @@ async function profileInfo() {
     profileId = crypto.randomUUID()
     await chrome.storage.local.set({ [MCP_PROFILE_ID_KEY]: profileId })
   }
-  const user = await chrome.identity
-    ?.getProfileUserInfo({ accountStatus: chrome.identity.AccountStatus.ANY })
-    .catch(() => undefined)
   return {
     profileId,
     profileName: String(stored[MCP_PROFILE_NAME_KEY] ?? "").trim(),
-    email: user?.email || undefined
+    email: await chromeProfileEmail()
   }
 }
 
