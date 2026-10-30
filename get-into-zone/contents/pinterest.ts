@@ -1,5 +1,6 @@
 import type { PlasmoCSConfig } from "plasmo"
 
+import { pinSaveProUrl } from "../lib/pinSavePro"
 import type { PinVideoJob } from "../lib/pinterestVideoDownload"
 import {
   isPinterestHost,
@@ -64,6 +65,11 @@ const STYLES = `
 .${PREFIX}-toast-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .${PREFIX}-toast button { border: none; background: none; color: #aaa; cursor: pointer; font: 600 12px inherit; padding: 2px 4px; }
 .${PREFIX}-toast button:hover { color: #fff; }
+.${PREFIX}-toast button.${PREFIX}-toast-action {
+  margin-top: 10px; padding: 7px 12px; border-radius: 14px; background: ${PINTEREST_RED}; color: #fff;
+}
+.${PREFIX}-toast button.${PREFIX}-toast-action:hover { background: #ad081b; }
+.${PREFIX}-toast button.${PREFIX}-toast-action:disabled { opacity: 0.6; cursor: default; }
 .${PREFIX}-toast-status { margin-top: 4px; font-size: 12px; color: #ccc; }
 .${PREFIX}-toast-status.error { color: #ff8a80; }
 .${PREFIX}-toast-status.done { color: #81c995; }
@@ -105,7 +111,10 @@ const CARD_SELECTOR = [
   "[data-test-id='closeup-media-container']",
   "[data-grid-item]"
 ].join(", ")
-const VIDEO_MARKER = "[data-test-id='pinrep-video'], [data-test-id='gated-pin-video'], [data-test-id='pin-closeup-video']"
+const CLOSEUP = "[data-test-id='closeup-media-container']"
+// closeup-video-with-visibility stays after the video ends and Pinterest swaps it for its cover.
+const VIDEO_MARKER =
+  "[data-test-id='pinrep-video'], [data-test-id='gated-pin-video'], [data-test-id='pin-closeup-video'], [data-test-id='closeup-video-with-visibility']"
 const HASH_RE = /(?:^|\/)([0-9a-f]{2}\/[0-9a-f]{2}\/[0-9a-f]{2}\/[0-9a-f]{32})(?=[._/?#]|$)/i
 const DURATION_RE = /^\d{1,2}:\d{2}(?::\d{2})?$/
 
@@ -165,7 +174,7 @@ function pinIdFrom(card: Element) {
     .find((value) => /\/pin\/\d{5,}/.test(value))
   const fromHref = href?.match(/\/pin\/(\d{5,20})/)?.[1]
   if (fromHref) return fromHref
-  if (card.matches("[data-test-id='closeup-media-container']")) {
+  if (card.matches(CLOSEUP)) {
     return location.pathname.match(/^\/pin\/(\d{5,20})/)?.[1] || ""
   }
   return ""
@@ -190,6 +199,9 @@ function mediaBox(card: Element): HTMLElement | null {
 }
 
 function describe(card: Element): PinVideo | null {
+  // The open pin's closeup sits inside a grid item that has neither its pin id
+  // nor its title; the closeup itself is described instead.
+  if (!card.matches(CLOSEUP) && card.querySelector(CLOSEUP)) return null
   if (!isVideoCard(card)) return null
   const el = mediaBox(card)
   if (!el) return null
@@ -268,11 +280,14 @@ function titleFor(card: Element) {
     ""
   if (own) return own
   // Logged-out cards carry no title, and a related pin must not inherit the open pin's heading.
-  if (card.matches("[data-test-id='closeup-media-container']")) {
+  if (card.matches(CLOSEUP)) {
     return document.querySelector("h1")?.textContent?.trim() || ""
   }
   return ""
 }
+
+const pinUrlOf = (video: PinVideo) =>
+  video.pinId ? `https://www.pinterest.com/pin/${video.pinId}/` : ""
 
 // ---------------------------------------------------------------------------
 // The Download button
@@ -300,13 +315,22 @@ function place() {
   button.style.display = "inline-flex"
 }
 
-function onMouseMove(event: MouseEvent) {
-  if (event.target === button || button.contains(event.target as Node)) return
-  const found = videoAt(event.clientX, event.clientY)
+let pointer: { x: number; y: number } | null = null
+
+// Pinterest swaps a card's cover for a <video> once hover playback starts, so
+// the hovered card is looked up again after every rescan, not only on moves.
+function refreshHovered() {
+  const found = pointer ? videoAt(pointer.x, pointer.y) : null
   if (found?.el !== hovered?.el) {
     hovered = found
     place()
   }
+}
+
+function onMouseMove(event: MouseEvent) {
+  if (event.target === button || button.contains(event.target as Node)) return
+  pointer = { x: event.clientX, y: event.clientY }
+  refreshHovered()
 }
 
 // Stop the press before Pinterest's card treats it as opening the pin.
@@ -338,7 +362,7 @@ button.addEventListener("click", async (event) => {
     })
     if (!response?.success) throw new Error(response?.message || "Couldn't start the download.")
   } catch (error) {
-    showErrorToast(error instanceof Error ? error.message : String(error))
+    showErrorToast(error instanceof Error ? error.message : String(error), pinUrlOf(target))
   } finally {
     button.disabled = false
     buttonLabel().textContent = "Download"
@@ -356,7 +380,20 @@ function removeToast(id: string) {
   toasts.delete(id)
 }
 
-function showErrorToast(message: string) {
+// PinSavePro reads pins on its own server, so it can find files our lookup
+// misses. contents/pinsavepro.ts fills its form and starts the download.
+function pinSaveProButton(pinUrl: string) {
+  const open = el("button", "toast-action", "Try PinSavePro")
+  open.title = "Open pinsavepro.com and download this pin there"
+  open.onclick = () => {
+    window.open(pinSaveProUrl(pinUrl), "_blank", "noopener")
+    open.textContent = "Opened PinSavePro"
+    open.disabled = true
+  }
+  return open
+}
+
+function showErrorToast(message: string, pinUrl: string) {
   const id = `err-${Date.now()}`
   const toast = el("div", "toast")
   const row = el("div", "toast-row")
@@ -369,6 +406,7 @@ function showErrorToast(message: string) {
   const status = el("div", "toast-status error")
   status.textContent = message
   toast.append(row, status)
+  if (pinUrl) toast.append(pinSaveProButton(pinUrl))
   toastHost.append(toast)
   toasts.set(id, toast)
 }
@@ -428,6 +466,7 @@ function renderJob(job: PinVideoJob) {
     bar.append(fill)
     toast.append(bar)
   }
+  if (job.status === "error" && job.pinUrl) toast.append(pinSaveProButton(job.pinUrl))
   if (job.status === "done" || job.status === "cancelled") {
     setTimeout(() => removeToast(job.id), DONE_TOAST_MS)
   }
@@ -445,6 +484,7 @@ function init() {
   rescan()
   setInterval(() => {
     rescan()
+    refreshHovered()
     place()
   }, RESCAN_MS)
   document.addEventListener("mousemove", onMouseMove, { capture: true, passive: true })

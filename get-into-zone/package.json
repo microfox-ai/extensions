@@ -1,7 +1,7 @@
 {
   "name": "browse-hack",
   "displayName": "Browse Hack",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Browser automations for Claude: Pinterest, YouTube, Instagram, Midjourney, Suno, DistroKid and Mediamake",
   "author": "subhakar",
   "scripts": {

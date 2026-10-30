@@ -10,6 +10,8 @@ export type PinVideoStatus = "finding" | "downloading" | "done" | "error" | "can
 export interface PinVideoJob {
   id: string
   videoId: string
+  // The pin's page, for the PinSavePro fallback; empty when the pin id is unknown.
+  pinUrl: string
   filename: string
   status: PinVideoStatus
   received: number
@@ -58,6 +60,10 @@ async function run(job: PinVideoJob & { tabId?: number; request?: unknown }) {
   try {
     const source = await resolveSource(job.request, job.tabId)
     if (cancelled(job)) return
+    // Cards without a title (the open pin's closeup) take the pin's own.
+    if (source.title && !titleOf(job.request)) {
+      update(job, { filename: fileNameFor(job.request, source.title) })
+    }
 
     if (source.type === "mp4") {
       const downloadId = await chrome.downloads.download({
@@ -110,16 +116,33 @@ const DIRECT_RE = /^https:\/\/(?:[\w-]+\.)?pinimg\.com\/videos\/.+\.(?:mp4|m3u8)
 const hashOf = (value: unknown) =>
   typeof value === "string" && HASH_RE.test(value) ? value : ""
 
+const pinIdOf = (request: any) =>
+  typeof request.pinId === "string" && PIN_ID_RE.test(request.pinId) ? request.pinId : ""
+
+const titleOf = (request: any) => (typeof request.title === "string" ? request.title.trim() : "")
+
+// The short hash keeps same-titled pins from overwriting each other. Titles are
+// cut by character so an emoji is never split in half.
+function fileNameFor(request: any, title: string) {
+  const id = hashOf(request.videoId) || hashOf(request.signature) || pinIdOf(request)
+  const short = Array.from(title).slice(0, 80).join("")
+  return `${sanitizeFileName(short || "Pinterest video")} [${id.split("/").pop()!.slice(0, 8)}]`
+}
+
 // Runs in the Pinterest page, where the session cookie is sent. Returns the
-// best MP4 for that pin, or its HLS stream when no single file is published.
-async function videoUrlFromPin(pinId: string, signature: string): Promise<string> {
+// best MP4 for that pin, or its HLS stream when no single file is published,
+// and the pin's title when the lookup reaches Pinterest.
+async function videoUrlFromPin(
+  pinId: string,
+  signature: string
+): Promise<{ url: string; title: string }> {
   const bare = signature.split("/").pop() || ""
   if (bare) {
     const loaded = performance
       .getEntriesByType("resource")
       .map((entry) => entry.name)
       .find((name) => bare && name.includes(bare) && /pinimg\.com\/videos\/.+\.mp4/i.test(name))
-    if (loaded) return loaded.split("#")[0]
+    if (loaded) return { url: loaded.split("#")[0], title: "" }
   }
 
   const token = decodeURIComponent(
@@ -144,7 +167,11 @@ async function videoUrlFromPin(pinId: string, signature: string): Promise<string
     }
   })
   if (!resp.ok) throw new Error(`Pinterest returned ${resp.status}`)
-  const json = (await resp.json()) as { resource_response?: { data?: unknown } }
+  const json = (await resp.json()) as {
+    resource_response?: {
+      data?: { title?: unknown; grid_title?: unknown; description?: unknown }
+    }
+  }
   const found: { url: string; width: number; mp4: boolean }[] = []
   const walk = (value: unknown) => {
     if (!value || typeof value !== "object") return
@@ -167,14 +194,21 @@ async function videoUrlFromPin(pinId: string, signature: string): Promise<string
   })
   const best = mp4s[0] || found.find((item) => !item.mp4)
   if (!best) throw new Error("That pin has no video file.")
-  return best.url
+  const pin = json?.resource_response?.data
+  const title = [pin?.title, pin?.grid_title, pin?.description].find(
+    (value): value is string => typeof value === "string" && value.trim().length > 0
+  )
+  return { url: best.url, title: title?.trim().split("\n")[0] || "" }
 }
 
-async function resolveSource(request: any, tabId?: number) {
+async function resolveSource(
+  request: any,
+  tabId?: number
+): Promise<{ type: "mp4" | "hls"; url: string; title?: string }> {
   const videoId = hashOf(request.videoId)
   if (videoId) return resolveVideo(videoId)
 
-  const pinId = typeof request.pinId === "string" && PIN_ID_RE.test(request.pinId) ? request.pinId : ""
+  const pinId = pinIdOf(request)
   const signature = hashOf(request.signature)
   if (pinId && tabId !== undefined) {
     try {
@@ -184,9 +218,9 @@ async function resolveSource(request: any, tabId?: number) {
         func: videoUrlFromPin,
         args: [pinId, signature]
       })
-      const url = injected?.result
+      const { url, title } = injected?.result ?? {}
       if (typeof url === "string" && DIRECT_RE.test(url)) {
-        return { type: /\.m3u8(?:[?#]|$)/i.test(url) ? ("hls" as const) : ("mp4" as const), url }
+        return { type: /\.m3u8(?:[?#]|$)/i.test(url) ? "hls" : "mp4", url, title }
       }
     } catch {
       // The pin page can refuse the lookup; the cover image's hash is the fallback.
@@ -198,14 +232,13 @@ async function resolveSource(request: any, tabId?: number) {
 
 function start(request: any, tabId?: number) {
   const videoId = hashOf(request.videoId) || hashOf(request.signature)
-  const pinId = typeof request.pinId === "string" && PIN_ID_RE.test(request.pinId) ? request.pinId : ""
+  const pinId = pinIdOf(request)
   if (!videoId && !pinId) return { success: false, message: "That isn't a Pinterest video." }
-  const title = typeof request.title === "string" ? request.title.trim() : ""
-  const hash = (videoId || pinId).split("/").pop()!.slice(0, 8)
   const job: PinVideoJob & { tabId?: number; request?: unknown } = {
     id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
     videoId,
-    filename: `${sanitizeFileName(title.slice(0, 80) || "Pinterest video")} [${hash}]`,
+    pinUrl: pinId ? `https://www.pinterest.com/pin/${pinId}/` : "",
+    filename: fileNameFor(request, titleOf(request)),
     status: "finding",
     received: 0,
     total: 0,
