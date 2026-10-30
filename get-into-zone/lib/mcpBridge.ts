@@ -62,6 +62,7 @@ import {
   type SaverScope
 } from "./saverRules"
 import { distrokidCommands } from "./distrokidBridge"
+import { googleAiAnswer } from "./googleAiAnswer"
 import { openTab } from "./tabs"
 import { buildOptions, parseVideoId, type YtMode, type YtVideo } from "./youtube"
 import {
@@ -590,6 +591,8 @@ const commands: Record<string, (params: any) => Promise<unknown>> = {
   "midjourney.jobStatuses": jobStatuses,
   "midjourney.downloadImages": downloadImages,
   "midjourney.frameSize": async ({ aspectRatio }) => frameSize(String(aspectRatio)),
+
+  "google.aiAnswer": googleAiAnswer,
 
   ...distrokidCommands
 }

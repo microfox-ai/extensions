@@ -8,6 +8,7 @@ import { z } from "zod"
 
 import { Bridge } from "./bridge.js"
 import { fillDistrokidReleases } from "./distrokid.js"
+import { saveGoogleAiAnswers } from "./googleAiAnswers.js"
 import { batchStatus, pauseBatch, startBatch } from "./midjourneyBatch.js"
 import { toSource } from "./sources.js"
 
@@ -789,6 +790,34 @@ localTool(
     "stops at once (jobs in Midjourney are saved when it resumes). Resume with midjourney_batch_start on the same folder.",
   { folder: batchFolder, now: z.boolean().optional() },
   async (params) => pauseBatch(bridge, params as any)
+)
+
+// --- Google AI Mode ---
+
+const answerItem = z.object({
+  query: z.string().optional().describe("What to ask Google AI Mode. Opens google.com/search?udm=50&q=<query> in a background tab"),
+  tabId: z.number().int().optional().describe("Instead of a query: read the answer already open in this tab (see list_tabs)"),
+  file: z.string().describe("Where to save it: an absolute path (or relative to itemsFile), e.g. ~/anime/naruto/naruto-uzumaki-google.md")
+})
+
+localTool(
+  "google_ai_save_answers",
+  "Asks Google AI Mode each query in the user's Chrome and saves the answer to a file exactly as Google shows it " +
+    "(Markdown keeping headings, lists, bold and links, plus the cited sources). The answer text is written to disk here " +
+    "and is not returned: the result lists each file with its size, source count and whether the answer finished " +
+    "streaming. Queries run one at a time; each takes about 10-40 seconds. Existing files are skipped unless overwrite " +
+    "is true. If an answer comes back empty or wrong, open one query with saveHtml to see the page and pass a CSS selector.",
+  {
+    items: z.array(answerItem).optional(),
+    itemsFile: z.string().optional().describe("JSON file with the items: an array or { items: [...] }"),
+    format: z.enum(["markdown", "text"]).optional().describe('"markdown" (default) or the plain page text'),
+    header: z.boolean().optional().describe("Add the query as a title, the page link and a Sources list (default true)"),
+    overwrite: z.boolean().optional(),
+    saveHtml: z.boolean().optional().describe("Also save the answer's HTML next to each file, for checking what was read"),
+    selector: z.string().optional().describe("CSS selector of the answer element, if the built-in ones miss it"),
+    timeoutMs: z.number().int().min(10_000).max(300_000).optional().describe("Longest wait for one answer (default 120000)")
+  },
+  (params) => saveGoogleAiAnswers(bridge, params as any)
 )
 
 await server.connect(new StdioServerTransport())
