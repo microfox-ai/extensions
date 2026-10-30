@@ -1,6 +1,8 @@
 import type { PlasmoCSConfig } from "plasmo"
 
 import {
+  cleanLyrics,
+  DISTROKID_LYRICS_FILE,
   titleCaseSong,
   type DistrokidFillResult,
   type DistrokidRelease,
@@ -8,9 +10,21 @@ import {
 } from "../lib/distrokidRelease"
 
 export const config: PlasmoCSConfig = {
-  matches: ["https://distrokid.com/new*", "https://www.distrokid.com/new*"],
+  matches: [
+    "https://distrokid.com/new*",
+    "https://www.distrokid.com/new*",
+    "https://distrokid.com/lyrics/track*",
+    "https://www.distrokid.com/lyrics/track*"
+  ],
   run_at: "document_idle"
 }
+
+// Off until the Mixea and lyrics steps are confirmed on a real release: the
+// pages are filled in, and the user clicks Continue and Save lyrics.
+const CLICK_FINAL_BUTTONS = false
+
+const BANNER_STYLE =
+  "margin:16px 0;padding:14px 16px;border-radius:8px;background:#ecfdf5;border:1px solid #6ee7b7;color:#064e3b;line-height:1.45;font-size:14px;text-align:left;"
 
 const CREDIT_LABEL: Record<SongWriter["credit"], string> = {
   music: "Music",
@@ -35,6 +49,7 @@ type FillMsg = {
   release: DistrokidRelease
   trackIds: string[]
   coverId: string
+  lyrics?: string
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -74,7 +89,7 @@ chrome.runtime.onConnect.addListener((port) => {
       }
       const tracks = msg.trackIds.map(take)
       const cover = take(msg.coverId)
-      void fillForm(msg.release, tracks, cover).then((result) => {
+      void fillForm(msg.release, tracks, cover, msg.lyrics || "").then((result) => {
         port.postMessage({ type: "result", result })
       })
     }
@@ -129,7 +144,7 @@ function setNativeValue(
   else el.value = value
 }
 
-function writeText(el: HTMLInputElement | null, value: string) {
+function writeText(el: HTMLInputElement | HTMLTextAreaElement | null, value: string) {
   if (!el) return false
   el.focus()
   setNativeValue(el, value)
@@ -433,7 +448,8 @@ function trackTitle(release: DistrokidRelease, file: File, index: number): strin
 async function fillForm(
   release: DistrokidRelease,
   tracks: (File | null)[],
-  cover: File | null
+  cover: File | null,
+  lyrics: string
 ): Promise<DistrokidFillResult> {
   const warnings: string[] = []
   const filled: string[] = []
@@ -719,17 +735,58 @@ async function fillForm(
     )
   }
 
+  const lyricsText = cleanLyrics(lyrics)
+  const lyricsOn = release.addLyrics && !release.instrumental && !!lyricsText
+  if (release.addLyrics && release.instrumental) {
+    warnings.push("addLyrics is on, but the song is instrumental. Lyrics will not be added.")
+  } else if (release.addLyrics && !lyricsText) {
+    warnings.push(`addLyrics is on, but the folder has no ${DISTROKID_LYRICS_FILE}. Lyrics will not be added.`)
+  } else if (lyricsOn && audio.length > 1) {
+    warnings.push(
+      "The lyrics go to the track that DistroKid's Done page links to, normally track 1. Add the other tracks' lyrics yourself."
+    )
+  }
+  writeAfter({
+    at: Date.now(),
+    useMyOriginals: release.useMyOriginals,
+    lyrics: lyricsOn ? lyricsText : "",
+    lyricsStage: lyricsOn ? "done" : ""
+  })
+  const nextSteps: string[] = []
+  const youClick: string[] = []
+  if (release.useMyOriginals) {
+    nextSteps.push(
+      CLICK_FINAL_BUTTONS
+        ? "picks Use my originals on the Mixea page and clicks Continue"
+        : "picks Use my originals on the Mixea page"
+    )
+    if (!CLICK_FINAL_BUTTONS) youClick.push("Continue there")
+  }
+  if (lyricsOn) {
+    nextSteps.push(
+      CLICK_FINAL_BUTTONS
+        ? "adds the lyrics on the Done page with the free Basic plan and saves them"
+        : "fills in the lyrics from the Done page with the free Basic plan"
+    )
+    if (!CLICK_FINAL_BUTTONS) youClick.push("Save lyrics")
+  }
+  const afterText = nextSteps.length
+    ? `After you click Continue, Browse Hack ${nextSteps.join(", then ")}.${
+        youClick.length ? ` You click ${youClick.join(" and ")}.` : ""
+      }`
+    : ""
+  if (afterText) filled.push(afterText)
+
   const note = document.createElement("div")
   note.id = "giz-distrokid-banner"
-  note.style.cssText =
-    "margin:16px 0;padding:14px 16px;border-radius:8px;background:#ecfdf5;border:1px solid #6ee7b7;color:#064e3b;line-height:1.45;font-size:14px;"
+  note.style.cssText = BANNER_STYLE
   const warningHtml =
     warnings.length > 0
       ? `<ul style="margin:8px 0 0;padding-left:18px;">${warnings
           .map((item) => `<li>${escapeHtml(item)}</li>`)
           .join("")}</ul>`
       : ""
-  note.innerHTML = `<strong>Browse Hack filled this form.</strong> Review it, then click Continue yourself. Nothing was submitted.${warningHtml}`
+  note.innerHTML = `<strong>Browse Hack filled this form.</strong> Review it, then click Continue yourself. Nothing was submitted.${afterText ? ` ${escapeHtml(afterText)}` : ""}${warningHtml}`
   document.getElementById("giz-distrokid-banner")?.remove()
   const button = document.getElementById("doneButton")
   button?.parentElement?.insertBefore(note, button)
@@ -750,4 +807,194 @@ function escapeHtml(value: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
+}
+
+// Continue on the release form leads through more pages in this tab: Mixea,
+// then Done, then the lyrics form. What info.json asked for on those pages
+// rides along in sessionStorage, which stays with the tab.
+const AFTER_KEY = "giz-distrokid-after-continue"
+const AFTER_TTL_MS = 6 * 60 * 60 * 1000
+
+type AfterContinue = {
+  at: number
+  useMyOriginals: boolean
+  lyrics: string
+  /** "done" until Add your lyrics is clicked, then "track" on the lyrics form. */
+  lyricsStage: "" | "done" | "track"
+}
+
+function readAfter(): AfterContinue | null {
+  try {
+    const value = JSON.parse(sessionStorage.getItem(AFTER_KEY) || "null") as AfterContinue | null
+    if (value?.at && Date.now() - value.at < AFTER_TTL_MS) return value
+    sessionStorage.removeItem(AFTER_KEY)
+  } catch {
+    // Storage blocked: the later pages are left for the user.
+  }
+  return null
+}
+
+function writeAfter(value: AfterContinue) {
+  try {
+    if (value.useMyOriginals || value.lyricsStage) {
+      sessionStorage.setItem(AFTER_KEY, JSON.stringify(value))
+    } else {
+      sessionStorage.removeItem(AFTER_KEY)
+    }
+  } catch {
+    // Storage blocked: the later pages are left for the user.
+  }
+}
+
+function pageNote(text: string, anchor: Element | null) {
+  let note = document.getElementById("giz-distrokid-step-banner")
+  if (!note) {
+    note = document.createElement("div")
+    note.id = "giz-distrokid-step-banner"
+    note.style.cssText = BANNER_STYLE
+  }
+  if (anchor?.parentElement) anchor.parentElement.insertBefore(note, anchor)
+  else if (!note.isConnected) document.body.prepend(note)
+  note.textContent = text
+}
+
+function textOf(el: Element | null | undefined): string {
+  return (el?.textContent || "").replace(/\s+/g, " ").trim().toLowerCase()
+}
+
+/** The "Use my originals" radio, only while it is still offered at $0. */
+function originalsRadio(): HTMLInputElement | null {
+  const radio = document.querySelector<HTMLInputElement>(
+    'form.master-form input[type="radio"][name="variant"][value="0"]'
+  )
+  const text = textOf(radio?.closest(".variant-item"))
+  if (!radio || !text.includes("use my original")) return null
+  return /\$0(?:[.,]00)?(?![.,]?\d)/.test(text) ? radio : null
+}
+
+/** Continue for the originals, or Mixea's "Continue with my uploaded files" when it could not enhance. */
+function mixeaContinue(): HTMLButtonElement | null {
+  const ready = (button: HTMLButtonElement | null) =>
+    !!button && visible(button) && !button.disabled && !/processing|please wait/.test(textOf(button))
+  const regular = document.querySelector<HTMLButtonElement>('#rejectButton button[value="0"]')
+  if (ready(regular)) return regular
+  const fallback = document.querySelector<HTMLButtonElement>('.footer-error button[value="0"]')
+  return ready(fallback) ? fallback : null
+}
+
+async function useOriginalsOnMixea() {
+  const after = readAfter()
+  if (!after?.useMyOriginals) return
+  const anchor = () =>
+    document.getElementById("rejectButton") || document.querySelector(".footer-error")
+  pageNote(
+    CLICK_FINAL_BUTTONS
+      ? "Browse Hack is waiting for Mixea to finish. Then it picks Use my originals and clicks Continue."
+      : "Browse Hack is waiting for Mixea to finish. Then it picks Use my originals for you to Continue.",
+    anchor()
+  )
+  await waitFor(() => !!originalsRadio() || !!mixeaContinue(), 30_000)
+  const radio = originalsRadio()
+  if (radio && !radio.checked) radio.click()
+  const ready = await waitFor(() => !!mixeaContinue(), 10 * 60_000)
+  const button = mixeaContinue()
+  if (!ready || !button) {
+    pageNote(
+      "Mixea did not finish within 10 minutes. Pick Use my originals and click Continue yourself.",
+      anchor()
+    )
+    return
+  }
+  if (button.closest("#rejectButton")) {
+    const picked = originalsRadio()
+    if (picked && !picked.checked) picked.click()
+    if (!picked?.checked) {
+      pageNote(
+        "Browse Hack could not pick Use my originals for $0. Choose a version and click Continue yourself.",
+        anchor()
+      )
+      return
+    }
+  }
+  writeAfter({ ...after, useMyOriginals: false })
+  if (!CLICK_FINAL_BUTTONS) {
+    pageNote("Browse Hack picked Use my originals. Click Continue.", anchor())
+    button.scrollIntoView({ block: "center", behavior: "smooth" })
+    return
+  }
+  pageNote("Browse Hack picked Use my originals and clicked Continue.", anchor())
+  button.click()
+}
+
+async function openLyricsFromDone() {
+  const after = readAfter()
+  if (after?.lyricsStage !== "done" || !after.lyrics) return
+  const link = () => document.getElementById("add-your-lyrics") as HTMLAnchorElement | null
+  const found = await waitFor(() => !!link() && visible(link()), 15_000)
+  const target = link()
+  if (!found || !target) {
+    writeAfter({ ...after, lyrics: "", lyricsStage: "" })
+    pageNote(
+      `Browse Hack did not find Add your lyrics on this page. Add the lyrics from ${DISTROKID_LYRICS_FILE} yourself.`,
+      null
+    )
+    return
+  }
+  writeAfter({ ...after, lyricsStage: "track" })
+  pageNote("Browse Hack is opening Add your lyrics.", target.closest(".icon-link-row"))
+  target.click()
+}
+
+async function fillLyricsPage() {
+  const after = readAfter()
+  if (after?.lyricsStage !== "track" || !after.lyrics) return
+  const ready = await waitFor(() => !!document.getElementById("lu-save-btn"), 15_000)
+  const box = document.getElementById("lu-lyrics-input") as HTMLTextAreaElement | null
+  const basic = document.getElementById("lu-plan-basic") as HTMLInputElement | null
+  const agree = document.getElementById("lu-agree-checkbox") as HTMLInputElement | null
+  const save = document.getElementById("lu-save-btn") as HTMLButtonElement | null
+  // Never the paid Lyric Blaster plan: Basic must still say Free.
+  const freeBasic =
+    !!basic && basic.value === "basic" && /\bfree\b/.test(textOf(basic.closest("label")))
+  if (!ready || !box || !basic || !agree || !save || !freeBasic) {
+    pageNote(
+      `Browse Hack could not find the lyrics box, the free Basic plan, or Save lyrics. Paste ${DISTROKID_LYRICS_FILE} and save it yourself.`,
+      save
+    )
+    return
+  }
+  // Let DistroKid's lyrics script finish wiring the form first.
+  await sleep(500)
+  writeText(box, after.lyrics)
+  if (!basic.checked) basic.click()
+  if (!agree.checked) agree.click()
+  const enabled = await waitFor(() => !save.disabled, 10_000)
+  if (!enabled || !basic.checked || !agree.checked || box.value !== after.lyrics) {
+    pageNote(
+      "Browse Hack pasted the lyrics, picked Basic (free) and ticked the agreement, but Save lyrics stayed off. Check the form and click Save lyrics yourself.",
+      save
+    )
+    return
+  }
+  writeAfter({ ...after, lyrics: "", lyricsStage: "" })
+  if (!CLICK_FINAL_BUTTONS) {
+    pageNote(
+      "Browse Hack pasted the lyrics, picked Basic (free) and ticked the Lyric Agreement. Check them and click Save lyrics.",
+      save
+    )
+    save.scrollIntoView({ block: "center", behavior: "smooth" })
+    return
+  }
+  pageNote(
+    "Browse Hack pasted the lyrics, picked Basic (free), agreed to the Lyric Agreement and clicked Save lyrics.",
+    save
+  )
+  save.click()
+}
+
+const page = location.pathname
+if (page.startsWith("/new/mixea")) void useOriginalsOnMixea()
+else if (page.startsWith("/new/done")) void openLyricsFromDone()
+else if (page.startsWith("/lyrics/track") && !page.startsWith("/lyrics/track/save")) {
+  void fillLyricsPage()
 }

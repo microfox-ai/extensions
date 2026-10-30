@@ -1,6 +1,7 @@
 // MCP entry for DistroKid. The Node server reads the release folder and streams
 // the files here in small pieces. This opens one distrokid.com/new/ tab and
-// reuses the content-script port the popup already uses. It never clicks Continue.
+// reuses the content-script port the popup already uses. It never clicks Continue
+// on the release form.
 
 import { parseDistrokidInfo, type DistrokidRelease } from "./distrokidRelease"
 import { openTab } from "./tabs"
@@ -9,6 +10,7 @@ type Session = {
   tabId: number
   port: chrome.runtime.Port
   release: DistrokidRelease
+  lyrics: string
 }
 
 const sessions = new Map<string, Session>()
@@ -39,7 +41,7 @@ function takeSession(sessionId: unknown): Session {
 }
 
 export const distrokidCommands: Record<string, (params: any) => Promise<unknown>> = {
-  "distrokid.open": async ({ infoJson }) => {
+  "distrokid.open": async ({ infoJson, lyrics }) => {
     let parsed: ReturnType<typeof parseDistrokidInfo>
     try {
       parsed = parseDistrokidInfo(JSON.parse(String(infoJson ?? "").replace(/^\uFEFF/, "")))
@@ -58,7 +60,12 @@ export const distrokidCommands: Record<string, (params: any) => Promise<unknown>
     }
     const port = chrome.tabs.connect(tab.id, { name: "giz-distrokid" })
     const sessionId = crypto.randomUUID()
-    sessions.set(sessionId, { tabId: tab.id, port, release: parsed.release })
+    sessions.set(sessionId, {
+      tabId: tab.id,
+      port,
+      release: parsed.release,
+      lyrics: typeof lyrics === "string" ? lyrics : ""
+    })
     port.onDisconnect.addListener(() => {
       const current = sessions.get(sessionId)
       if (current?.port === port) sessions.delete(sessionId)
@@ -117,6 +124,7 @@ export const distrokidCommands: Record<string, (params: any) => Promise<unknown>
       session.port.postMessage({
         type: "fill",
         release: session.release,
+        lyrics: session.lyrics,
         trackIds: Array.isArray(trackIds) ? trackIds : [],
         coverId: String(coverId || "cover")
       })
