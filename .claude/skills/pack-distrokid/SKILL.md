@@ -1,19 +1,20 @@
 ---
-name: distrokid-release-info
+name: pack-distrokid
 description: >-
-  Write a DistroKid info.json by talking with the user and reading the release
-  folder (audio, a square cover, and a lyrics file that may not be named
-  lyrics), write distrokid_lyrics.md from those lyrics, then fill
-  distrokid.com/new/ from those folders. Use when the user wants to prepare a
-  DistroKid upload, choose a genre, confirm song details, create the info.json
-  the Browse Hack DistroKid tab uses, or upload one or many releases.
+  Pack a release folder for DistroKid: talk with the user and read the folder
+  (audio, a square cover, and a lyrics file that may not be named lyrics),
+  write info.json and distrokid_lyrics.md (with create-distrokid-lyrics), then
+  fill distrokid.com/new/ through Browse Hack. Use when the user wants to
+  prepare or pack a DistroKid upload, choose a genre, confirm song details,
+  create the info.json the Browse Hack DistroKid tab uses, or upload one or
+  many releases.
 ---
 
-# DistroKid release info
+# Pack a DistroKid release
 
-Create `info.json` in the release folder. The Browse Hack popup reads that file, fills the DistroKid upload form, and stops. The user clicks Continue. After that, `useMyOriginals` and `addLyrics` let the extension fill in the Mixea page and the lyrics page in the same tab. The user clicks Continue and Save lyrics there.
+Pack the release folder: write `info.json`, write `distrokid_lyrics.md` with [create-distrokid-lyrics](../create-distrokid-lyrics/SKILL.md), then fill the upload form. The Browse Hack popup reads `info.json`, fills the DistroKid upload form, and stops. The user clicks Continue. After that, `useMyOriginals` and `addLyrics` let the extension fill in the Mixea page and the lyrics page in the same tab. The user clicks Continue and Save lyrics there.
 
-Talk to the user. Suggest fields from the folder, then write the file only after they confirm the full draft.
+Talk to the user. Suggest fields from the folder, then write the files only after they confirm the full draft.
 
 ## Find the folder
 
@@ -49,7 +50,7 @@ Propose a draft, with a one-line reason for each guess. Ask the user to correct 
 - **creditPerformerRole**, **creditPerformerName**, **creditProducer**, **creditProducerName** — only when `isApplePublish` is true. Read [reference.md](reference.md) and copy a role string exactly. Default `creditPerformerRole` to `Unknown` and `creditProducer` to `Producer`; use another role only when the user asks for one. `creditProducer` is the producer **role**, not the person's name.
 - **useMyOriginals** — ask. After the user clicks Continue, DistroKid shows a Mixea page that offers to master the track for a fee. `true` makes Browse Hack pick "Use my originals" ($0) there. The user clicks Continue. `false` leaves that page to the user. Browse Hack never picks a paid option.
 - **addLyrics** — ask when the song has a lyric. `true` makes Browse Hack click Add your lyrics on the Done page, paste `distrokid_lyrics.md`, pick the free Basic plan, and tick "I have read and agree to the terms of the DistroKid Lyric Agreement". The user clicks Save lyrics. Say that it ticks that agreement for them. Use `false` for an instrumental or when there is no lyric. On a multi-track release it covers only the track the Done page links to, normally track 1.
-- **lyrics** — the formatted lyric that will be saved as `distrokid_lyrics.md`. Read [../distrokid-lyrics/SKILL.md](../distrokid-lyrics/SKILL.md) and follow it. Show that text in the draft. Skip it when the song is instrumental or there is no lyric.
+- **lyrics** — the formatted lyric that will be saved as `distrokid_lyrics.md`. Read [../create-distrokid-lyrics/SKILL.md](../create-distrokid-lyrics/SKILL.md) and follow it. Show that text in the draft. Skip it when the song is instrumental or there is no lyric.
 
 ### Names you must not invent
 

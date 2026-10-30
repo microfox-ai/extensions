@@ -1,15 +1,16 @@
 ---
-name: distrokid-lyrics
+name: create-distrokid-lyrics
 description: >-
   Rewrite song lyrics into DistroKid's lyric format: capitalize each line, one
   sentence per line, blank lines between verses and choruses, repeats written
   out in full, no section labels, no social links, no punctuation at the end
   of a line, and no censoring unless the word was bleeped. Use when the user
   gives lyrics to format for DistroKid, asks for DistroKid lyrics, or a release
-  folder needs distrokid_lyrics.md.
+  folder needs distrokid_lyrics.md. pack-distrokid runs this step when it packs
+  a release.
 ---
 
-# DistroKid lyrics
+# Create DistroKid lyrics
 
 Turn the lyrics you are given into text that can be pasted into DistroKid. Change formatting only. Do not rewrite, translate, or "improve" the words.
 
@@ -60,6 +61,8 @@ Don't enter "F***", unless the word was dropped or bleeped
 Show the formatted lyric. If the user named a release folder, or you are writing that folder's `info.json`, also write `distrokid_lyrics.md` in that folder containing only the formatted lyric. If they pasted lyrics and named no folder, show the lyric and do not create a file until they say where.
 
 If there is no lyric, or the song is instrumental, do not write `distrokid_lyrics.md`.
+
+When `info.json` sets `addLyrics`, Browse Hack pastes this file on DistroKid's lyrics page after the upload. So the file holds the lyric and nothing else.
 
 ## Example
 
