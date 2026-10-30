@@ -18,8 +18,9 @@ function readAiAnswer(selector: string | null, includeHtml: boolean): AiAnswerPa
   const candidates = selector
     ? [selector]
     : [
-        '[data-subtree="aimc"]',
+        // AI Mode: the answer column, without the source cards beside it.
         '[data-container-id="main-col"]',
+        '[data-subtree="aimc"]',
         '[data-attrid="AIOverview"]',
         "#m-x-content",
         'div[role="main"]',
@@ -38,8 +39,17 @@ function readAiAnswer(selector: string | null, includeHtml: boolean): AiAnswerPa
   }
   if (!root) return { matched: null, markdown: "", text: "", sources: [] }
 
+  // Copy-excluded bits (citation chips, toolbar, image carousel), inline
+  // citation markers and the toolbar at the end of the answer.
+  const EXCLUDED = '[data-ignore-copy], span.DHPVt, [data-xid="Gd7Hsc"]'
+  const skipped = (el: HTMLElement) =>
+    SKIP.has(el.tagName) ||
+    el.getAttribute("aria-hidden") === "true" ||
+    el.getAttribute("role") === "button" ||
+    el.matches(EXCLUDED) ||
+    !visible(el)
   const SKIP = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "SVG", "BUTTON", "INPUT", "TEXTAREA", "IMG", "VIDEO", "IFRAME", "TEMPLATE"])
-  const BLOCK = /^(P|DIV|SECTION|ARTICLE|HEADER|FOOTER|BLOCKQUOTE|FIGURE|UL|OL|TABLE|H[1-6])$/
+  const BLOCK = /^(P|DIV|SECTION|ARTICLE|HEADER|FOOTER|BLOCKQUOTE|FIGURE|UL|OL|TABLE|HR|H[1-6])$/
 
   // Only display: none counts as hidden. Google fades the answer in with
   // opacity, which stays at 0 in a background tab, and checkVisibility() or a
@@ -59,8 +69,7 @@ function readAiAnswer(selector: string | null, includeHtml: boolean): AiAnswerPa
     if (node.nodeType === Node.TEXT_NODE) return (node.textContent || "").replace(/\s+/g, " ")
     if (node.nodeType !== Node.ELEMENT_NODE) return ""
     const el = node as HTMLElement
-    if (SKIP.has(el.tagName) || el.getAttribute("aria-hidden") === "true" || el.getAttribute("role") === "button") return ""
-    if (!visible(el)) return ""
+    if (skipped(el)) return ""
     if (el.tagName === "BR") return "\n"
     const inner = Array.from(el.childNodes).map(inline).join("")
     if (!inner.trim()) return inner
@@ -76,18 +85,29 @@ function readAiAnswer(selector: string | null, includeHtml: boolean): AiAnswerPa
 
   const lines: string[] = []
   const block = (el: HTMLElement, depth: number) => {
-    if (SKIP.has(el.tagName) || el.getAttribute("aria-hidden") === "true" || el.getAttribute("role") === "button") return
-    if (!visible(el)) return
+    if (skipped(el)) return
     const tag = el.tagName
-    const heading = /^H([1-6])$/.exec(tag)
-    if (heading) {
-      lines.push("", `${"#".repeat(Number(heading[1]) + 1)} ${inline(el).trim()}`, "")
+    // Google draws section titles as <div role="heading" aria-level="3">.
+    // h1-h6 move down one level, below the file's own title.
+    const hLevel = /^H([1-6])$/.exec(tag)?.[1]
+    const level = hLevel
+      ? Number(hLevel) + 1
+      : el.getAttribute("role") === "heading"
+        ? Number(el.getAttribute("aria-level")) || 2
+        : 0
+    if (level) {
+      const title = inline(el).replace(/\s+/g, " ").trim()
+      if (title) lines.push("", `${"#".repeat(Math.min(level, 6))} ${title}`, "")
+      return
+    }
+    if (tag === "HR") {
+      lines.push("---", "")
       return
     }
     if (tag === "UL" || tag === "OL") {
       let n = 0
       for (const li of Array.from(el.children) as HTMLElement[]) {
-        if (li.tagName !== "LI" || !visible(li)) continue
+        if (li.tagName !== "LI" || skipped(li) || !li.innerText.trim()) continue
         n++
         const nested = Array.from(li.children).filter((c) => c.tagName === "UL" || c.tagName === "OL") as HTMLElement[]
         const own = Array.from(li.childNodes)
@@ -140,7 +160,9 @@ function readAiAnswer(selector: string | null, includeHtml: boolean): AiAnswerPa
 
   const seen = new Set<string>()
   const sources: { title: string; url: string }[] = []
-  for (const a of Array.from(root.querySelectorAll<HTMLAnchorElement>("a[href]"))) {
+  // The source cards sit next to the answer column, so look at the whole answer.
+  const sourceRoot = root.closest('[data-subtree="aimc"]') || root
+  for (const a of Array.from(sourceRoot.querySelectorAll<HTMLAnchorElement>("a[href]"))) {
     const url = realUrl(a.getAttribute("href") || "")
     if (!/^https?:/.test(url) || /^https?:\/\/([a-z]+\.)?google\.[a-z.]+\//.test(url) || seen.has(url)) continue
     seen.add(url)
