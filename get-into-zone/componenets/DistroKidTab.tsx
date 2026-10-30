@@ -1,6 +1,7 @@
 import { useRef, useState, type CSSProperties } from "react"
 
 import {
+  findDistrokidLyrics,
   findInfoJson,
   findLyricsFile,
   isCoverCandidate,
@@ -20,6 +21,9 @@ type Loaded = {
   cover: File | null
   coverNote: string
   lyricsName: string | null
+  /** distrokid_lyrics.md, saved on the Done page when info.json sets addLyrics. */
+  lyrics: string
+  lyricsFile: string | null
 }
 
 const CHUNK = 512 * 1024
@@ -55,7 +59,9 @@ export function DistroKidTab() {
         audioNote: "",
         cover: null,
         coverNote: "",
-        lyricsName: findLyricsFile(list)?.name || null
+        lyricsName: findLyricsFile(list)?.name || null,
+        lyrics: "",
+        lyricsFile: null
       })
       return
     }
@@ -75,6 +81,8 @@ export function DistroKidTab() {
       })
     )
     const coverPick = pickCover(sized)
+    const lyricsFile = findDistrokidLyrics(list)
+    const lyrics = lyricsFile ? await lyricsFile.text().catch(() => "") : ""
     const errors = [...parsed.errors]
     if (audio.tracks.length === 0) errors.push(audio.note)
     if (!coverPick.cover) errors.push(coverPick.note)
@@ -89,7 +97,9 @@ export function DistroKidTab() {
       audioNote: audio.note,
       cover: coverPick.cover,
       coverNote: coverPick.note,
-      lyricsName: findLyricsFile(list)?.name || null
+      lyricsName: findLyricsFile(list)?.name || null,
+      lyrics,
+      lyricsFile: lyricsFile?.name || null
     })
   }
 
@@ -129,7 +139,9 @@ export function DistroKidTab() {
       <h2 style={{ margin: "0 0 8px", fontSize: 16 }}>DistroKid</h2>
       <p style={{ margin: "0 0 12px", fontSize: 12, lineHeight: 1.45, color: "#444" }}>
         Choose the release folder. The form at distrokid.com/new is filled from
-        info.json, the audio, and the square cover. You click Continue yourself.
+        info.json, the audio, and the square cover. You click Continue yourself. With
+        useMyOriginals or addLyrics in info.json, the Mixea and lyrics pages after it
+        are filled in, and you click Continue and Save lyrics there.
       </p>
       <input
         ref={(node) => {
@@ -170,7 +182,14 @@ export function DistroKidTab() {
             <div key={file.name}>Audio: {file.name}</div>
           ))}
           <div>Cover: {loaded.coverNote}</div>
-          {loaded.lyricsName && <div>Lyrics file (not uploaded): {loaded.lyricsName}</div>}
+          {loaded.release.useMyOriginals && (
+            <div>After Continue: Use my originals on the Mixea page</div>
+          )}
+          {loaded.release.addLyrics && loaded.lyricsFile ? (
+            <div>After Continue: lyrics from {loaded.lyricsFile} (Basic, free)</div>
+          ) : (
+            loaded.lyricsName && <div>Lyrics file (not uploaded): {loaded.lyricsName}</div>
+          )}
           {loaded.errors.length > 0 && (
             <ul style={{ color: "#9f1239", paddingLeft: 18, margin: "8px 0" }}>
               {loaded.errors.map((error) => (
@@ -249,7 +268,9 @@ function blankRelease(): DistrokidRelease {
     creditPerformerRole: "",
     creditPerformerName: "",
     creditProducer: "",
-    creditProducerName: ""
+    creditProducerName: "",
+    useMyOriginals: false,
+    addLyrics: false
   }
 }
 
@@ -383,6 +404,7 @@ function sendFill(
       port.postMessage({
         type: "fill",
         release: loaded.release,
+        lyrics: loaded.lyrics,
         trackIds,
         coverId: "cover"
       })

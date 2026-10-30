@@ -109,6 +109,10 @@ export type DistrokidRelease = {
   /** Producer role, matching the Apple producer dropdown. */
   creditProducer: string
   creditProducerName: string
+  /** After Continue, picks "Use my originals" on the Mixea page and clicks Continue there. */
+  useMyOriginals: boolean
+  /** On the Done page, saves distrokid_lyrics.md with the free Basic lyrics plan. */
+  addLyrics: boolean
 }
 
 export type DistrokidFillResult = {
@@ -280,6 +284,14 @@ export function parseDistrokidInfo(raw: unknown): {
   const recordLabel =
     asText(pick(obj, ["recordLabel", "labelName"])) || DEFAULT_RECORD_LABEL
 
+  const originalsRaw = pick(obj, ["useMyOriginals", "useOriginals"])
+  const useMyOriginals = originalsRaw === undefined ? false : asBool(originalsRaw)
+  if (useMyOriginals === null) errors.push("useMyOriginals must be true or false.")
+
+  const addLyricsRaw = pick(obj, ["addLyrics"])
+  const addLyrics = addLyricsRaw === undefined ? false : asBool(addLyricsRaw)
+  if (addLyrics === null) errors.push("addLyrics must be true or false.")
+
   const writersRaw = pick(obj, ["songWriters", "songWrites", "songwriters"])
   const songWriters: SongWriter[] = []
   if (!Array.isArray(writersRaw) || writersRaw.length === 0) {
@@ -339,7 +351,9 @@ export function parseDistrokidInfo(raw: unknown): {
       creditPerformerRole,
       creditPerformerName,
       creditProducer,
-      creditProducerName
+      creditProducerName,
+      useMyOriginals: useMyOriginals === true,
+      addLyrics: addLyrics === true
     },
     errors
   }
@@ -362,7 +376,9 @@ function emptyRelease(): DistrokidRelease {
     creditPerformerRole: "",
     creditPerformerName: "",
     creditProducer: "",
-    creditProducerName: ""
+    creditProducerName: "",
+    useMyOriginals: false,
+    addLyrics: false
   }
 }
 
@@ -419,14 +435,36 @@ export function isCoverCandidate(file: File): boolean {
   return IMAGE_EXTS.includes(fileExt(file.name))
 }
 
-export function findInfoJson(files: File[]): File | null {
-  const matches = files.filter((file) => file.name.toLowerCase() === "info.json")
+/** The formatted lyric the skill writes next to info.json. */
+export const DISTROKID_LYRICS_FILE = "distrokid_lyrics.md"
+
+function shallowestNamed(files: File[], name: string): File | null {
+  const matches = files.filter((file) => file.name.toLowerCase() === name)
   matches.sort(
     (a, b) =>
       (a.webkitRelativePath || a.name).split(/[/\\]/).length -
       (b.webkitRelativePath || b.name).split(/[/\\]/).length
   )
   return matches[0] || null
+}
+
+export function findInfoJson(files: File[]): File | null {
+  return shallowestNamed(files, "info.json")
+}
+
+export function findDistrokidLyrics(files: File[]): File | null {
+  return shallowestNamed(files, DISTROKID_LYRICS_FILE)
+}
+
+/** Unix line ends, no trailing spaces, no blank lines at either end. */
+export function cleanLyrics(text: string): string {
+  return text
+    .replace(/^﻿/, "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .join("\n")
+    .trim()
 }
 
 export function findLyricsFile(files: File[]): File | null {

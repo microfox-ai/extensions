@@ -133,6 +133,7 @@ export async function resolveReleaseFolders(inputs: string[]): Promise<string[]>
 
 async function readRelease(dir: string): Promise<{
   infoJson: string
+  lyrics: string
   tracks: ReleaseFile[]
   cover: ReleaseFile
   notes: string[]
@@ -143,6 +144,11 @@ async function readRelease(dir: string): Promise<{
     .sort((a, b) => a.split(sep).length - b.split(sep).length || a.length - b.length)
   if (!infos[0]) throw new Error(`${dir} has no info.json.`)
   const infoJson = (await readFile(infos[0], "utf8")).replace(/^\uFEFF/, "")
+  // Saved on DistroKid's Done page when info.json sets addLyrics.
+  const lyricsPath = files
+    .filter((file) => basename(file).toLowerCase() === "distrokid_lyrics.md")
+    .sort((a, b) => a.split(sep).length - b.split(sep).length || a.length - b.length)[0]
+  const lyrics = lyricsPath ? await readFile(lyricsPath, "utf8") : ""
 
   const audio = files.filter((file) => extname(file).toLowerCase() in AUDIO_RANK)
   const groups = new Map<string, string[]>()
@@ -205,6 +211,7 @@ async function readRelease(dir: string): Promise<{
   }
   return {
     infoJson,
+    lyrics,
     tracks,
     cover: { name: basename(coverPath.file), mime: mimeFor(coverPath.file), bytes: await readFile(coverPath.file) },
     notes
@@ -246,7 +253,11 @@ async function sendFile(
 
 async function fillOne(bridge: Bridge, folder: string): Promise<FillOutcome> {
   const release = await readRelease(folder)
-  const opened = (await bridge.call("distrokid.open", { infoJson: release.infoJson }, 60_000)) as {
+  const opened = (await bridge.call(
+    "distrokid.open",
+    { infoJson: release.infoJson, lyrics: release.lyrics },
+    60_000
+  )) as {
     sessionId: string
     tabId: number
   }
@@ -309,7 +320,9 @@ export async function fillDistrokidReleases(
   )
   return {
     submitted: false,
-    note: "Nothing was submitted. Review each tab and click Continue yourself.",
+    note:
+      "Nothing was submitted. Review each tab and click Continue yourself. " +
+      "Tabs whose info.json sets useMyOriginals or addLyrics then fill in the Mixea and lyrics pages; the user clicks Continue and Save lyrics there.",
     results
   }
 }

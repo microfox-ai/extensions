@@ -22,7 +22,8 @@ const server = new McpServer(
     instructions:
       "Tools for the Browse Hack browser extension running in the user's Chrome: bulk-download Pinterest pins, " +
       "download YouTube videos and Instagram posts, reels and stories, save media to Mediamake, toggle on-page saver overlays, upload Suno tracks, automate Midjourney, " +
-      "and fill DistroKid's new-release form from local folders (one tab per release, never clicking Continue). " +
+      "and fill DistroKid's new-release form from local folders (one tab per release; the user clicks Continue, " +
+      "then info.json's useMyOriginals and addLyrics let the extension fill in the Mixea and lyrics pages, which the user submits). " +
       "Every tool needs the extension signed in to Mediamake; if a tool says it isn't, call sign_in_to_mediamake and tell the " +
       "user to sign in and click Allow in the window that opens. For more than a few Midjourney prompts, use midjourney_batch_start. " +
       "midjourney_repaint opens a brush tab so the user can erase part of an image by hand; tell them to paint and click Repaint, then call midjourney_repaint_status. " +
@@ -698,7 +699,10 @@ localTool(
   "Fills DistroKid's upload form at https://distrokid.com/new/ from local release folders, one browser tab per folder. " +
     "Each folder needs info.json, at least one .wav/.m4a/.mp3, and a square JPG, PNG, or GIF cover. " +
     "A parent folder works when each child folder has its own info.json. " +
-    "Does not click Continue or submit. The user reviews each tab and clicks Continue.",
+    "Does not click Continue or submit the release form. The user reviews each tab and clicks Continue. " +
+    "After that, in the same tab: with useMyOriginals true in info.json, the extension picks Use my originals ($0) on the " +
+    "Mixea page; with addLyrics true, it opens Add your lyrics on the Done page, pastes the folder's distrokid_lyrics.md, " +
+    "picks the free Basic plan and ticks the DistroKid Lyric Agreement. The user clicks Continue on the Mixea page and Save lyrics.",
   {
     folders: z
       .array(z.string())

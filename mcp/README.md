@@ -92,7 +92,7 @@ Every tool needs the extension signed in to Mediamake (see [First-time setup](..
 - **Pinterest bulk download** collects what the tab shows. After `pinterest_bulk_start`, the tab has to be scrolled or navigated to collect more pins. Do that yourself, or let Claude do it with Claude in Chrome (see below).
 - **YouTube** downloads only need a video URL. The extension uses any open YouTube tab to read the formats, or opens one in the background.
 - **Instagram** downloads only need a post, reel or story URL, and you must be logged in to Instagram in that Chrome profile. The extension asks Instagram from any open instagram.com tab, or opens one in the background. Story highlights aren't supported.
-- **DistroKid** fills https://distrokid.com/new/ from a release folder (`info.json`, audio, square cover). `distrokid_fill_releases` opens one tab per folder and does not click Continue.
+- **DistroKid** fills https://distrokid.com/new/ from a release folder (`info.json`, audio, square cover). `distrokid_fill_releases` opens one tab per folder and does not click Continue. After you click it, `"useMyOriginals": true` in `info.json` picks Use my originals on the Mixea page, and `"addLyrics": true` opens Add your lyrics on the Done page, pastes the folder's `distrokid_lyrics.md`, picks the free Basic plan and ticks the agreement. You click Continue and Save lyrics.
 
 ### Midjourney image tools
 

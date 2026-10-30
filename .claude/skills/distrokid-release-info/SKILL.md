@@ -11,7 +11,7 @@ description: >-
 
 # DistroKid release info
 
-Create `info.json` in the release folder. The Browse Hack popup reads that file, fills the DistroKid upload form, and stops. The user clicks Continue.
+Create `info.json` in the release folder. The Browse Hack popup reads that file, fills the DistroKid upload form, and stops. The user clicks Continue. After that, `useMyOriginals` and `addLyrics` let the extension fill in the Mixea page and the lyrics page in the same tab. The user clicks Continue and Save lyrics there.
 
 Talk to the user. Suggest fields from the folder, then write the file only after they confirm the full draft.
 
@@ -26,7 +26,7 @@ Ask which folder to use if it is not the current directory. Read it. Expect:
 
 Skip `__MACOSX`, dotfiles, and `._` files. Treat an existing `info.json` as a draft to confirm, not something to overwrite blindly.
 
-For the lyrics file, use another `.json` whose name contains "lyric" when there is one. Otherwise use the other `.json`. If there is no JSON, use a `.txt`, `.lrc`, or `.md` that looks like lyrics. Leave that source file as it is. The formatted copy is `distrokid_lyrics.md`, written when you write `info.json`. The DistroKid form has no lyrics field. Use the source lyric for your suggestions, and use `distrokid_lyrics.md` as the text the user pastes into DistroKid.
+For the lyrics file, use another `.json` whose name contains "lyric" when there is one. Otherwise use the other `.json`. If there is no JSON, use a `.txt`, `.lrc`, or `.md` that looks like lyrics. Leave that source file as it is. The formatted copy is `distrokid_lyrics.md`, written when you write `info.json`. The upload form has no lyrics field. Lyrics go on the lyrics page that DistroKid's Done page links to. Use the source lyric for your suggestions, and use `distrokid_lyrics.md` as the text for that page. Browse Hack saves it there when `addLyrics` is true; otherwise the user pastes it.
 
 If the user shares the audio, listen to it. Otherwise use the lyrics text and the filenames.
 
@@ -47,6 +47,8 @@ Propose a draft, with a one-line reason for each guess. Ask the user to correct 
 - **isExplicit** — `true` or `false`. `true` checks Explicit lyrics on the DistroKid page for every track in the folder. Suggest `true` when the lyric has profanity, sexual content, or violence. Suggest `false` for a clean lyric, an instrumental, or a Radio Edit. Say why, and let the user change it. If the draft has no `isExplicit`, add `false` unless the lyric or the user already shows that the song is explicit.
 - **recordLabel** — the label name stores display. Use the name the user gives. If they do not name one, use `ZONE MUSIC`. If the draft has no `recordLabel`, add `ZONE MUSIC`.
 - **creditPerformerRole**, **creditPerformerName**, **creditProducer**, **creditProducerName** — only when `isApplePublish` is true. Read [reference.md](reference.md) and copy a role string exactly. Default `creditPerformerRole` to `Unknown` and `creditProducer` to `Producer`; use another role only when the user asks for one. `creditProducer` is the producer **role**, not the person's name.
+- **useMyOriginals** — ask. After the user clicks Continue, DistroKid shows a Mixea page that offers to master the track for a fee. `true` makes Browse Hack pick "Use my originals" ($0) there. The user clicks Continue. `false` leaves that page to the user. Browse Hack never picks a paid option.
+- **addLyrics** — ask when the song has a lyric. `true` makes Browse Hack click Add your lyrics on the Done page, paste `distrokid_lyrics.md`, pick the free Basic plan, and tick "I have read and agree to the terms of the DistroKid Lyric Agreement". The user clicks Save lyrics. Say that it ticks that agreement for them. Use `false` for an instrumental or when there is no lyric. On a multi-track release it covers only the track the Done page links to, normally track 1.
 - **lyrics** — the formatted lyric that will be saved as `distrokid_lyrics.md`. Read [../distrokid-lyrics/SKILL.md](../distrokid-lyrics/SKILL.md) and follow it. Show that text in the draft. Skip it when the song is instrumental or there is no lyric.
 
 ### Names you must not invent
@@ -82,6 +84,8 @@ After confirmation, write `info.json` in the release folder. Use this shape and 
   "instrumental": false,
   "isExplicit": false,
   "recordLabel": "ZONE MUSIC",
+  "useMyOriginals": true,
+  "addLyrics": true,
   "creditPerformerRole": "Unknown",
   "creditPerformerName": "Given Family",
   "creditProducer": "Producer",
@@ -89,20 +93,20 @@ After confirmation, write `info.json` in the release folder. Use this shape and 
 }
 ```
 
-Leave out `electronicSubGenre` when neither genre is Electronic. Leave out `secondaryGenre` and `version` when the user does not want them. Leave out the four credit fields when `isApplePublish` is false. Always include `isExplicit` and `recordLabel`.
+Leave out `electronicSubGenre` when neither genre is Electronic. Leave out `secondaryGenre` and `version` when the user does not want them. Leave out the four credit fields when `isApplePublish` is false. Always include `isExplicit`, `recordLabel`, `useMyOriginals`, and `addLyrics`.
 
 In the same step, write `distrokid_lyrics.md` in that folder from the lyric the user accepted. The file is the lyric lines only. Do not overwrite the original lyrics file. If the song is instrumental, or there is no lyric, do not create `distrokid_lyrics.md`.
 
-Then fill the DistroKid form. Do not click Continue or Done, and do not submit.
+Then fill the DistroKid form. Do not click Continue on the release form, and do not submit it.
 
-When the Browse Hack extension is connected, call `distrokid_fill_releases` with the absolute path of each release folder. One parent folder is enough when every child folder has its own `info.json`. The tool opens one https://distrokid.com/new/ tab per release and fills a few at a time. It does not submit. Tell the user which tabs were filled, quote any warnings, and tell them to review each tab and click Continue themselves.
+When the Browse Hack extension is connected, call `distrokid_fill_releases` with the absolute path of each release folder. One parent folder is enough when every child folder has its own `info.json`. The tool opens one https://distrokid.com/new/ tab per release and fills a few at a time. It does not submit. Tell the user which tabs were filled, quote any warnings, and tell them to review each tab and click Continue themselves. When `useMyOriginals` or `addLyrics` is true, tell them the Mixea and lyrics pages are then filled in that tab, and that they click Continue on the Mixea page and Save lyrics.
 
 If that tool says the extension is not connected, or the user wants to fill a single folder from the popup, tell them:
 
 1. Open https://distrokid.com/new/ and log in.
 2. Open the Browse Hack popup and choose the DistroKid tab.
 3. Choose this folder and click Fill.
-4. Read the warnings on the page, fix anything that looks wrong, and click Continue themselves.
+4. Read the warnings on the page, fix anything that looks wrong, and click Continue themselves. With `useMyOriginals` or `addLyrics` on, the Mixea and lyrics pages that follow are filled in, and they click Continue and Save lyrics.
 
 ## Genre labels
 
