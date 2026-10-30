@@ -41,11 +41,10 @@ function readAiAnswer(selector: string | null, includeHtml: boolean): AiAnswerPa
   const SKIP = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "SVG", "BUTTON", "INPUT", "TEXTAREA", "IMG", "VIDEO", "IFRAME", "TEMPLATE"])
   const BLOCK = /^(P|DIV|SECTION|ARTICLE|HEADER|FOOTER|BLOCKQUOTE|FIGURE|UL|OL|TABLE|H[1-6])$/
 
-  const visible = (el: Element) => {
-    if ((el as any).checkVisibility) return (el as any).checkVisibility()
-    const style = getComputedStyle(el)
-    return style.display !== "none" && style.visibility !== "hidden"
-  }
+  // Only display: none counts as hidden. Google fades the answer in with
+  // opacity, which stays at 0 in a background tab, and checkVisibility() or a
+  // visibility check would drop the whole answer.
+  const visible = (el: Element) => !(el as HTMLElement).hidden && getComputedStyle(el).display !== "none"
   const realUrl = (href: string) => {
     try {
       const url = new URL(href, location.href)
@@ -125,7 +124,7 @@ function readAiAnswer(selector: string | null, includeHtml: boolean): AiAnswerPa
     }
     for (const child of Array.from(el.childNodes)) {
       if (child.nodeType === Node.ELEMENT_NODE) block(child as HTMLElement, depth)
-      else {
+      else if (child.nodeType === Node.TEXT_NODE) {
         const text = (child.textContent || "").replace(/\s+/g, " ").trim()
         if (text) lines.push(text, "")
       }
