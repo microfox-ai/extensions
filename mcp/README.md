@@ -81,6 +81,7 @@ To tell profiles apart, give each one a name in the popup's **Settings → Profi
 | Overlays (Saver tab) | `saver_get`, `saver_set`, `saver_remove_rule`, `saver_reset` |
 | Suno | `suno_upload_track` |
 | DistroKid | `distrokid_fill_releases` |
+| Google AI Mode | `google_ai_save_answers` |
 | Midjourney (prompt automation) | `midjourney_submit_prompts`, `midjourney_scrape`, `midjourney_queue_size`, `midjourney_list_queue`, `midjourney_run_queue`, `midjourney_load_prompts` |
 | Midjourney (images) | `midjourney_outcrop`, `midjourney_repaint`, `midjourney_repaint_status`, `midjourney_generate`, `midjourney_vary`, `midjourney_upscale`, `midjourney_pan`, `midjourney_zoom_out`, `midjourney_job_status`, `midjourney_download_images` |
 | Midjourney (batches) | `midjourney_batch_start`, `midjourney_batch_status`, `midjourney_batch_pause` |
@@ -93,6 +94,8 @@ Every tool needs the extension signed in to Mediamake (see [First-time setup](..
 - **YouTube** downloads only need a video URL. The extension uses any open YouTube tab to read the formats, or opens one in the background.
 - **Instagram** downloads only need a post, reel or story URL, and you must be logged in to Instagram in that Chrome profile. The extension asks Instagram from any open instagram.com tab, or opens one in the background. Story highlights aren't supported.
 - **DistroKid** fills https://distrokid.com/new/ from a release folder (`info.json`, audio, square cover). `distrokid_fill_releases` opens one tab per folder and does not click Continue. After you click it, `"useMyOriginals": true` in `info.json` picks Use my originals on the Mixea page, and `"addLyrics": true` opens Add your lyrics on the Done page, pastes the folder's `distrokid_lyrics.md`, picks the free Basic plan and ticks the agreement. You click Continue and Save lyrics.
+
+- **Google AI Mode** answers are saved word for word: `google_ai_save_answers` asks each query at google.com/search?udm=50 in a background tab, waits for the answer to finish, and writes it to the file you name as Markdown (headings, lists, bold, links) with Google's cited sources at the end. The server writes the file itself, so the answer never passes through Claude. Queries run one at a time; `itemsFile` takes a long list. If a file comes out empty or holds the wrong part of the page, run one query with `saveHtml: true` and pass a CSS `selector`.
 
 ### Midjourney image tools
 
