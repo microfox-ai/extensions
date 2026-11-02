@@ -81,6 +81,7 @@ To tell profiles apart, give each one a name in the popup's **Settings → Profi
 | Overlays (Saver tab) | `saver_get`, `saver_set`, `saver_remove_rule`, `saver_reset` |
 | Suno | `suno_upload_track` |
 | DistroKid | `distrokid_fill_releases` |
+| YouTube Studio | `youtube_list_channels`, `youtube_switch_channel`, `youtube_fill_uploads` |
 | Google AI Mode | `google_ai_save_answers` |
 | Midjourney (prompt automation) | `midjourney_submit_prompts`, `midjourney_scrape`, `midjourney_queue_size`, `midjourney_list_queue`, `midjourney_run_queue`, `midjourney_load_prompts` |
 | Midjourney (images) | `midjourney_outcrop`, `midjourney_repaint`, `midjourney_repaint_status`, `midjourney_generate`, `midjourney_vary`, `midjourney_upscale`, `midjourney_pan`, `midjourney_zoom_out`, `midjourney_job_status`, `midjourney_download_images` |
@@ -94,6 +95,8 @@ Every tool needs the extension signed in to Mediamake (see [First-time setup](..
 - **YouTube** downloads only need a video URL. The extension uses any open YouTube tab to read the formats, or opens one in the background.
 - **Instagram** downloads only need a post, reel or story URL, and you must be logged in to Instagram in that Chrome profile. The extension asks Instagram from any open instagram.com tab, or opens one in the background. Story highlights aren't supported.
 - **DistroKid** fills https://distrokid.com/new/ from a release folder (`info.json`, audio, square cover). `distrokid_fill_releases` opens one tab per folder and does not click Continue. After you click it, `"useMyOriginals": true` in `info.json` picks Use my originals on the Mixea page, and `"addLyrics": true` opens Add your lyrics on the Done page, pastes the folder's `distrokid_lyrics.md`, picks the free Basic plan and ticks the agreement. You click Continue and Save lyrics.
+
+- **YouTube Studio** uploads from a pack folder: `youtube_fill_uploads` opens one Studio tab per folder, switches the Chrome profile's YouTube to the channel `info.json` names (its `@handle`, name or `UC…` id), picks the video and fills the upload form, then stops on the Visibility step. You click Save, Publish or Schedule. Picking the video starts the upload, so each folder leaves a private draft on its channel even if you never save it. `youtube_list_channels` lists the channels you can switch to, and `youtube_switch_channel` switches without uploading. See [`info.json` for YouTube uploads](#infojson-for-youtube-uploads).
 
 - **MediaMake's media library.** When `~/.mediamake/config.json` names a library (`{ "library": { "root": "~/Downloads/_LIBRARY", "inbox": "~/Downloads/_INBOX" } }`), `youtube_download`, `instagram_download`, `pinterest_bulk_start` and `midjourney_download_images` save into the inbox (`_INBOX/youtube`, `_INBOX/instagram`, `_INBOX/pinterest/<date>-<search>`, `_INBOX/midjourney/<set or date>`) unless you pass a `folder`, and MediaMake's `media` CLI files them into the library from there. Each file gets a `<file>.source.json` beside it (`schema: "mediamake.source/v1"`, `tool`, `ref`, the link, title, author, prompt, height, fps, `downloadedAt`), and a Pinterest session writes `_session.json` into its folder when it stops: every page visited with its search, and every pin saved or skipped with the search it came from. Before downloading, the server asks the library's catalog (`<root>/.catalog/library.db`, read only, Node 22.5 or later) and the inbox: YouTube videos and Instagram items it already has come back as `alreadyHave` with their path, and Pinterest skips its pins. `force: true` downloads anyway; a YouTube `maxHeight` above the library copy's height does too. Without the config the tools work as before.
 - **Google AI Mode** answers are saved word for word: `google_ai_save_answers` asks each query at google.com/search?udm=50 in a background tab, waits for the answer to finish, and writes it to the file you name as Markdown (headings, lists, bold, links) with Google's cited sources at the end. The server writes the file itself, so the answer never passes through Claude. Queries run one at a time; `itemsFile` takes a long list. If a file comes out empty or holds the wrong part of the page, run one query with `saveHtml: true` and pass a CSS `selector`.
@@ -173,3 +176,64 @@ npm run pack:mcpb # build browse-hack.mcpb for Claude Desktop
 `pack:mcpb` bundles `src/` into a single `server/index.js` with esbuild (no `node_modules` in the bundle), copies [`manifest.json`](manifest.json) with the version from `package.json` and the tool list read from the server itself, and packs it with the [`mcpb`](https://github.com/modelcontextprotocol/mcpb) CLI. New tools show up in the bundle without editing the manifest.
 
 The extension side lives in [`get-into-zone/lib/mcpBridge.ts`](../get-into-zone/lib/mcpBridge.ts): each tool calls a method there (`youtube.download`, `pinterest.bulkStart`, …). To add a tool, add a method to `commands` in that file and a `tool(...)` line in [`src/index.ts`](src/index.ts).
+
+## `info.json` for YouTube uploads
+
+Put it in the upload folder beside the video. Only `channel` and the title are required; a field you leave out keeps YouTube's default. Paths are relative to the folder.
+
+```json
+{
+  "channel": "@anime-music-zone",
+  "video": "Goten Theme.mp4",
+  "titleFile": "title.txt",
+  "descriptionFile": "description.txt",
+  "thumbnail": "thumbnails/goten-A.jpg",
+  "playlists": ["OST Tracks"],
+  "madeForKids": false,
+  "ageRestricted": false,
+  "paidPromotion": false,
+  "alteredContent": true,
+  "tags": ["goten theme", "dragon ball ost"],
+  "language": "en",
+  "category": "Music",
+  "license": "standard",
+  "allowEmbedding": true,
+  "notifySubscribers": true,
+  "shortsRemixing": "video-and-audio",
+  "automaticChapters": true,
+  "featuredPlaces": true,
+  "automaticConcepts": true,
+  "comments": "on",
+  "commentModeration": "basic",
+  "whoCanComment": "anyone",
+  "commentSort": "top",
+  "showLikes": true,
+  "visibility": "scheduled",
+  "scheduleAt": "2026-11-09T18:30",
+  "premiere": false
+}
+```
+
+| Field | What it fills |
+| --- | --- |
+| `channel` | The channel to switch to: `@handle`, its name as Studio's Switch account lists it, or its `UC…` id |
+| `video` | The video file. Default: the only video in the folder |
+| `title` / `titleFile` | The title (100 characters at most). Default: the first line of `title.txt` |
+| `description` / `descriptionFile` | The description (5000 bytes at most). Default: `description.txt` when it exists |
+| `thumbnail` | A JPG or PNG. Default: the only image in `thumbnails/`, or `thumbnail.jpg`/`.png`. Needs a phone-verified channel |
+| `playlists` | Playlist names to tick; they must exist on the channel |
+| `madeForKids` | Audience. Default `false` (No, it's not Made for Kids) |
+| `ageRestricted`, `paidPromotion` | `true` or `false` |
+| `alteredContent` | Show more → AI use (altered or synthetic content, including AI music that's the focus of the video) |
+| `automaticChapters`, `featuredPlaces`, `automaticConcepts`, `allowEmbedding`, `notifySubscribers`, `showLikes` | The Show more checkboxes |
+| `tags` | A list, or one comma-separated string (500 characters in all) |
+| `language` | Video language: a code (`en`, `te`, `ja`) or its name (`English`) |
+| `category` | `Music`, `Entertainment`, `Film and animation`, `Gaming`, `Education`, `People and blogs`… |
+| `license` | `standard` or `creative-commons` |
+| `shortsRemixing` | `video-and-audio`, `audio-only` or `off` |
+| `comments`, `commentModeration`, `whoCanComment`, `commentSort` | `on`/`off`; `none`/`basic`/`strict`/`hold-all`; `anyone`/`subscribers`; `top`/`newest` |
+| `visibility` | `private`, `unlisted`, `public` or `scheduled` |
+| `scheduleAt` | `YYYY-MM-DDTHH:MM` (24-hour) in the time zone Studio shows; sets visibility to scheduled |
+| `premiere` | Set as Premiere (public or scheduled only) |
+
+Video elements (end screen, cards, subtitles) are left for you to add in Studio.
