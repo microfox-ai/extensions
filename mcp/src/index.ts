@@ -2,6 +2,8 @@
 // MCP server that lets Claude use the Browse Hack browser extension.
 // Talks to the extension over a local WebSocket (see bridge.ts).
 
+import { fileURLToPath } from "node:url"
+
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
@@ -15,14 +17,24 @@ import { batchStatus, pauseBatch, startBatch } from "./midjourneyBatch.js"
 import { toSource } from "./sources.js"
 import { clipIdOf, coverSong, createSongs, downloadSongs, listSongs, rateSongs, sunoStatus } from "./suno.js"
 import { pauseSunoBatch, startSunoBatch, sunoBatchStatus } from "./sunoBatch.js"
+import { Updater, serverVersion } from "./updates.js"
 
 // GET_INTO_ZONE_* are the names from before the rename to Browse Hack.
 const env = (name: string) => process.env[`BROWSE_HACK_${name}`] || process.env[`GET_INTO_ZONE_${name}`]
 const PORT = Number(env("PORT")) || 17892
 const bridge = new Bridge(PORT, env("EXTENSION_ID") || undefined)
+const VERSION = serverVersion()
+const updater = new Updater({
+  bridge: {
+    status: () => bridge.call("bridge.status") as Promise<any>,
+    callIn: (profileId, method, params, timeoutMs) => bridge.callIn(profileId, method, params, timeoutMs)
+  },
+  runningVersion: VERSION,
+  runningFrom: fileURLToPath(new URL("..", import.meta.url))
+})
 
 const server = new McpServer(
-  { name: "browse-hack", version: "0.1.0" },
+  { name: "browse-hack", version: VERSION },
   {
     instructions:
       "Tools for the Browse Hack browser extension running in the user's Chrome: bulk-download Pinterest pins, " +
@@ -46,7 +58,9 @@ const server = new McpServer(
       "The extension may be installed in several Chrome profiles (accounts). When two or more are connected, ask the user which " +
       "profile to use for this session before doing anything else (list_profiles shows them), then call use_profile; every tool " +
       "then runs in that profile only. Never pick a profile on the user's behalf. Name each profile to the user by its Google " +
-      "account email (plus its name, if it has one), never by number alone: users don't know their profile numbers."
+      "account email (plus its name, if it has one), never by number alone: users don't know their profile numbers. " +
+      "Browse Hack keeps itself and its Chrome extension up to date; when the user asks to update Browse Hack, or which " +
+      "version they have, call update_browse_hack."
   }
 )
 
@@ -58,6 +72,15 @@ const force = z.boolean().optional().describe("Download even when MediaMake's me
 
 type Shape = Record<string, z.ZodType>
 type Params = Record<string, any>
+
+// The first result after a newer MCP was installed says so, once.
+const text = (result: unknown) => {
+  const notice = updater.notice()
+  return [
+    { type: "text" as const, text: JSON.stringify(result, null, 2) },
+    ...(notice ? [{ type: "text" as const, text: notice }] : [])
+  ]
+}
 
 function tool(
   name: string,
@@ -92,9 +115,7 @@ function tool(
           options.prepare ? await options.prepare(params) : params,
           timeoutMs
         )
-        return {
-          content: [{ type: "text" as const, text: JSON.stringify(result ?? { ok: true }, null, 2) }]
-        }
+        return { content: text(result ?? { ok: true }) }
       } catch (error) {
         return {
           isError: true,
@@ -117,7 +138,7 @@ function localTool(name: string, description: string, inputSchema: Shape, run: (
     async (params: Params) => {
       try {
         const result = await run(params)
-        return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] }
+        return { content: text(result) }
       } catch (error) {
         return {
           isError: true,
@@ -130,13 +151,40 @@ function localTool(name: string, description: string, inputSchema: Shape, run: (
 
 // --- Status, tabs and settings ---
 
-tool(
+localTool(
   "get_status",
-  "Shows whether the extension is connected, the Chrome profiles it's connected in (with each one's Mediamake sign-in), " +
-    "and which one this session uses.",
+  "Shows whether the extension is connected, the Chrome profiles it's connected in (with each one's Mediamake sign-in " +
+    "and extension version), which one this session uses, and Browse Hack's versions: the MCP this session runs, the " +
+    "one installed for the next session, the live ones, and the release notes of the last update.",
   {},
-  "bridge.status",
-  { readOnly: true }
+  async () => {
+    const status = await bridge.call("bridge.status").catch((error: Error) => ({ error: error.message }))
+    return { ...(status as object), updates: updater.summary() }
+  },
+  true
+)
+localTool(
+  "update_browse_hack",
+  "Checks now for a newer Browse Hack MCP (MediaMake catalog) and Chrome extension (GitHub Releases) and installs " +
+    "them: the MCP for the next Claude session, the extension into its folder, then reloads it in each Chrome profile " +
+    "that loads it from there. Returns the versions before and after and the release notes. Browse Hack also does this " +
+    "by itself every few hours; autoUpdate turns that on or off. While the extension is busy (downloads, other " +
+    "Claude calls) its reload waits; reloadBusy reloads it anyway, only when the user says so. A Chrome profile that " +
+    "runs a build from a git checkout is never overwritten: its profile entry has update.commands to pull and rebuild " +
+    "it; run them only if the user agrees, then call this again to reload Chrome on the new build.",
+  {
+    reloadBusy: z.boolean().optional().describe("Reload the extension even while it's busy"),
+    autoUpdate: z.boolean().optional().describe("Turn automatic updates on or off (saved in ~/.mediamake/config.json)")
+  },
+  async ({ reloadBusy, autoUpdate }) => {
+    if (typeof autoUpdate === "boolean") updater.setAutoUpdate(autoUpdate)
+    const before = updater.summary()
+    const after = updater.summary(await updater.check({ force: true, reloadBusy }))
+    return {
+      ...after,
+      before: { mcp: before.mcp.installedVersion, extension: before.extension.installedVersion }
+    }
+  }
 )
 tool(
   "list_profiles",
@@ -1137,3 +1185,4 @@ localTool(
 await server.connect(new StdioServerTransport())
 // Start listening right away so the extension can connect before the first call.
 bridge.ensure().catch((error) => console.error("[bridge]", error.message))
+updater.start()

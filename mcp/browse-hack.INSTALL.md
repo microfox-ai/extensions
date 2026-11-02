@@ -29,3 +29,6 @@ in Claude Code (install step 4).
    loaded: ask them to **Remove** the card whose ID isn't the new one on
    `chrome://extensions`.
 4. First thing to try: "Open Midjourney in a new tab and queue this prompt: …"
+5. Tell them Browse Hack now updates itself (the MCP and the extension, every
+   few hours, using the update token from install.md step 5), and that
+   "update browse hack" updates it right away and shows the versions.

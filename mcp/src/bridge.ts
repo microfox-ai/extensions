@@ -114,6 +114,12 @@ export class Bridge {
     return this.forward(method, params, timeoutMs, await this.target())
   }
 
+  /** Calls a method in one profile's extension, whichever profile this session uses (for updates). */
+  async callIn(profileId: string, method: string, params: unknown = {}, timeoutMs = 60_000) {
+    await this.ensure()
+    return this.forward(method, params, timeoutMs, profileId)
+  }
+
   ensure(): Promise<void> {
     if (this.mode) return Promise.resolve()
     this.starting ??= this.becomeHub()
