@@ -6,6 +6,8 @@
 // saved as a download of a data: URL and then dropped from Chrome's download
 // list (the file stays).
 
+import { downloadFile } from "./downloads"
+
 export const SOURCE_SCHEMA = "mediamake.source/v1"
 export const PINTEREST_SESSION_SCHEMA = "mediamake.pinterest-session/v1"
 
@@ -146,7 +148,7 @@ export async function saveJsonFile(
   text: string,
   conflictAction: chrome.downloads.FilenameConflictAction = "overwrite"
 ) {
-  const downloadId = await chrome.downloads.download({
+  const downloadId = await downloadFile({
     url: `data:application/json;base64,${toBase64(text)}`,
     filename: path,
     conflictAction,

@@ -8,6 +8,7 @@
 // recorded in MediaMake cloud under the channel's project (Part B's
 // /api/generations; skipped while that route doesn't exist).
 
+import { askedName } from "./downloads"
 import { downloadFinished, inFolder, saveSourceSidecar, type SourceFields } from "./libraryFiles"
 import { authorizedFetch, mediamakeEndpoint } from "./mediamakeAuth"
 import { clipIdOf, generationRecord, songFileBase, SUNO, type SunoClip } from "./suno/clip"
@@ -351,6 +352,13 @@ async function routeByHand(item: chrome.downloads.DownloadItem, suggest: (s?: ch
 
 export function initSunoDownloads() {
   chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
+    // With this listener in place Chrome drops the name our other downloads
+    // asked for (see downloads.ts), so it's handed back.
+    const asked = askedName(item)
+    if (asked) {
+      suggest(asked)
+      return
+    }
     if (!fromSuno(item)) return
     const route = routes.find((r) => r.until > Date.now())
     if (route) {

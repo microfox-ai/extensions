@@ -1,5 +1,6 @@
 // One-click downloads from the Download button on Pinterest video pins. Bulk
 // downloads go through pinterestBulkBackground instead.
+import { downloadFile } from "./downloads"
 import {
   callOffscreen,
   resolveVideo,
@@ -71,7 +72,7 @@ async function run(job: PinVideoJob & { tabId?: number; request?: unknown }) {
     }
 
     if (source.type === "mp4") {
-      const downloadId = await chrome.downloads.download({
+      const downloadId = await downloadFile({
         url: source.url,
         filename: `${job.filename}.mp4`,
         conflictAction: "uniquify",
@@ -89,7 +90,7 @@ async function run(job: PinVideoJob & { tabId?: number; request?: unknown }) {
         })
         try {
           if (cancelled(job)) return
-          const downloadId = await chrome.downloads.download({
+          const downloadId = await downloadFile({
             url: file.blobUrl,
             filename: `${job.filename}.${file.ext}`,
             conflictAction: "uniquify",
