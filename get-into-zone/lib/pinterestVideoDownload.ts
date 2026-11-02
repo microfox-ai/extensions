@@ -1,6 +1,11 @@
 // One-click downloads from the Download button on Pinterest video pins. Bulk
 // downloads go through pinterestBulkBackground instead.
-import { callOffscreen, resolveVideo, withOffscreen } from "./pinterestVideoBackground"
+import {
+  callOffscreen,
+  resolveVideo,
+  withOffscreen,
+  type PinVideoFile
+} from "./pinterestVideoBackground"
 import { sanitizeFileName } from "./youtube"
 
 const POLL_MS = 500
@@ -58,7 +63,7 @@ const cancelled = (job: PinVideoJob) => job.status === "cancelled"
 
 async function run(job: PinVideoJob & { tabId?: number; request?: unknown }) {
   try {
-    const source = await resolveSource(job.request, job.tabId)
+    const source = await findPinVideo(job.request, job.tabId)
     if (cancelled(job)) return
     // Cards without a title (the open pin's closeup) take the pin's own.
     if (source.title && !titleOf(job.request)) {
@@ -201,10 +206,12 @@ async function videoUrlFromPin(
   return { url: best.url, title: title?.trim().split("\n")[0] || "" }
 }
 
-async function resolveSource(
+// A video pin's file from what its card shows: { videoId, pinId, signature }
+// as in PinCardVideo. Bulk downloads use it for pins known by their pin id.
+export async function findPinVideo(
   request: any,
   tabId?: number
-): Promise<{ type: "mp4" | "hls"; url: string; title?: string }> {
+): Promise<PinVideoFile & { title?: string }> {
   const videoId = hashOf(request.videoId)
   if (videoId) return resolveVideo(videoId)
 

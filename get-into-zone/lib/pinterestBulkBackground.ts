@@ -9,10 +9,12 @@ import {
   bulkItemKey,
   bulkSessionKey,
   bulkSkipKey,
+  pinHashIn,
   pinImageUrls,
   pinRef,
   pinterestQuery,
   sanitizeFolder,
+  videoPinId,
   type BulkDestination,
   type BulkItem,
   type BulkItemKind,
@@ -20,7 +22,8 @@ import {
   type BulkSession,
   type SavedPin
 } from "./pinterestBulk"
-import { saveVideo } from "./pinterestVideoBackground"
+import { saveVideo, type PinVideoFile } from "./pinterestVideoBackground"
+import { findPinVideo } from "./pinterestVideoDownload"
 import { isPinterestHost } from "./saverRules"
 
 const CONCURRENCY: Record<BulkDestination, number> = {
@@ -43,8 +46,14 @@ const seenSets = new WeakMap<BulkSession, Set<string>>()
 const inFlight = new WeakMap<BulkSession, Set<string>>()
 // Saves still running, so a stop can wait for them before writing _session.json.
 const saving = new WeakMap<BulkSession, Set<Promise<unknown>>>()
-// Per tab: the refs of pins the media library has (see skipSet).
-const skipSets = new Map<number, Promise<Set<string>>>()
+// The refs of the pins the media library has, and which of them are videos
+// when the MCP server says so (older ones send one list).
+interface SkipList {
+  pins: Set<string>
+  videos?: Set<string>
+}
+// Per tab (see skipSet).
+const skipSets = new Map<number, Promise<SkipList>>()
 let loading: Promise<void> | null = null
 
 // How long a stop waits for saves still running before writing _session.json.
@@ -82,6 +91,13 @@ const seenSet = (session: BulkSession) => {
   return set
 }
 
+type StoredSkipList = { pins: string[]; videos?: string[] }
+
+const skipList = (stored?: StoredSkipList): SkipList => ({
+  pins: new Set(stored?.pins ?? []),
+  ...(stored?.videos ? { videos: new Set(stored.videos) } : {})
+})
+
 // The refs are stored apart from the session, which is saved after every
 // change and would otherwise carry thousands of them each time.
 const skipSet = (session: BulkSession) => {
@@ -89,13 +105,16 @@ const skipSet = (session: BulkSession) => {
   let set = skipSets.get(session.tabId)
   if (!set) {
     const key = bulkSkipKey(session.tabId)
-    set = chrome.storage.session
-      .get(key)
-      .then((stored) => new Set<string>(stored[key] ?? []))
+    set = chrome.storage.session.get(key).then((stored) => skipList(stored[key]))
     skipSets.set(session.tabId, set)
   }
   return set
 }
+
+// A video pin's cover image can carry its video's hash, so a video counts as
+// had only when the library has it as a video, if the MCP server says which.
+const libraryHas = (skip: SkipList | undefined, kind: BulkItemKind, id: string) =>
+  Boolean(skip && (kind === "video" ? skip.videos ?? skip.pins : skip.pins).has(pinRef(id)))
 
 const savesRunning = (session: BulkSession) => {
   let set = saving.get(session)
@@ -106,10 +125,11 @@ const savesRunning = (session: BulkSession) => {
   return set
 }
 
-async function storeSkipList(tabId: number, refs?: string[]) {
-  if (refs?.length) {
-    skipSets.set(tabId, Promise.resolve(new Set(refs)))
-    await chrome.storage.session.set({ [bulkSkipKey(tabId)]: refs })
+async function storeSkipList(tabId: number, pins: string[], videos?: string[]) {
+  if (pins.length) {
+    const stored: StoredSkipList = { pins, ...(videos ? { videos } : {}) }
+    skipSets.set(tabId, Promise.resolve(skipList(stored)))
+    await chrome.storage.session.set({ [bulkSkipKey(tabId)]: stored })
   } else {
     skipSets.delete(tabId)
     await chrome.storage.session.remove(bulkSkipKey(tabId))
@@ -176,6 +196,35 @@ async function saveImage(
   if (!result.success) throw new Error(result.message || "Upload failed.")
 }
 
+// A video known only by its pin id (see BulkItem) is looked up in its tab when
+// its turn comes and saved under its file's hash, unless this session or the
+// media library has that video already. Resolves with what to save, if anything.
+async function lookUp(
+  session: BulkSession,
+  item: BulkItem
+): Promise<{ pin: BulkItem; file?: PinVideoFile } | undefined> {
+  const pinId = videoPinId(item.id)
+  if (!pinId) return { pin: item }
+  const file = await findPinVideo({ pinId, signature: item.cover }, session.tabId)
+  const pin = { ...item, alt: item.alt || file.title || "" }
+  const id = pinHashIn(file.url)
+  if (!id) return { pin, file }
+
+  const key = bulkItemKey({ kind: "video", id })
+  const seen = seenSet(session)
+  if (seen.has(key)) return undefined
+  seen.add(key)
+  session.seen.push(key)
+  if (libraryHas(await skipSet(session), "video", id)) {
+    ;(session.skipped ??= []).push({ id: pinRef(id), pageUrl: item.pageUrl, at: Date.now() })
+    // Nor is it counted in the page's limit.
+    const counts = session.pages[item.pageKey]
+    if (counts) counts.videos--
+    return undefined
+  }
+  return { pin: { ...pin, id }, file }
+}
+
 function pump(session: BulkSession) {
   if (!session.active || sessions.get(session.tabId) !== session) return
   let running = inFlight.get(session)
@@ -190,28 +239,30 @@ function pump(session: BulkSession) {
     const key = bulkItemKey(item)
     running.add(key)
 
-    const save = item.kind === "video" ? saveVideo : saveImage
     const tracked = savesRunning(session)
-    const work: Promise<void> = save(session, item)
-      .then(
-        (saved) => {
-          if (item.kind === "video") session.savedVideos++
-          else session.saved++
-          if (saved && session.manifest) {
-            ;(session.saves ??= []).push({
-              ...saved,
-              id: pinRef(item.id),
-              pageUrl: item.pageUrl,
-              at: Date.now()
-            })
-          }
-        },
-        (error) => {
-          session.failed++
-          session.lastError =
-            error instanceof Error ? error.message : String(error)
+    const work: Promise<void> = lookUp(session, item)
+      .then(async (found) => {
+        if (!found) return
+        const { pin, file } = found
+        const saved =
+          pin.kind === "video"
+            ? await saveVideo(session, pin, file)
+            : await saveImage(session, pin)
+        if (pin.kind === "video") session.savedVideos++
+        else session.saved++
+        if (saved && session.manifest) {
+          ;(session.saves ??= []).push({
+            ...saved,
+            id: pinRef(pin.id),
+            pageUrl: pin.pageUrl,
+            at: Date.now()
+          })
         }
-      )
+      })
+      .catch((error) => {
+        session.failed++
+        session.lastError = error instanceof Error ? error.message : String(error)
+      })
       .finally(() => {
         running!.delete(key)
         tracked.delete(work)
@@ -329,10 +380,12 @@ export async function startBulkSession(request: any) {
     savedVideos: 0,
     failed: 0
   }
-  // From the MCP server, when MediaMake's media library is set up.
-  const skipPins: string[] = Array.isArray(request.skipPins)
-    ? request.skipPins.filter((ref: unknown) => typeof ref === "string")
-    : []
+  // From the MCP server, when MediaMake's media library is set up: the refs of
+  // the pins it has, and (from newer servers) which of them are videos.
+  const refs = (list: unknown): string[] | undefined =>
+    Array.isArray(list) ? list.filter((ref): ref is string => typeof ref === "string") : undefined
+  const skipPins = refs(request.skipPins) ?? []
+  const skipVideos = refs(request.skipVideos)
   if (request.manifest === true) Object.assign(session, { manifest: true, saves: [] })
   if (skipPins.length) Object.assign(session, { skipping: skipPins.length, skipped: [] })
 
@@ -343,7 +396,7 @@ export async function startBulkSession(request: any) {
     previous.active = false
     await writeManifest(previous, RESTART_WAIT_MS)
   }
-  await storeSkipList(tabId, skipPins)
+  await storeSkipList(tabId, skipPins, skipVideos)
   sessions.set(tabId, session)
   await persist(session)
 
@@ -419,7 +472,7 @@ async function addItems(tabId: number | undefined, request: any) {
   const pageUrl = typeof request.pageUrl === "string" ? request.pageUrl : ""
   let accepted = 0
   let skipped = 0
-  const items: { kind?: unknown; id?: unknown; alt?: unknown }[] =
+  const items: { kind?: unknown; id?: unknown; alt?: unknown; cover?: unknown }[] =
     Array.isArray(request.items) ? request.items : []
 
   for (const raw of items) {
@@ -429,7 +482,7 @@ async function addItems(tabId: number | undefined, request: any) {
     const key = bulkItemKey({ kind, id: raw.id })
     if (seen.has(key)) continue
     // Pins the media library has aren't downloaded, nor counted in the page's limit.
-    if (skip?.has(pinRef(raw.id))) {
+    if (libraryHas(skip, kind, raw.id)) {
       seen.add(key)
       session.seen.push(key)
       ;(session.skipped ??= []).push({ id: pinRef(raw.id), pageUrl, at: Date.now() })
@@ -439,9 +492,11 @@ async function addItems(tabId: number | undefined, request: any) {
     if (full(kind)) continue
     seen.add(key)
     session.seen.push(key)
+    const cover = kind === "video" && typeof raw.cover === "string" ? pinHashIn(raw.cover) : ""
     session.pending.push({
       kind,
       id: raw.id,
+      ...(cover ? { cover } : {}),
       pageKey,
       pageUrl,
       alt: typeof raw.alt === "string" ? raw.alt : ""

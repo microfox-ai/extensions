@@ -104,7 +104,12 @@ async function firstAvailable(urls: string[]) {
   return urls[ok.indexOf(true)]
 }
 
-export async function resolveVideo(id: string) {
+export interface PinVideoFile {
+  type: "mp4" | "hls"
+  url: string
+}
+
+export async function resolveVideo(id: string): Promise<PinVideoFile> {
   const sources = pinVideoSources(id)
   const mp4 = await firstAvailable(sources.mp4)
   if (mp4) return { type: "mp4" as const, url: mp4 }
@@ -145,11 +150,13 @@ const videoMetadata = (item: BulkItem, url: string) => ({
 })
 
 // Resolves with where the video went in Downloads (nothing for Mediamake).
+// `file` is the video's file when it was looked up already.
 export async function saveVideo(
   session: BulkSession,
-  item: BulkItem
+  item: BulkItem,
+  file?: PinVideoFile
 ): Promise<SavedPin | undefined> {
-  const source = await resolveVideo(item.id)
+  const source = file ?? (await resolveVideo(item.id))
   const baseName = item.id.split("/").pop()!
 
   if (source.type === "mp4") {
