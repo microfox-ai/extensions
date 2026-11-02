@@ -70,11 +70,16 @@ export const visible = (el: Element | null | undefined): el is HTMLElement => {
 }
 
 /**
- * A visible menu or dialog that isn't closing. A closed Radix dialog stays in the
- * page (data-state="closed") until its exit animation ends, which never happens
- * in a background tab, where Browse Hack's Suno tabs run.
+ * A visible menu or dialog that isn't closing. A closed dialog stays in the page
+ * until its exit animation ends, which never happens in a background tab, where
+ * Browse Hack's Suno tabs run: Base UI (the upload dialog) marks it data-closed /
+ * data-ending-style, Radix data-state="closed".
  */
-const isOpen = (el: Element | null | undefined): el is HTMLElement => visible(el) && el.getAttribute("data-state") !== "closed"
+const isOpen = (el: Element | null | undefined): el is HTMLElement =>
+  visible(el) &&
+  !el.hasAttribute("data-closed") &&
+  !el.hasAttribute("data-ending-style") &&
+  el.getAttribute("data-state") !== "closed"
 
 /** The Create panel: the nearest box holding both the Create button and the lyrics. */
 export function createPanel(): HTMLElement | null {
@@ -498,6 +503,15 @@ export function uploadStep(): UploadStep | null {
     if (input) return { kind: "pick", input }
   }
   return null
+}
+
+/** What an upload left on the page, for an error message: its dialogs (closing ones too) and the form's audio. */
+export function uploadSnapshot() {
+  const boxes = within<HTMLElement>(document, '[role="dialog"], [role="alertdialog"]')
+    .filter(visible)
+    .map((d) => `${isOpen(d) ? "an open" : "a closing"} dialog "${text(d).replace(/\s+/g, " ").slice(0, 150)}"`)
+  const audio = document.querySelector(SEL.conditionType)?.getAttribute("aria-label")
+  return `${boxes.join(", ") || "no dialog"}; ${audio ? `"${audio}" on the form` : "no audio on the form"}`
 }
 
 function giveFile(input: HTMLInputElement, file: File) {

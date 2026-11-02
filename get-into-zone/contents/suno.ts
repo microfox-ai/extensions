@@ -17,6 +17,7 @@ import {
   pickAudio,
   readForm,
   setCondition,
+  uploadSnapshot,
   uploadStep,
   visibleError,
   type SunoFormJob
@@ -276,9 +277,22 @@ async function attachUploaded(file: File, msg: AttachMsg, tell: (note: string) =
   let toldUser = false
   let describing = 0
   let uploadedAt = 0
+  let lastStep = "none"
   while (Date.now() - start < limit) {
     const step = uploadStep()
+    lastStep = step?.kind ?? lastStep
     if (step?.kind === "refused") throw new Error(`Suno refused the upload: ${step.reason}`)
+    // Once picked, the audio is on the form when its condition button shows (any audio
+    // was cleared above), even while a closing dialog still hangs around.
+    if (picked && document.querySelector(SEL.conditionType)) {
+      await sleep(1500)
+      const error = visibleError()
+      if (error) throw new Error(`Suno refused the upload: ${error}`)
+      if (msg.condition && !(await setCondition(msg.condition))) {
+        throw new Error(`Suno took the audio but its menu has no ${msg.condition}.`)
+      }
+      return { attached: true, name: file.name, condition: readForm().condition }
+    }
     if (step?.kind === "rights" || step?.kind === "terms") {
       if (msg.allowTerms && step.confirm) {
         step.confirm.click()
@@ -306,21 +320,14 @@ async function attachUploaded(file: File, msg: AttachMsg, tell: (note: string) =
         describing ||= Date.now()
         ;(step.next ?? (Date.now() - describing > 30_000 ? step.skip : undefined))?.click()
       }
-    } else if (!step && picked && document.querySelector(SEL.conditionType)) {
-      await sleep(1500)
-      const error = visibleError()
-      if (error) throw new Error(`Suno refused the upload: ${error}`)
-      if (msg.condition && !(await setCondition(msg.condition))) {
-        throw new Error(`Suno took the audio but its menu has no ${msg.condition}.`)
-      }
-      return { attached: true, name: file.name, condition: readForm().condition }
     } else {
       const error = Date.now() - start > 2000 ? visibleError() : undefined
       if (error) throw new Error(`Suno refused the upload: ${error}`)
     }
     await sleep(500)
   }
-  throw new Error(picked ? "Suno didn't finish taking the audio in time." : "Couldn't hand the audio to Suno's upload.")
+  const seen = `last step: ${lastStep}; ${uploadSnapshot()}`
+  throw new Error(picked ? `Suno didn't finish taking the audio in time (${seen}).` : `Couldn't hand the audio to Suno's upload (${seen}).`)
 }
 
 chrome.runtime.onConnect.addListener((port) => {

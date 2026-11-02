@@ -89,14 +89,15 @@ Premier account. When Suno changes, fix `selectors.ts` (the page) or `clip.ts`
   audio condition". Extend shows an "Extend from" time. The condition type
   button is the same mouse-down dropdown as `+ Audio`.
 - Browse Hack's Suno tabs open in the background, where Chrome runs no CSS
-  animations. A closed Radix dialog stays in the page with
-  `data-state="closed"` until its exit animation ends, and it vanishes as soon
-  as the tab is shown, so ignore closed dialogs.
+  animations. A closed dialog stays in the page until its exit animation ends,
+  and vanishes as soon as the tab is shown, so ignore closing dialogs: Base UI
+  (the upload dialog) marks them `data-closed` / `data-ending-style`, Radix
+  `data-state="closed"`.
 
 ## The upload dialog (read from suno.com's code and `/locales/en/*.json`, 2026-11-02)
 
-A picked audio file goes through a dialog (a Radix Dialog, `role="dialog"`)
-before it is on the Create form. The dialog closes while the file uploads and
+A picked audio file goes through a dialog (a Base UI Dialog: `Popup` with
+`role="dialog"`, `data-open` / `data-closed`) before it is on the Create form. The dialog closes while the file uploads and
 comes back for the description; Escape or a pointer-down outside it cancels
 the upload. Suno decodes the file first (6 s to 1800 s on Premier). With a
 file already picked, the stages are:
