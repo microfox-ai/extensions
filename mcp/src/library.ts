@@ -163,6 +163,64 @@ export async function findMedia(tool: string, ref: string, lib = readLibrary()) 
   return (await lookup(tool, ref, lib)) ?? inInbox(tool, ref, lib)
 }
 
+export interface LibraryItem {
+  id: string
+  /** Absolute path of its main copy. */
+  path: string
+  kind: string | null
+  title: string | null
+  /** What MediaMake knows of its rights (own, licensed…), if anything. */
+  rights: string | null
+  duration: number | null
+  /** The Suno song it was downloaded from, when it was. */
+  sunoRef: string | null
+}
+
+/** A library item by its id (the file's SHA-256), when it's online and on disk. */
+export async function lookupItem(id: string, lib = readLibrary()): Promise<LibraryItem | undefined> {
+  const found = await readCatalog(lib, (db) => ({
+    row: db.prepare("SELECT id, path, kind, title, rights, duration, status FROM items WHERE id = ?").get(id),
+    suno: db.prepare("SELECT ref FROM sources WHERE item_id = ? AND tool = 'suno'").get(id)
+  }))
+  const row = found?.row
+  if (typeof row?.path !== "string" || row.status !== "online") return undefined
+  const path = resolve(lib.root!, row.path)
+  if (!existsSync(path)) return undefined
+  const text = (value: unknown) => (typeof value === "string" && value ? value : null)
+  return {
+    id,
+    path,
+    kind: text(row.kind),
+    title: text(row.title),
+    rights: text(row.rights),
+    duration: positive(row.duration),
+    sunoRef: text(found?.suno?.ref)
+  }
+}
+
+export interface LibraryChannel {
+  id: string
+  /** Its folder in Downloads (AMZ). */
+  folder?: string
+  /** The MediaMake cloud project it is linked to (`media channel link`). */
+  projectId?: string
+}
+
+/** The channels in ~/.mediamake/config.json: "<id>": "<folder>" or { folder, projectId }. */
+export function readChannels(home = homedir()): LibraryChannel[] {
+  const channels = readJson(join(home, ".mediamake", "config.json"))?.library?.channels
+  if (!channels || typeof channels !== "object") return []
+  return Object.entries(channels as Record<string, unknown>).map(([id, value]) => {
+    if (typeof value === "string") return { id, folder: value }
+    const v = (value ?? {}) as Record<string, unknown>
+    return {
+      id,
+      folder: typeof v.folder === "string" ? v.folder : undefined,
+      projectId: typeof v.projectId === "string" && v.projectId ? v.projectId : undefined
+    }
+  })
+}
+
 /** Every Pinterest pin the library has: filed, or saved by an earlier session still in the inbox. */
 export async function knownPins(lib = readLibrary()): Promise<string[]> {
   const filed =
@@ -210,19 +268,66 @@ export interface SourceFields {
   query?: string
   prompt?: string
   model?: string
+  /** What it cost (Suno credits). */
+  price?: number
   height?: number | null
   fps?: number | null
+  // Generated songs (Suno): what MediaMake's ingest keeps beside the audio.
+  lyrics?: string
+  excludeStyles?: string
+  instrumental?: boolean
+  settings?: Record<string, unknown>
+  parentRef?: string
+  relation?: string
+  /** The library item (SHA-256) a cover was made from. */
+  sourceItem?: string
+  workspace?: { id: string; name: string }
+  /** The library channel it belongs to. */
+  channel?: string
 }
 
-// get-into-zone/lib/libraryFiles.ts writes the same records for YouTube.
-const SOURCE_KEYS = ["tool", "ref", "url", "pageUrl", "title", "author", "query", "prompt", "model", "height", "fps"] as const
+// get-into-zone/lib/libraryFiles.ts writes the same records for YouTube and Suno.
+const SOURCE_KEYS = [
+  "tool",
+  "ref",
+  "url",
+  "pageUrl",
+  "title",
+  "author",
+  "query",
+  "prompt",
+  "model",
+  "price",
+  "height",
+  "fps",
+  "lyrics",
+  "excludeStyles",
+  "instrumental",
+  "settings",
+  "parentRef",
+  "relation",
+  "sourceItem",
+  "workspace",
+  "channel"
+] as const
+
+const keep = (value: unknown): unknown => {
+  if (typeof value === "number") return value > 0 ? value : undefined
+  if (typeof value === "string") return value.trim() ? value : undefined
+  if (typeof value === "boolean") return value
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const entries = Object.entries(value).filter(([, v]) => v !== undefined && v !== null && v !== "")
+    return entries.length ? Object.fromEntries(entries) : undefined
+  }
+  return undefined
+}
 
 /** A sidecar's contents: keys in a fixed order, the unknown ones left out. */
 export function sourceRecord(fields: SourceFields, downloadedAt = new Date()) {
   const record: Record<string, unknown> = { schema: SOURCE_SCHEMA }
   for (const key of SOURCE_KEYS) {
-    const value = fields[key]
-    if (typeof value === "number" ? value > 0 : typeof value === "string" && value.trim()) record[key] = value
+    const value = keep(fields[key])
+    if (value !== undefined) record[key] = value
   }
   record.downloadedAt = downloadedAt.toISOString()
   return record

@@ -3,7 +3,6 @@ import {
   scrapeMidjourney,
   startMidjourneyWorkflow
 } from "./workflows/midjourney"
-import { startSunoWorkflow } from "./workflows/suno"
 import { initSaverBackground } from "./lib/saverBackground"
 import { initPinterestBulkBackground } from "./lib/pinterestBulkBackground"
 import { initYouTubeBackground } from "./lib/youtubeBackground"
@@ -17,6 +16,7 @@ import {
 } from "./lib/mediamakeAuth"
 import { initMidjourneyEdit } from "./lib/midjourneyEdit"
 import { initMcpBridge } from "./lib/mcpBridge"
+import { handleSunoUi, initSunoDownloads } from "./lib/sunoBridge"
 
 initMediamakeAuth()
 initSaverBackground()
@@ -24,6 +24,7 @@ initPinterestBulkBackground()
 initYouTubeBackground()
 initPinterestVideoDownloads()
 initInstagramBackground()
+initSunoDownloads()
 
 const QUEUE_REQUEST_RATE_LIMIT_MS = 3000
 
@@ -90,6 +91,7 @@ const handleMessage = (
   sender: chrome.runtime.MessageSender,
   sendResponse: (response?: any) => void
 ) => {
+  if (request.action === "suno-ui") return handleSunoUi(request, sender, sendResponse)
   if (request.action === "startWorkflow") {
     chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
       if (tabs.length > 0) {
@@ -99,13 +101,6 @@ const handleMessage = (
           request.folderTag || ""
         )
         sendResponse({ status: "Midjourney workflow started" })
-      }
-    })
-  } else if (request.action === "startSunoWorkflow") {
-    chrome.tabs.query({ url: "https://suno.com/*" }, function (tabs) {
-      if (tabs.length > 0) {
-        startSunoWorkflow()
-        sendResponse({ status: "Suno workflow started" })
       }
     })
   } else if (request.action === "uploadSunoTrackToMediamake") {

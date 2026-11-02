@@ -19,19 +19,66 @@ export interface SourceFields {
   query?: string
   prompt?: string
   model?: string
+  /** What it cost (Suno credits). */
+  price?: number
   height?: number
   fps?: number
+  // Generated songs (Suno): what MediaMake's ingest keeps beside the audio.
+  lyrics?: string
+  excludeStyles?: string
+  instrumental?: boolean
+  settings?: Record<string, unknown>
+  parentRef?: string
+  relation?: string
+  /** The library item (SHA-256) a cover was made from. */
+  sourceItem?: string
+  workspace?: { id: string; name: string }
+  /** The library channel it belongs to. */
+  channel?: string
 }
 
 // The same keys, in the same order, as sourceRecord in mcp/src/library.ts.
-const SOURCE_KEYS = ["tool", "ref", "url", "pageUrl", "title", "author", "query", "prompt", "model", "height", "fps"] as const
+const SOURCE_KEYS = [
+  "tool",
+  "ref",
+  "url",
+  "pageUrl",
+  "title",
+  "author",
+  "query",
+  "prompt",
+  "model",
+  "price",
+  "height",
+  "fps",
+  "lyrics",
+  "excludeStyles",
+  "instrumental",
+  "settings",
+  "parentRef",
+  "relation",
+  "sourceItem",
+  "workspace",
+  "channel"
+] as const
+
+const keep = (value: unknown): unknown => {
+  if (typeof value === "number") return value > 0 ? value : undefined
+  if (typeof value === "string") return value.trim() ? value : undefined
+  if (typeof value === "boolean") return value
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const entries = Object.entries(value).filter(([, v]) => v !== undefined && v !== null && v !== "")
+    return entries.length ? Object.fromEntries(entries) : undefined
+  }
+  return undefined
+}
 
 /** A sidecar's contents: keys in a fixed order, the unknown ones left out. */
 export function sourceRecord(fields: SourceFields, downloadedAt = new Date()) {
   const record: Record<string, unknown> = { schema: SOURCE_SCHEMA }
   for (const key of SOURCE_KEYS) {
-    const value = fields[key]
-    if (typeof value === "number" ? value > 0 : typeof value === "string" && value.trim()) record[key] = value
+    const value = keep(fields[key])
+    if (value !== undefined) record[key] = value
   }
   record.downloadedAt = downloadedAt.toISOString()
   return record
@@ -73,7 +120,7 @@ function toBase64(text: string) {
 }
 
 // Resolves with the saved file's full path once a download finishes.
-function downloadFinished(downloadId: number) {
+export function downloadFinished(downloadId: number) {
   return new Promise<string>((resolve, reject) => {
     const settle = (item?: chrome.downloads.DownloadItem) => {
       if (item?.state === "complete") {

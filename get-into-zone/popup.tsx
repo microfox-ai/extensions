@@ -50,7 +50,7 @@ const TABS: {
     activeColor: "#E1306C",
     component: InstagramTab
   },
-  { id: "suno", label: "Suno", component: SunoTab, hidden: true },
+  { id: "suno", label: "Suno", activeColor: "#F97316", component: SunoTab },
   {
     id: "distrokid",
     label: "DistroKid",
