@@ -474,7 +474,7 @@ type UploadStep =
   | { kind: "rights" | "terms"; confirm?: HTMLButtonElement }
   | { kind: "pick"; input: HTMLInputElement }
   | { kind: "categories"; next?: HTMLButtonElement }
-  | { kind: "description"; next?: HTMLButtonElement; skip?: HTMLButtonElement }
+  | { kind: "description"; next?: HTMLButtonElement; skip?: HTMLButtonElement; uploaded: boolean }
   | { kind: "refused"; reason: string }
 
 /** The step Suno's upload dialog is at, when it is open (UPLOAD in selectors.ts has them all). */
@@ -488,7 +488,9 @@ export function uploadStep(): UploadStep | null {
     const agree = button(UPLOAD.agree)
     if (agree) return { kind: "terms", confirm: agree }
     if (UPLOAD.categories.test(words)) return { kind: "categories", next: button(UPLOAD.next) }
-    if (UPLOAD.description.test(words)) return { kind: "description", next: button(UPLOAD.next), skip: button(UPLOAD.skip) }
+    if (UPLOAD.description.test(words)) {
+      return { kind: "description", next: button(UPLOAD.next), skip: button(UPLOAD.skip), uploaded: UPLOAD.uploaded.test(words) }
+    }
     const input = dialog.querySelector<HTMLInputElement>('input[type="file"]')
     if (input) return { kind: "pick", input }
   }

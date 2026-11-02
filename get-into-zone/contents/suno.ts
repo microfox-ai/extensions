@@ -275,6 +275,7 @@ async function attachUploaded(file: File, msg: AttachMsg, tell: (note: string) =
   let picked = false
   let toldUser = false
   let describing = 0
+  let uploadedAt = 0
   while (Date.now() - start < limit) {
     const step = uploadStep()
     if (step?.kind === "refused") throw new Error(`Suno refused the upload: ${step.reason}`)
@@ -296,9 +297,15 @@ async function attachUploaded(file: File, msg: AttachMsg, tell: (note: string) =
     } else if (step?.kind === "categories") {
       step.next?.click()
     } else if (step?.kind === "description") {
-      // Suno listens to the audio and describes it; Skip when that takes long.
-      describing ||= Date.now()
-      ;(step.next ?? (Date.now() - describing > 30_000 ? step.skip : undefined))?.click()
+      // Continue before the file has uploaded hands it to Suno's background finish,
+      // which left the audio off the form: wait until the dialog says "Uploaded" for a
+      // second (it says so for a moment before the upload starts, too).
+      uploadedAt = step.uploaded ? uploadedAt || Date.now() : 0
+      if (uploadedAt && Date.now() - uploadedAt >= 1000) {
+        // Suno describes the audio; Skip when that takes long.
+        describing ||= Date.now()
+        ;(step.next ?? (Date.now() - describing > 30_000 ? step.skip : undefined))?.click()
+      }
     } else if (!step && picked && document.querySelector(SEL.conditionType)) {
       await sleep(1500)
       const error = visibleError()

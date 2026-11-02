@@ -87,6 +87,8 @@ export const UPLOAD = {
   agree: /^agree to terms$/i,
   categories: /identify audio content/i,
   description: /describes the contents of your uploaded audio/i,
+  // The dialog's progress line: "Uploading Clip", "Initializing", then "Uploaded".
+  uploaded: /^uploaded$/im,
   next: /^continue$/i,
   skip: /^skip$/i,
   copyright: /copyrighted material detected|matches an existing recording|copyrighted lyrics/i

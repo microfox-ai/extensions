@@ -106,6 +106,14 @@ file already picked, the stages are:
 4. "Describes the contents of your uploaded audio": Suno analyses it and
    writes a description; the button says Skip until it has, then Continue.
 
+Live on Premier (2026-11-02), steps 3 and 4 are one page: "Describes the
+contents of your uploaded audio" (an empty box), the category chips, then
+Back / Continue (no Skip). Above every step, a progress line reads "Uploading
+Clip", then "Initializing", then "Uploaded". Continue before "Uploaded" hands
+the file to Suno's background finish: the dialog came back, the audio never
+reached the form, and the file showed up twice in Uploads. Continue after
+"Uploaded" creates the clip and puts it on the form as a Cover.
+
 Refusals: "This audio matches an existing recording", "Copyrighted material
 detected", "This audio contains copyrighted lyrics".
 
