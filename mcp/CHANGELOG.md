@@ -7,6 +7,10 @@ last release; see `.github/workflows/release-browse-hack-mcp.yml`). They show
 on Browse Hack's page on MediaMake and in `get_status` / `update_browse_hack`
 after an update.
 
+## 0.10.1
+
+- Browse Hack's own logo, the green cursor, replaces Plasmo's default purple icon in Claude's extensions list. Browse Hack 0.12.2 shows the same logo in Chrome's toolbar and on `chrome://extensions`, with icons drawn for 16, 32 and 48 px so it stays sharp in the toolbar.
+
 ## 0.10.0
 
 - `saver_set` and `saver_remove_rule` take `suno`: Browse Hack's buttons on suno.com (Copy for Claude, Variations, Save and the Create form's bar) turn on and off like the other overlays, also from the popup's Saver tab.
