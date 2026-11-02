@@ -44,9 +44,9 @@ Premier account. When Suno changes, fix `selectors.ts` (the page) or `clip.ts`
     captcha: a visible challenge pauses the run for the user.
   - Downloads are metered (60 a month on Premier). Browse Hack clicks the
     song's own Download item and files the browser download; it never saves
-    the playback stream instead.
-  - Uploads ask once for Suno's terms (`audio-upload-tos-acceptance`) and are
-    checked against copyright databases (Audible Magic, ACRCloud).
+    the playback stream instead. See "The download dialog" below.
+  - Uploads go through Suno's upload dialog (below) and are checked against
+    copyright databases (Audible Magic, ACRCloud).
 
 ## Checked live (2026-11-02, one Create on Premier)
 
@@ -71,11 +71,42 @@ Premier account. When Suno changes, fix `selectors.ts` (the page) or `clip.ts`
   field). Model button (text `v6-wild`) opens a menu: v6, v6-wild, v6-mini,
   Create Custom Model.
 - `+ Audio` (`aria-label` "Add audio - Browse, upload, or record audio") opens
-  Browse / Upload / Record; a hidden `input[type=file]` takes wav, flac, mp3,
-  ogg, opus, webm, m4a, aac. With audio set: "Change condition type from
-  Cover" (Cover, Mashup, Sample, Inspo; Extend, Crop, Remove Section, Reverse,
-  Speed, Pro edits) and "Clear audio condition". Extend shows an "Extend from"
-  time.
+  Browse / Upload / Record; an empty Audio card has its own Upload
+  (`aria-label` "Upload audio file", which sets the audio up as a Cover). Both
+  open the file picker from a file input Suno's code makes and clicks, which
+  may not be in the page: `contents/sunoPage.ts` catches that click while
+  Browse Hack is uploading. Takes wav, flac, mp3, ogg, opus, webm, m4a, aac.
+  With audio set: "Change condition type from Cover" (Cover, Mashup, Sample,
+  Inspo; Extend, Crop, Remove Section, Reverse, Speed, Pro edits) and "Clear
+  audio condition". Extend shows an "Extend from" time.
+
+## The upload dialog (read from suno.com's code and `/locales/en/*.json`, 2026-11-02)
+
+A picked audio file goes through a dialog before it is on the Create form:
+
+1. The first time: "Confirm your rights" (Yes / No), or "Upload audio" with
+   "Agree to Terms" (which sets `audio-upload-tos-acceptance` in localStorage).
+2. Upload or Record: a hidden `input[type=file]` in the dialog, Upload /
+   Library buttons.
+3. "Identify audio content (select up to 3)": Full Song, Song Demo, Voice,
+   Instrument Stem, Loop… then Continue (none picked is fine).
+4. "Describes the contents of your uploaded audio": Suno analyses it and
+   writes a description; the button says Skip until it has, then Continue.
+
+Refusals: "This audio matches an existing recording", "Copyrighted material
+detected", "This audio contains copyrighted lyrics".
+
+## The download dialog (read from suno.com's code and `/locales/en/downloads.json`, 2026-11-02)
+
+A song's Download opens "Download songs": one toggle per format (M4A, MP3,
+WAV, MP4 video asset; several can be on, a picked one shows a check mark; M4A
+starts on on a Mac, MP3 elsewhere), stems and MIDI, then "Unlock & Download"
+for a song not downloaded yet (`POST /api/download/authorize` uses one of the
+month's downloads) or "Download" for one that is, which uses none. The file
+is fetched by the page and saved from a `blob:` link named after the title, so
+a download carries no song id. A WAV is converted first (`convert_wav`, polled
+up to two minutes). Out of downloads, the dialog is "Out of Downloads" with
+download packs to buy.
 - Lyrics: a contenteditable `[aria-label="Lyrics editor"]`; empty means
   instrumental.
 - Styles: `textarea[maxlength=1000]` next to "Clear styles" / "Save prompt" /
@@ -93,6 +124,7 @@ Premier account. When Suno changes, fix `selectors.ts` (the page) or `clip.ts`
 A song's "…" menu: Remix ▸ (Cover, Reuse Prompt, Mashup, Sample this song, Use
 as Inspiration, Voice), Edit ▸ (Extend, Crop, Remove Section, Reverse, Adjust
 Speed, Fade In/Out, Add Vocal, Replace Section, Get Stems / MIDI, Remaster,
-Open in Studio / Editor), Publish, Share, Download, Manage ▸ (Song Details,
+Open in Studio / Editor), Publish, Share, Download (the download dialog),
+Manage ▸ (Song Details,
 Create Cover Art, Allow Remixes, Allow Comments, Pin to Profile, Move to
 Workspace), Add to Queue / Playlist, Song Radio, Report, Move to Trash.

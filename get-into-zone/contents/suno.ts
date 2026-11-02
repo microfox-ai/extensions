@@ -9,15 +9,15 @@ import {
   type SunoWorkspace
 } from "../lib/suno/clip"
 import {
-  attachAudio,
   captchaVisible,
   clickCreate,
   clickDownload,
   downloadDialog,
   fillForm,
+  pickAudio,
   readForm,
   setCondition,
-  uploadTermsDialog,
+  uploadStep,
   visibleError,
   type SunoFormJob
 } from "../lib/suno/form"
@@ -261,32 +261,45 @@ function base64ToBytes(value: string) {
   return bytes
 }
 
-const checked = (el: HTMLElement) =>
-  (el as HTMLInputElement).checked === true || el.getAttribute("aria-checked") === "true" || el.getAttribute("data-state") === "checked"
-
+/**
+ * Takes the file through Suno's upload: picks it, answers the rights or terms
+ * question when the user allowed that (else asks them to), passes the content
+ * categories and the description Suno writes, then sets the condition (Cover…)
+ * once the audio is on the Create form.
+ */
 async function attachUploaded(file: File, msg: AttachMsg, tell: (note: string) => void) {
-  await attachAudio(file)
+  // Audio a draft left on the form isn't this file.
+  document.querySelector<HTMLElement>(SEL.clearCondition)?.click()
   const start = Date.now()
   const limit = msg.waitForUserMs ?? 300_000
+  let picked = false
   let toldUser = false
+  let describing = 0
   while (Date.now() - start < limit) {
-    const terms = uploadTermsDialog()
-    if (terms) {
-      if (msg.allowTerms) {
-        if (terms.checkbox && !checked(terms.checkbox)) terms.checkbox.click()
-        await sleep(250)
-        terms.confirm?.click()
+    const step = uploadStep()
+    if (step?.kind === "refused") throw new Error(`Suno refused the upload: ${step.reason}`)
+    if (step?.kind === "rights" || step?.kind === "terms") {
+      if (msg.allowTerms && step.confirm) {
+        step.confirm.click()
         await sleep(800)
         continue
       }
       if (!toldUser) {
         toldUser = true
         tell(
-          "Suno asks you to confirm you have the rights to this audio. Tick it in the Suno tab, or turn on " +
+          "Suno asks you to confirm you have the rights to this audio. Confirm it in the Suno tab, or turn on " +
             "\"I own or license the audio I cover\" in Browse Hack's Suno tab."
         )
       }
-    } else if (document.querySelector(SEL.conditionType)) {
+    } else if (!picked && (!step || step.kind === "pick")) {
+      picked = await pickAudio(file)
+    } else if (step?.kind === "categories") {
+      step.next?.click()
+    } else if (step?.kind === "description") {
+      // Suno listens to the audio and describes it; Skip when that takes long.
+      describing ||= Date.now()
+      ;(step.next ?? (Date.now() - describing > 30_000 ? step.skip : undefined))?.click()
+    } else if (!step && picked && document.querySelector(SEL.conditionType)) {
       await sleep(1500)
       const error = visibleError()
       if (error) throw new Error(`Suno refused the upload: ${error}`)
@@ -298,9 +311,9 @@ async function attachUploaded(file: File, msg: AttachMsg, tell: (note: string) =
       const error = Date.now() - start > 2000 ? visibleError() : undefined
       if (error) throw new Error(`Suno refused the upload: ${error}`)
     }
-    await sleep(400)
+    await sleep(500)
   }
-  throw new Error("Suno didn't finish taking the audio in time.")
+  throw new Error(picked ? "Suno didn't finish taking the audio in time." : "Couldn't hand the audio to Suno's upload.")
 }
 
 chrome.runtime.onConnect.addListener((port) => {
@@ -332,7 +345,7 @@ let saverRules: SaverRule[] = []
 let saverWindowId: number | undefined
 let prefs: SunoPrefs = readSunoPrefs(undefined)
 
-const uiOn = () => isSaverActive(saverRules, "all", { url: location.href, windowId: saverWindowId })
+const uiOn = () => isSaverActive(saverRules, "suno", { url: location.href, windowId: saverWindowId })
 
 chrome.storage.local.get(SUNO_PREFS_KEY).then((stored) => (prefs = readSunoPrefs(stored[SUNO_PREFS_KEY])))
 chrome.storage.onChanged.addListener((changes, area) => {

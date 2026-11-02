@@ -7,7 +7,6 @@ export const SEL = {
   clearForm: 'button[aria-label="Clear all form inputs"]',
   credits: 'button[aria-label^="Credits remaining"]',
   addAudio: 'button[aria-label^="Add audio"]',
-  audioFileInput: 'input[type="file"][accept*="audio"]',
   conditionType: 'button[aria-label^="Change condition type"]',
   clearCondition: 'button[aria-label="Clear audio condition"]',
   lyrics: '[aria-label="Lyrics editor"]',
@@ -63,13 +62,31 @@ export const TEXT = {
  * "Download" for one that is (no download used).
  */
 export const DOWNLOAD = {
-  formats: { m4a: "M4A", mp3: "MP3", wav: "WAV", video: "Video" },
+  formats: { m4a: "M4A", mp3: "MP3", wav: "WAV", video: "MP4 video asset" },
   confirm: /^(unlock\s*(&|and|\+)\s*)?download$/i,
   // Other buttons in the dialog that say "download".
   notConfirm: /buy|purchase|pack|share|link|stems|upgrade/i,
-  outOfDownloads: /out of downloads|no downloads (left|remaining)/i,
   // Before the dialog, the song menu had Download ▸ MP3 Audio / WAV Audio / Video.
   menu: { mp3: /\bmp3\b|^audio$/i, wav: /\bwav\b/i }
+} as const
+
+/**
+ * Suno's upload dialog, which a picked audio file goes through before it is
+ * on the Create form: confirm your rights (or agree to the terms) the first
+ * time, then "Identify audio content", then a description Suno writes of it.
+ */
+export const UPLOAD = {
+  // The Create form's empty Audio card, else the "+ Audio" menu's Upload.
+  button: 'button[aria-label="Upload audio file"]',
+  menuItem: /^upload( audio)?$/i,
+  rights: /confirm your rights/i,
+  yes: /^yes$/i,
+  agree: /^agree to terms$/i,
+  categories: /identify audio content/i,
+  description: /describes the contents of your uploaded audio/i,
+  next: /^continue$/i,
+  skip: /^skip$/i,
+  copyright: /copyrighted material detected|matches an existing recording|copyrighted lyrics/i
 } as const
 
 /** Condition names in the audio condition menu, by remix_type. */

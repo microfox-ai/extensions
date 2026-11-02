@@ -4,7 +4,8 @@ import type { PlasmoCSConfig } from "plasmo"
 // site's code, so it sees the answer to the site's own Create request: the ids
 // of the two songs it started, or why it was refused (captcha, credits). Only
 // those reach the content script (contents/suno.ts); request headers, tokens
-// and bodies never leave the page.
+// and bodies never leave the page. It also sets the lyrics editor's text and
+// catches Suno's file picker for an upload, when the content script asks.
 
 export const config: PlasmoCSConfig = {
   matches: ["https://suno.com/*"],
@@ -77,6 +78,29 @@ window.addEventListener("message", (event) => {
     answer(false, error instanceof Error ? error.message : String(error))
   }
 })
+
+// Suno opens its file picker by clicking a file input its code made, often one
+// that isn't in the page. To cover a library track, the content script arms
+// this first: the next file input Suno clicks gets marked (and put in the page,
+// hidden) instead of opening the picker, so the content script can give it the
+// file. Unarmed, or after ten seconds, every click goes through as usual.
+let pickerArmedUntil = 0
+window.addEventListener("message", (event) => {
+  const data = event.data
+  if (event.source === window && data?.source === "browse-hack-suno-cs" && data.type === "arm-file-input") {
+    pickerArmedUntil = Date.now() + 10_000
+  }
+})
+const originalClick = HTMLInputElement.prototype.click
+HTMLInputElement.prototype.click = function (this: HTMLInputElement) {
+  if (this.type !== "file" || Date.now() > pickerArmedUntil) return originalClick.call(this)
+  pickerArmedUntil = 0
+  if (!this.isConnected) {
+    this.hidden = true
+    document.body.appendChild(this)
+  }
+  this.setAttribute("data-browse-hack-file", "")
+}
 
 const originalFetch = window.fetch
 window.fetch = async function (input: RequestInfo | URL, init?: RequestInit) {

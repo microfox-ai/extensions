@@ -441,7 +441,7 @@ const saverTarget = {
 
 tool(
   "saver_get",
-  "Shows which on-page overlays (Save button, AI analyse, YouTube buttons) are on for a tab, and the rules involved.",
+  "Shows which on-page overlays (Save button, AI analyse, download buttons, Suno buttons) are on for a tab, and the rules involved.",
   saverTarget,
   "saver.get",
   { readOnly: true }
@@ -451,7 +451,7 @@ tool(
   "Turns an on-page overlay on or off. The narrowest rule wins: page > site > window > everywhere.",
   {
     ...saverTarget,
-    feature: z.enum(["all", "save", "ai", "youtube"]).describe('"all" is the master switch for every overlay'),
+    feature: z.enum(["all", "save", "ai", "youtube", "suno"]).describe('"all" is the master switch for every overlay'),
     scope: z.enum(["page", "site", "window", "all"]).describe('"all" means everywhere'),
     enabled: z.boolean()
   },
@@ -461,7 +461,7 @@ tool(
   "saver_remove_rule",
   "Removes one overlay rule (as listed by saver_get).",
   {
-    feature: z.enum(["all", "save", "ai", "youtube"]),
+    feature: z.enum(["all", "save", "ai", "youtube", "suno"]),
     scope: z.enum(["page", "site", "window", "all"]),
     key: z.string()
   },
