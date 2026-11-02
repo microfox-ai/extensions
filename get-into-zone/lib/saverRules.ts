@@ -7,10 +7,12 @@ import { SIGNED_IN_KEYS, isSignedIn } from "./mediamakeAuth"
 export const SAVER_RULES_KEY = "saverRules"
 
 // "all" is the master switch: it covers every overlay (Save button, AI
-// buttons, the download buttons and the Suno upload panel). "save", "ai" and
-// "youtube" are individual savers. "youtube" covers every download button
-// (YouTube, Pinterest videos and Instagram); the id is what saved rules store.
-export type SaverFeature = "all" | "save" | "ai" | "youtube"
+// buttons, the download buttons and the Suno buttons). "save", "ai",
+// "youtube" and "suno" are individual savers. "youtube" covers every download
+// button (YouTube, Pinterest videos and Instagram); the id is what saved rules
+// store. "suno" covers Browse Hack's buttons on suno.com (Copy for Claude,
+// Variations and Save on songs, and the Create form's bar).
+export type SaverFeature = "all" | "save" | "ai" | "youtube" | "suno"
 export type SaverScope = "page" | "site" | "window" | "all"
 
 export interface SaverRule {
@@ -29,7 +31,7 @@ export interface SaverContext {
 // which beats an "everywhere" rule. With no matching rule a saver is on.
 export const SCOPE_ORDER: SaverScope[] = ["page", "site", "window", "all"]
 
-export const SAVER_FEATURES: SaverFeature[] = ["all", "save", "ai", "youtube"]
+export const SAVER_FEATURES: SaverFeature[] = ["all", "save", "ai", "youtube", "suno"]
 
 const parseHttpUrl = (url?: string): URL | null => {
   if (!url) return null
@@ -113,7 +115,7 @@ export function isSaverActive(
 export function isAnySaverActive(rules: SaverRule[], ctx: SaverContext) {
   const url = parseHttpUrl(ctx.url)
   if (!url || !isSaverActive(rules, "all", ctx)) return false
-  if (isSunoHost(url.hostname)) return true
+  if (isSunoHost(url.hostname)) return isSaverActive(rules, "suno", ctx)
   if (isSaverActive(rules, "save", ctx)) return true
   const pinterest = isPinterestHost(url.hostname)
   if (hasDownloadButtons(url.hostname) && isSaverActive(rules, "youtube", ctx)) {

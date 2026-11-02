@@ -441,7 +441,7 @@ const saverTarget = {
 
 tool(
   "saver_get",
-  "Shows which on-page overlays (Save button, AI analyse, YouTube buttons) are on for a tab, and the rules involved.",
+  "Shows which on-page overlays (Save button, AI analyse, download buttons, Suno buttons) are on for a tab, and the rules involved.",
   saverTarget,
   "saver.get",
   { readOnly: true }
@@ -451,7 +451,7 @@ tool(
   "Turns an on-page overlay on or off. The narrowest rule wins: page > site > window > everywhere.",
   {
     ...saverTarget,
-    feature: z.enum(["all", "save", "ai", "youtube"]).describe('"all" is the master switch for every overlay'),
+    feature: z.enum(["all", "save", "ai", "youtube", "suno"]).describe('"all" is the master switch for every overlay'),
     scope: z.enum(["page", "site", "window", "all"]).describe('"all" means everywhere'),
     enabled: z.boolean()
   },
@@ -461,7 +461,7 @@ tool(
   "saver_remove_rule",
   "Removes one overlay rule (as listed by saver_get).",
   {
-    feature: z.enum(["all", "save", "ai", "youtube"]),
+    feature: z.enum(["all", "save", "ai", "youtube", "suno"]),
     scope: z.enum(["page", "site", "window", "all"]),
     key: z.string()
   },
@@ -576,7 +576,8 @@ localTool(
   "suno_download",
   "Downloads Suno songs into MediaMake's media library inbox (_INBOX/suno/<channel>/<set>/<Title> [<id>].mp3) with a " +
     "<file>.source.json holding the styles, lyrics, model, settings and parent, by clicking each song's own Download on suno.com. " +
-    "Each song uses one of the account's monthly downloads (suno_status shows how many are left), so download only the keepers. " +
+    "A song's first download uses one of the account's monthly downloads (suno_status shows how many are left), so download " +
+    "only the keepers; a song downloaded before, in any format, downloads again for free. " +
     "Songs the library already has come back in alreadyHave (force downloads them again). Marks them keepers in MediaMake cloud.",
   {
     ids: z.array(z.string()).min(1).max(20).describe("Song ids or links"),

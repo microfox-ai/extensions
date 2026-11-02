@@ -5,6 +5,7 @@ import {
   EyeOff,
   Globe,
   MonitorPlay,
+  Music,
   Power,
   Sparkles,
   X
@@ -18,6 +19,7 @@ import {
   isAnySaverActive,
   isPinterestHost,
   isSaverActive,
+  isSunoHost,
   loadSaverRules,
   readSaverRules,
   resolveSaverFeature,
@@ -50,7 +52,7 @@ const FEATURES: {
   {
     id: "all",
     label: "All savers",
-    hint: "Every overlay, including the Suno upload panel",
+    hint: "Every overlay, including the Suno buttons",
     icon: <Power size={16} />
   },
   {
@@ -70,6 +72,12 @@ const FEATURES: {
     label: "Download buttons",
     hint: "Download buttons on YouTube videos, Pinterest video pins and Instagram posts",
     icon: <MonitorPlay size={16} />
+  },
+  {
+    id: "suno",
+    label: "Suno buttons",
+    hint: "Copy for Claude, Variations and Save on Suno songs, and the bar on Suno's Create form",
+    icon: <Music size={16} />
   }
 ]
 
@@ -302,6 +310,9 @@ export function SaverTab() {
     }
     if (feature === "youtube" && isWebPage && !hasDownloadButtons(hostname)) {
       return `${base} · only appears on YouTube, Pinterest and Instagram`
+    }
+    if (feature === "suno" && isWebPage && !isSunoHost(hostname)) {
+      return `${base} · only appears on suno.com`
     }
     return base
   }

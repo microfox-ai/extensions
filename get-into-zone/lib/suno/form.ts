@@ -4,7 +4,7 @@
 // the suno.com content script. Values are set through the element's native
 // setter, which both React and this isolated world see.
 
-import { CONDITIONS, ROW, SEL, SLIDERS, TEXT } from "./selectors"
+import { CONDITIONS, DOWNLOAD, ROW, SEL, SLIDERS, TEXT, UPLOAD } from "./selectors"
 
 export interface SunoFormJob {
   lyrics?: string
@@ -213,21 +213,41 @@ export async function setSlider(panel: HTMLElement, label: string, target: numbe
 // The workspace picker lists names with a count: "My Workspace (12 clips)".
 const bare = (value: string) => norm(value.replace(/\s*\(\d[\d,]*\s+clips?\)\s*$/i, ""))
 
-/** An item in the open menu or picker dialog whose name is `label`. */
-export function openItem(label: string, except?: Element) {
+/** Visible elements anywhere whose name matches: for menus Suno draws without a menu role. */
+function namedLike(pattern: RegExp) {
+  return within<HTMLElement>(document, "span, div, button, li, p, [role='menuitem']")
+    .filter((el) => el.children.length <= 1 && pattern.test((el.textContent ?? "").trim()) && visible(el))
+    .map((el) => el.closest<HTMLElement>(SEL.clickable) ?? el)
+}
+
+/** An item in the open menu or picker dialog whose name is `label` (or matches it). */
+export function openItem(label: string | RegExp, except?: Element) {
   const scopes = within<HTMLElement>(document, SEL.popups).filter(visible)
+  const named = (el: Element) =>
+    typeof label === "string" ? bare(firstLine(el)) === norm(label) : label.test(firstLine(el))
   const item = scopes
     .flatMap((scope) => within<HTMLElement>(scope, "span, div, button, li, p, [role='option'], [role='menuitem']"))
-    .find((el) => el !== except && el.children.length <= 1 && visible(el) && bare(firstLine(el)) === norm(label))
+    .find((el) => el !== except && el.children.length <= 1 && visible(el) && named(el))
   return item ? (item.closest<HTMLElement>(SEL.clickable) ?? item) : undefined
 }
 
 const escape = () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))
+const mouseDown = (el: HTMLElement) => el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }))
+
+/** Opens a menu with its button and finds an item: some of Suno's menus open on a click, others on mouse-down. */
+async function openMenu<T>(opener: HTMLElement, find: () => T | null | undefined, opensOn: "click" | "mousedown" = "click") {
+  const press = [() => opener.click(), () => mouseDown(opener)]
+  if (opensOn === "mousedown") press.reverse()
+  press[0]()
+  const found = await waitFor(find, 1500)
+  if (found) return found
+  press[1]()
+  return waitFor(find, 3000)
+}
 
 /** Opens a menu or picker with `opener` and clicks the item named `label`. */
 async function pickFromMenu(opener: HTMLElement, label: string) {
-  opener.click()
-  const item = await waitFor(() => openItem(label, opener), 4000)
+  const item = await openMenu(opener, () => openItem(label, opener))
   if (!item) {
     escape()
     return false
@@ -446,15 +466,32 @@ export function clickCreate() {
   button.click()
 }
 
-/** Puts a file into the Create form's audio upload, as if picked in Upload. */
-export async function attachAudio(file: File) {
-  let input = document.querySelector<HTMLInputElement>(SEL.audioFileInput)
-  if (!input) {
-    document.querySelector<HTMLElement>(SEL.addAudio)?.click()
-    input = (await waitFor(() => document.querySelector<HTMLInputElement>(SEL.audioFileInput), 4000)) as HTMLInputElement | null
-    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))
+type UploadStep =
+  | { kind: "rights" | "terms"; confirm?: HTMLButtonElement }
+  | { kind: "pick"; input: HTMLInputElement }
+  | { kind: "categories"; next?: HTMLButtonElement }
+  | { kind: "description"; next?: HTMLButtonElement; skip?: HTMLButtonElement }
+  | { kind: "refused"; reason: string }
+
+/** The step Suno's upload dialog is at, when it is open (UPLOAD in selectors.ts has them all). */
+export function uploadStep(): UploadStep | null {
+  for (const dialog of dialogs()) {
+    const words = text(dialog)
+    const button = (pattern: RegExp) =>
+      within<HTMLButtonElement>(dialog, "button").find((b) => pattern.test(firstLine(b)) && !b.disabled)
+    if (UPLOAD.copyright.test(words)) return { kind: "refused", reason: words.replace(/\s+/g, " ").slice(0, 200) }
+    if (UPLOAD.rights.test(words)) return { kind: "rights", confirm: button(UPLOAD.yes) }
+    const agree = button(UPLOAD.agree)
+    if (agree) return { kind: "terms", confirm: agree }
+    if (UPLOAD.categories.test(words)) return { kind: "categories", next: button(UPLOAD.next) }
+    if (UPLOAD.description.test(words)) return { kind: "description", next: button(UPLOAD.next), skip: button(UPLOAD.skip) }
+    const input = dialog.querySelector<HTMLInputElement>('input[type="file"]')
+    if (input) return { kind: "pick", input }
   }
-  if (!input) throw new Error("Suno's audio upload isn't on the page.")
+  return null
+}
+
+function giveFile(input: HTMLInputElement, file: File) {
   const transfer = new DataTransfer()
   transfer.items.add(file)
   input.files = transfer.files
@@ -462,15 +499,56 @@ export async function attachAudio(file: File) {
   input.dispatchEvent(new Event("change", { bubbles: true }))
 }
 
-/** Suno's one-time upload terms dialog, if it is open: its checkbox and confirm button. */
-export function uploadTermsDialog() {
-  const dialog = within<HTMLElement>(document, '[role="dialog"], [role="alertdialog"]').find(
-    (d) => visible(d) && /terms|rights|own|permission|copyright/i.test(text(d))
-  )
-  if (!dialog) return null
-  const checkbox = dialog.querySelector<HTMLElement>('input[type="checkbox"], [role="checkbox"]')
-  const confirm = within<HTMLButtonElement>(dialog, "button").find((b) => /agree|accept|continue|confirm|upload/i.test(firstLine(b)))
-  return { dialog, checkbox, confirm, text: text(dialog).slice(0, 400) }
+// While armed, contents/sunoPage.ts (in the page) marks the file input Suno
+// clicks to open its file picker, instead of opening the picker.
+const PICKER = "data-browse-hack-file"
+
+/**
+ * Hands a file to Suno's audio upload, as if picked in its file picker: to the
+ * upload dialog's own file input when it is open, else through the Create
+ * form's Upload (the empty Audio card's, or the "+ Audio" menu's). Resolves
+ * false when Suno asks for the rights or terms first: answer, then call again.
+ */
+export async function pickAudio(file: File) {
+  const open = uploadStep()
+  if (open?.kind === "pick") {
+    giveFile(open.input, file)
+    return true
+  }
+  document.querySelector(`[${PICKER}]`)?.removeAttribute(PICKER)
+  window.postMessage({ source: "browse-hack-suno-cs", type: "arm-file-input" }, location.origin)
+  const button = document.querySelector<HTMLElement>(UPLOAD.button)
+  if (button) button.click()
+  else {
+    const add = document.querySelector<HTMLElement>(SEL.addAudio)
+    if (!add) throw new Error("Suno's audio upload isn't on the page.")
+    const before = new Set(namedLike(UPLOAD.menuItem))
+    const item = await openMenu(
+      add,
+      () => openItem(UPLOAD.menuItem, add) ?? namedLike(UPLOAD.menuItem).find((el) => !before.has(el) && el !== add),
+      "mousedown"
+    )
+    if (!item) {
+      // Suno may ask for the rights first: the caller answers, then picks again.
+      const step = uploadStep()
+      if (step?.kind === "rights" || step?.kind === "terms") return false
+      const shown = [...dialogs(), ...within<HTMLElement>(document, SEL.popups).filter(visible)]
+        .map((el) => `"${text(el).replace(/\s+/g, " ").slice(0, 120)}"`)
+        .join(", ")
+      escape()
+      throw new Error(`Suno's Add audio menu has no Upload (on the page: ${shown || "no menu or dialog"}).`)
+    }
+    item.click()
+  }
+  const found = await waitFor(() => {
+    const step = uploadStep()
+    if (step?.kind === "rights" || step?.kind === "terms") return "question"
+    return document.querySelector<HTMLInputElement>(`[${PICKER}]`) ?? (step?.kind === "pick" ? step.input : null)
+  }, 8000)
+  if (!found) throw new Error("Suno's file picker didn't open.")
+  if (found === "question") return false
+  giveFile(found, file)
+  return true
 }
 
 /** An error message Suno shows near the form (upload rejected, out of credits…). */
@@ -506,33 +584,109 @@ export function songMenuButton(clipId: string) {
 
 /** Opens a song's "…" menu; resolves with its Download item (not clicked). */
 export async function openSongMenu(clipId: string) {
-  const opener = (await waitFor(() => songMenuButton(clipId), 15_000)) as HTMLButtonElement | null
-  if (!opener) throw new Error(`Couldn't find the song's menu for ${clipId} on this page.`)
-  opener.scrollIntoView({ block: "center" })
-  opener.click()
-  const item = await waitFor(() => openItem(TEXT.download, opener), 5000)
-  if (!item) {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const opener = (await waitFor(() => songMenuButton(clipId), 15_000)) as HTMLButtonElement | null
+    if (!opener) throw new Error(`Couldn't find the song's menu for ${clipId} on this page.`)
+    const before = new Set(within(document, SEL.popups).filter(visible))
+    opener.scrollIntoView({ block: "center" })
+    opener.click()
+    // Until the page has finished starting up, the button opens nothing: try again.
+    const menu = await waitFor(() => within<HTMLElement>(document, SEL.popups).find((p) => visible(p) && !before.has(p)), 2500)
+    if (!menu) continue
+    const item = await waitFor(() => openItem(TEXT.download, opener), 4000)
+    if (item) return item
+    const items = within<HTMLElement>(menu, SEL.menuItems).map(firstLine).filter(Boolean)
     escape()
-    throw new Error("The song's menu has no Download item.")
+    throw new Error(`The song's menu has no Download item (it has ${items.slice(0, 20).join(", ") || "nothing"}).`)
   }
-  return item
+  throw new Error("The song's menu didn't open.")
 }
 
-/** Clicks a song's Download item and the format asked for, as a person would. */
+type DownloadFormat = keyof typeof DOWNLOAD.formats
+
+const dialogs = () => within<HTMLElement>(document, '[role="dialog"], [role="alertdialog"]').filter(visible)
+
+/** Whether a format is picked in Suno's download dialog: it shows a check mark. */
+function formatOn(button: HTMLElement) {
+  const state = button.getAttribute("aria-pressed") ?? button.getAttribute("aria-checked")
+  if (state !== null) return state === "true"
+  return !!button.querySelector("svg")
+}
+
+/** Suno's open download dialog: its format toggles and its Download button. */
+export function downloadDialog() {
+  for (const dialog of dialogs()) {
+    const buttons = within<HTMLButtonElement>(dialog, "button")
+    const formats = new Map<DownloadFormat, HTMLButtonElement>()
+    for (const button of buttons) {
+      const label = norm(firstLine(button))
+      const key = (Object.keys(DOWNLOAD.formats) as DownloadFormat[]).find((k) => norm(DOWNLOAD.formats[k]) === label)
+      if (key && !formats.has(key)) formats.set(key, button)
+    }
+    if (formats.size < 2) continue
+    const others = buttons.filter((b) => ![...formats.values()].includes(b))
+    const confirm =
+      others.find((b) => DOWNLOAD.confirm.test(firstLine(b))) ??
+      others.filter((b) => /download/i.test(firstLine(b)) && !DOWNLOAD.notConfirm.test(firstLine(b))).pop()
+    return { dialog, formats, confirm }
+  }
+  return null
+}
+
+/** The older song menu's Download ▸ MP3 Audio / WAV Audio item. */
+function menuFormatItem(format: "mp3" | "wav") {
+  for (const menu of within<HTMLElement>(document, '[role="menu"]').filter(visible)) {
+    const hit = within<HTMLElement>(menu, "span, div, button, [role='menuitem']").find(
+      (el) => el.children.length <= 1 && visible(el) && DOWNLOAD.menu[format].test(firstLine(el)) && !/video/i.test(firstLine(el))
+    )
+    if (hit) return hit.closest<HTMLElement>(SEL.clickable) ?? hit
+  }
+  return null
+}
+
+/** Picks only `format` in Suno's download dialog and presses its Download button. */
+async function downloadFromDialog(format: "mp3" | "wav") {
+  const found = downloadDialog()
+  const label = DOWNLOAD.formats[format]
+  if (!found?.formats.has(format)) throw new Error(`Suno's download dialog has no ${label}.`)
+  for (const [key, button] of found.formats) {
+    if ((key === format) === formatOn(button)) continue
+    button.click()
+    await waitFor(() => formatOn(button) === (key === format), 2000, 50)
+  }
+  const picked = [...found.formats].filter(([, b]) => formatOn(b)).map(([key]) => DOWNLOAD.formats[key])
+  if (picked.join() !== label) {
+    throw new Error(`Couldn't pick only ${label} in Suno's download dialog (picked: ${picked.join(", ") || "none"}).`)
+  }
+  const confirm = await waitFor(() => {
+    const button = downloadDialog()?.confirm
+    return button && !button.disabled && button.getAttribute("aria-disabled") !== "true" ? button : null
+  }, 3000)
+  if (!confirm) throw new Error("Suno's download dialog has no Download button to press.")
+  // "Unlock & Download" uses one of the month's downloads; "Download" means the song is unlocked already.
+  const unlocked = /unlock/i.test(firstLine(confirm))
+  confirm.click()
+  const refused = await waitFor(visibleError, 4000, 250)
+  if (refused) throw new Error(`Suno refused the download: ${refused}`)
+  return { pickedFormat: true, dialog: true, unlocked }
+}
+
+/**
+ * Downloads a song in `format` from its "…" menu, as a person would: Download
+ * opens Suno's download dialog, where only that format is picked before its
+ * Download is pressed. Older menus listed the formats in the menu itself.
+ */
 export async function clickDownload(clipId: string, format: "mp3" | "wav") {
   const item = await openSongMenu(clipId)
   item.click()
-  const want = format === "wav" ? /\bwav\b/i : /\bmp3\b|^audio$/i
-  const choice = await waitFor(() => {
-    for (const scope of within<HTMLElement>(document, SEL.popups).filter(visible)) {
-      const hit = within<HTMLElement>(scope, "span, div, button, [role='menuitem']").find(
-        (el) => el.children.length <= 1 && visible(el) && want.test(firstLine(el)) && !/video/i.test(firstLine(el))
-      )
-      if (hit) return hit.closest<HTMLElement>(SEL.clickable) ?? hit
-    }
-    return null
-  }, 5000)
+  const opened = await waitFor(() => (downloadDialog() ? "dialog" : menuFormatItem(format)), 10_000)
+  if (opened === "dialog") return downloadFromDialog(format)
+  if (opened) {
+    opened.click()
+    return { pickedFormat: true, dialog: false }
+  }
+  const other = dialogs()[0]
+  if (other) throw new Error(`Suno showed "${text(other).replace(/\s+/g, " ").slice(0, 200)}" instead of its download formats.`)
   // Some accounts download straight from the menu item, with no format to pick.
-  if (choice) choice.click()
-  return { pickedFormat: Boolean(choice) }
+  return { pickedFormat: false, dialog: false }
 }

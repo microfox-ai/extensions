@@ -48,6 +48,8 @@ export interface SunoSong {
   pageUrl: string
   author?: string
   createdAt?: string
+  /** Downloaded before: downloading it again uses none of the month's downloads. */
+  downloadUnlocked?: boolean
 }
 
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
@@ -306,14 +308,18 @@ export async function downloadSongs(bridge: Bridge, params: DownloadParams) {
   }
   if (!wanted.length) return { saved: [], alreadyHave, note: "The library already has these songs; nothing was downloaded." }
 
-  const status = (await bridge.call("suno.status", {}, 90_000)) as { account?: { downloads?: { left: number; limit: number } } }
-  const left = status.account?.downloads?.left
-  if (left !== undefined && left < wanted.length) {
+  const downloadsLeft = async () =>
+    ((await bridge.call("suno.status", {}, 90_000)) as { account?: { downloads?: { left: number; limit: number } } }).account?.downloads
+      ?.left
+  const left = await downloadsLeft()
+  const { songs } = (await bridge.call("suno.clips", { ids: wanted }, 90_000)) as { songs: SunoSong[] }
+  // A song downloaded before is unlocked: it downloads again without using one.
+  const needed = wanted.filter((id) => !songs.find((s) => s.id === id)?.downloadUnlocked).length
+  if (left !== undefined && left < needed) {
     throw new Error(
-      `Suno has ${left} downloads left this month and this needs ${wanted.length}. Pick fewer songs, or buy more downloads on suno.com.`
+      `Suno has ${left} downloads left this month and this needs ${needed}. Pick fewer songs, or buy more downloads on suno.com.`
     )
   }
-  const { songs } = (await bridge.call("suno.clips", { ids: wanted }, 90_000)) as { songs: SunoSong[] }
   const saved: { id: string; title: string; path: string; sidecar?: string }[] = []
   const failed: { id: string; error: string }[] = []
   for (const id of wanted) {
@@ -346,7 +352,7 @@ export async function downloadSongs(bridge: Bridge, params: DownloadParams) {
     saved,
     ...(alreadyHave.length ? { alreadyHave } : {}),
     ...(failed.length ? { failed } : {}),
-    downloadsLeft: left !== undefined ? left - saved.length : undefined,
+    downloadsLeft: saved.length ? await downloadsLeft().catch(() => undefined) : left,
     ...(saved.length && hasLibrary(ctx.lib) ? { next: INGEST } : {})
   }
 }

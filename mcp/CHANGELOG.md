@@ -7,6 +7,13 @@ last release; see `.github/workflows/release-browse-hack-mcp.yml`). They show
 on Browse Hack's page on MediaMake and in `get_status` / `update_browse_hack`
 after an update.
 
+## 0.10.0
+
+- `saver_set` and `saver_remove_rule` take `suno`: Browse Hack's buttons on suno.com (Copy for Claude, Variations, Save and the Create form's bar) turn on and off like the other overlays, also from the popup's Saver tab.
+- `suno_download` works with Suno's new download dialog, through Browse Hack 0.12.0: it picks only the format asked for (MP3 or WAV) and presses Unlock & Download, then waits for Suno to prepare the file (up to five minutes for a WAV).
+- Songs downloaded before don't count against the month's downloads (Suno lets you download them again for free), and `downloadsLeft` is read back from Suno after downloading.
+- `suno_cover` of an audio file goes through Suno's new upload dialog (rights, content categories, description), with Browse Hack 0.12.0.
+
 ## 0.9.0
 
 - Makes songs on Suno: `suno_create` fills Suno's own Create form (lyrics, styles, exclude styles, title, model, vocal gender, sliders, workspace) and clicks Create in Browse Hack's Suno tab, then waits for the two songs. Suno runs its usual checks; a captcha brings the tab forward for you.
