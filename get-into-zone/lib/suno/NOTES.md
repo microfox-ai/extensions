@@ -86,7 +86,12 @@ Premier account. When Suno changes, fix `selectors.ts` (the page) or `clip.ts`
   uploading. Takes wav, flac, mp3, ogg, opus, webm, m4a, aac.
   With audio set: "Change condition type from Cover" (Cover, Mashup, Sample,
   Inspo; Extend, Crop, Remove Section, Reverse, Speed, Pro edits) and "Clear
-  audio condition". Extend shows an "Extend from" time.
+  audio condition". Extend shows an "Extend from" time. The condition type
+  button is the same mouse-down dropdown as `+ Audio`.
+- Browse Hack's Suno tabs open in the background, where Chrome runs no CSS
+  animations. A closed Radix dialog stays in the page with
+  `data-state="closed"` until its exit animation ends, and it vanishes as soon
+  as the tab is shown, so ignore closed dialogs.
 
 ## The upload dialog (read from suno.com's code and `/locales/en/*.json`, 2026-11-02)
 

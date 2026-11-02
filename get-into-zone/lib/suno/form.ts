@@ -69,6 +69,13 @@ export const visible = (el: Element | null | undefined): el is HTMLElement => {
   return rect.width > 0 && rect.height > 0 && getComputedStyle(el).visibility !== "hidden"
 }
 
+/**
+ * A visible menu or dialog that isn't closing. A closed Radix dialog stays in the
+ * page (data-state="closed") until its exit animation ends, which never happens
+ * in a background tab, where Browse Hack's Suno tabs run.
+ */
+const isOpen = (el: Element | null | undefined): el is HTMLElement => visible(el) && el.getAttribute("data-state") !== "closed"
+
 /** The Create panel: the nearest box holding both the Create button and the lyrics. */
 export function createPanel(): HTMLElement | null {
   const create = document.querySelector(SEL.createButton)
@@ -216,23 +223,19 @@ export async function setSlider(panel: HTMLElement, label: string, target: numbe
 // The workspace picker lists names with a count: "My Workspace (12 clips)".
 const bare = (value: string) => norm(value.replace(/\s*\(\d[\d,]*\s+clips?\)\s*$/i, ""))
 
-/**
- * An item of an open Suno menu drawn without a menu role ("+ Audio"'s): a button
- * holding an icon and a label, whose wrappers (display: contents) have no size.
- */
-function contextMenuItem(pattern: RegExp) {
-  return within<HTMLElement>(document, `${SEL.contextMenu} button`).find((b) => visible(b) && pattern.test(text(b)))
-}
-
 /** An item in the open menu or picker dialog whose name is `label` (or matches it). */
 export function openItem(label: string | RegExp, except?: Element) {
-  const scopes = within<HTMLElement>(document, SEL.popups).filter(visible)
+  const scopes = within<HTMLElement>(document, `${SEL.popups}, ${SEL.contextMenu}`).filter(isOpen)
   const named = (el: Element) =>
     typeof label === "string" ? bare(firstLine(el)) === norm(label) : label.test(firstLine(el))
-  const item = scopes
-    .flatMap((scope) => within<HTMLElement>(scope, "span, div, button, li, p, [role='option'], [role='menuitem']"))
-    .find((el) => el !== except && el.children.length <= 1 && visible(el) && named(el))
-  return item ? (item.closest<HTMLElement>(SEL.clickable) ?? item) : undefined
+  for (const el of scopes.flatMap((scope) => within<HTMLElement>(scope, "span, div, button, li, p, [role='option'], [role='menuitem']"))) {
+    if (el === except || el.children.length > 1 || !named(el)) continue
+    // Suno's own menus ("+ Audio", the condition type) put each label in a wrapper
+    // with no size (display: contents): only the item around it has one.
+    const item = el.closest<HTMLElement>(SEL.clickable) ?? el
+    if (visible(item)) return item
+  }
+  return undefined
 }
 
 const escape = () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))
@@ -531,13 +534,13 @@ export async function pickAudio(file: File) {
     const add = document.querySelector<HTMLElement>(SEL.addAudio)
     if (!add) throw new Error("Suno's audio upload isn't on the page.")
     // "+ Audio" toggles its menu on mouse-down: press it only when the menu isn't open yet.
-    const upload = () => contextMenuItem(UPLOAD.menuItem) ?? openItem(UPLOAD.menuItem, add)
+    const upload = () => openItem(UPLOAD.menuItem, add)
     const item = upload() ?? (await openMenu(add, upload, "mousedown"))
     if (!item) {
       // Suno may ask for the rights first: the caller answers, then picks again.
       const step = uploadStep()
       if (step?.kind === "rights" || step?.kind === "terms") return false
-      const shown = [...dialogs(), ...within<HTMLElement>(document, `${SEL.popups}, ${SEL.contextMenu}`).filter(visible)]
+      const shown = [...dialogs(), ...within<HTMLElement>(document, `${SEL.popups}, ${SEL.contextMenu}`).filter(isOpen)]
         .map((el) => `"${text(el).replace(/\s+/g, " ").slice(0, 120)}"`)
         .join(", ")
       escape()
@@ -553,7 +556,7 @@ export async function pickAudio(file: File) {
   if (!found) throw new Error("Suno's file picker didn't open.")
   if (found === "question") return false
   // The menu stays open after Upload; close it before the upload dialog opens (Escape would close that too).
-  if (contextMenuItem(UPLOAD.menuItem)) escape()
+  if (openItem(UPLOAD.menuItem)) escape()
   giveFile(found, file)
   return true
 }
@@ -611,7 +614,7 @@ export async function openSongMenu(clipId: string) {
 
 type DownloadFormat = keyof typeof DOWNLOAD.formats
 
-const dialogs = () => within<HTMLElement>(document, '[role="dialog"], [role="alertdialog"]').filter(visible)
+const dialogs = () => within<HTMLElement>(document, '[role="dialog"], [role="alertdialog"]').filter(isOpen)
 
 /** Whether a format is picked in Suno's download dialog: it shows a check mark. */
 function formatOn(button: HTMLElement) {
