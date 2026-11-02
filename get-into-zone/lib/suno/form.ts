@@ -213,6 +213,13 @@ export async function setSlider(panel: HTMLElement, label: string, target: numbe
 // The workspace picker lists names with a count: "My Workspace (12 clips)".
 const bare = (value: string) => norm(value.replace(/\s*\(\d[\d,]*\s+clips?\)\s*$/i, ""))
 
+/** Visible elements anywhere whose name matches: for menus Suno draws without a menu role. */
+function namedLike(pattern: RegExp) {
+  return within<HTMLElement>(document, "span, div, button, li, p, [role='menuitem']")
+    .filter((el) => el.children.length <= 1 && pattern.test((el.textContent ?? "").trim()) && visible(el))
+    .map((el) => el.closest<HTMLElement>(SEL.clickable) ?? el)
+}
+
 /** An item in the open menu or picker dialog whose name is `label` (or matches it). */
 export function openItem(label: string | RegExp, except?: Element) {
   const scopes = within<HTMLElement>(document, SEL.popups).filter(visible)
@@ -515,10 +522,21 @@ export async function pickAudio(file: File) {
   else {
     const add = document.querySelector<HTMLElement>(SEL.addAudio)
     if (!add) throw new Error("Suno's audio upload isn't on the page.")
-    const item = await openMenu(add, () => openItem(UPLOAD.menuItem, add), "mousedown")
+    const before = new Set(namedLike(UPLOAD.menuItem))
+    const item = await openMenu(
+      add,
+      () => openItem(UPLOAD.menuItem, add) ?? namedLike(UPLOAD.menuItem).find((el) => !before.has(el) && el !== add),
+      "mousedown"
+    )
     if (!item) {
+      // Suno may ask for the rights first: the caller answers, then picks again.
+      const step = uploadStep()
+      if (step?.kind === "rights" || step?.kind === "terms") return false
+      const shown = [...dialogs(), ...within<HTMLElement>(document, SEL.popups).filter(visible)]
+        .map((el) => `"${text(el).replace(/\s+/g, " ").slice(0, 120)}"`)
+        .join(", ")
       escape()
-      throw new Error("Suno's Add audio menu has no Upload.")
+      throw new Error(`Suno's Add audio menu has no Upload (on the page: ${shown || "no menu or dialog"}).`)
     }
     item.click()
   }
