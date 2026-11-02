@@ -22,6 +22,8 @@ export const SEL = {
   menuItems: '[role="menuitem"], [role="menu"] button, [role="option"]',
   // Menus and the pickers (model, workspace) open as these.
   popups: '[role="dialog"], [role="menu"], [role="listbox"]',
+  // Suno's own menus ("+ Audio"): a box with no role, whose items are buttons.
+  contextMenu: "[data-context-menu]",
   clickable: '[role="option"], [role="menuitem"], [role="row"], [role="gridcell"], button, [role="button"], li, a',
   // Cloudflare Turnstile and hCaptcha challenges, when they show.
   captchaFrames: 'iframe[src*="challenges.cloudflare.com"], iframe[src*="hcaptcha.com"]'
@@ -76,7 +78,8 @@ export const DOWNLOAD = {
  * time, then "Identify audio content", then a description Suno writes of it.
  */
 export const UPLOAD = {
-  // The Create form's empty Audio card, else the "+ Audio" menu's Upload.
+  // The Create form's empty Audio card, else the "+ Audio" menu's Upload (Advanced
+  // mode shows only "+ Audio", which opens its menu on mouse-down).
   button: 'button[aria-label="Upload audio file"]',
   menuItem: /^upload( audio)?$/i,
   rights: /confirm your rights/i,
@@ -84,6 +87,8 @@ export const UPLOAD = {
   agree: /^agree to terms$/i,
   categories: /identify audio content/i,
   description: /describes the contents of your uploaded audio/i,
+  // The dialog's progress line: "Uploading Clip", "Initializing", then "Uploaded".
+  uploaded: /^uploaded$/im,
   next: /^continue$/i,
   skip: /^skip$/i,
   copyright: /copyrighted material detected|matches an existing recording|copyrighted lyrics/i

@@ -72,26 +72,53 @@ Premier account. When Suno changes, fix `selectors.ts` (the page) or `clip.ts`
   Create Custom Model.
 - `+ Audio` (`aria-label` "Add audio - Browse, upload, or record audio") opens
   Browse / Upload / Record; an empty Audio card has its own Upload
-  (`aria-label` "Upload audio file", which sets the audio up as a Cover). Both
-  open the file picker from a file input Suno's code makes and clicks, which
-  may not be in the page: `contents/sunoPage.ts` catches that click while
-  Browse Hack is uploading. Takes wav, flac, mp3, ogg, opus, webm, m4a, aac.
+  (`aria-label` "Upload audio file", which sets the audio up as a Cover). In
+  Advanced mode (checked live 2026-11-02) only `+ Audio` is there. It is
+  Suno's own dropdown (`data-context-menu-trigger`): mouse-down toggles it, a
+  click does nothing, and Enter toggles it too. The menu is a `position: fixed`
+  box with `[data-context-menu]` and no role, put at the end of `<body>`. Each
+  item is a `<button>` whose icon and label sit in `display: contents`
+  wrappers that measure 0×0, so look for the button, not its label. Upload
+  keeps the menu open.
+- Both Uploads open the file picker by calling `.click()` on a hidden file
+  input Suno's code adds to `<body>` (its handler is the `onchange`
+  property): `contents/sunoPage.ts` catches that click while Browse Hack is
+  uploading. Takes wav, flac, mp3, ogg, opus, webm, m4a, aac.
   With audio set: "Change condition type from Cover" (Cover, Mashup, Sample,
   Inspo; Extend, Crop, Remove Section, Reverse, Speed, Pro edits) and "Clear
-  audio condition". Extend shows an "Extend from" time.
+  audio condition". Extend shows an "Extend from" time. The condition type
+  button is the same mouse-down dropdown as `+ Audio`.
+- Browse Hack's Suno tabs open in the background, where Chrome runs no CSS
+  animations. A closed dialog stays in the page until its exit animation ends,
+  and vanishes as soon as the tab is shown, so ignore closing dialogs: Base UI
+  (the upload dialog) marks them `data-closed` / `data-ending-style`, Radix
+  `data-state="closed"`.
 
 ## The upload dialog (read from suno.com's code and `/locales/en/*.json`, 2026-11-02)
 
-A picked audio file goes through a dialog before it is on the Create form:
+A picked audio file goes through a dialog (a Base UI Dialog: `Popup` with
+`role="dialog"`, `data-open` / `data-closed`) before it is on the Create form. The dialog closes while the file uploads and
+comes back for the description; Escape or a pointer-down outside it cancels
+the upload. Suno decodes the file first (6 s to 1800 s on Premier). With a
+file already picked, the stages are:
 
 1. The first time: "Confirm your rights" (Yes / No), or "Upload audio" with
    "Agree to Terms" (which sets `audio-upload-tos-acceptance` in localStorage).
-2. Upload or Record: a hidden `input[type=file]` in the dialog, Upload /
-   Library buttons.
+2. Only when no file is picked yet (Record, or the dialog opened on its own):
+   Upload or Record, with a hidden `input[type=file]` in the dialog and
+   Upload / Library buttons.
 3. "Identify audio content (select up to 3)": Full Song, Song Demo, Voice,
    Instrument Stem, Loop… then Continue (none picked is fine).
 4. "Describes the contents of your uploaded audio": Suno analyses it and
    writes a description; the button says Skip until it has, then Continue.
+
+Live on Premier (2026-11-02), steps 3 and 4 are one page: "Describes the
+contents of your uploaded audio" (an empty box), the category chips, then
+Back / Continue (no Skip). Above every step, a progress line reads "Uploading
+Clip", then "Initializing", then "Uploaded". Continue before "Uploaded" hands
+the file to Suno's background finish: the dialog came back, the audio never
+reached the form, and the file showed up twice in Uploads. Continue after
+"Uploaded" creates the clip and puts it on the form as a Cover.
 
 Refusals: "This audio matches an existing recording", "Copyrighted material
 detected", "This audio contains copyrighted lyrics".

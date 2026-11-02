@@ -89,6 +89,7 @@ window.addEventListener("message", (event) => {
   const data = event.data
   if (event.source === window && data?.source === "browse-hack-suno-cs" && data.type === "arm-file-input") {
     pickerArmedUntil = Date.now() + 10_000
+    window.postMessage({ source: SOURCE, type: "file-input-armed", id: data.id }, location.origin)
   }
 })
 const originalClick = HTMLInputElement.prototype.click
