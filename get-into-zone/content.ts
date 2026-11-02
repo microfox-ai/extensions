@@ -7,8 +7,11 @@ import {
   type SaverRule
 } from "./lib/saverRules"
 import {
+  PIN_CARD_SELECTOR,
+  pinCards,
   pinImageIdFromElement,
   pinVideoIdFromElement,
+  pinVideoOf,
   pinterestPageKey,
   type BulkItemKind
 } from "./lib/pinterestBulk"
@@ -1091,30 +1094,49 @@ function initPinterestBulkCollector() {
   const scan = () => {
     scanTimer = undefined
     if (!collecting || !pageKey) return
-    const items: { kind: BulkItemKind; id: string; alt: string }[] = []
+    const items: { kind: BulkItemKind; id: string; alt: string; cover?: string }[] = []
     const add = (kind: BulkItemKind, id: string | null, alt: string) => {
       if (!id || sentKeys.has(`${kind}:${id}`)) return
       sentKeys.add(`${kind}:${id}`)
       items.push({ kind, id, alt })
     }
 
-    const videoCards = new Set<Element>()
+    // A video pin's cover image is skipped when its video is being saved.
+    const covers = new Set<Element>()
     if (includeVideos) {
+      pinCards().forEach((card) => {
+        const video = pinVideoOf(card)
+        if (!video) return
+        const { videoId, pinId, signature } = video
+        ;(card.closest("[data-grid-item]") ?? card)
+          .querySelectorAll("img")
+          .forEach((img) => covers.add(img))
+        // Logged-in grids show a video pin by its cover only: it goes as
+        // pin/<pin id> and the background looks its file up. A pin is sent
+        // once, even when its poster (with the file hash) appears later.
+        const id = videoId || (pinId ? `pin/${pinId}` : signature)
+        const keys = [id, pinId && `pin/${pinId}`, videoId]
+          .filter(Boolean)
+          .map((key) => `video:${key}`)
+        const sent = keys.some((key) => sentKeys.has(key))
+        keys.forEach((key) => sentKeys.add(key))
+        if (sent) return
+        items.push({
+          kind: "video",
+          id,
+          alt: card.querySelector("img[alt]")?.getAttribute("alt") || "",
+          ...(signature ? { cover: signature } : {})
+        })
+      })
+      // Videos outside pin cards, by their poster.
       document
         .querySelectorAll<HTMLVideoElement | HTMLImageElement>("video[poster], img")
         .forEach((el) => {
-          const id = pinVideoIdFromElement(el)
-          if (!id) return
-          const card = el.closest("[data-grid-item]")
-          if (card) videoCards.add(card)
-          add("video", id, card?.querySelector("img[alt]")?.getAttribute("alt") || "")
+          if (!el.closest(PIN_CARD_SELECTOR)) add("video", pinVideoIdFromElement(el), "")
         })
     }
     document.querySelectorAll("img").forEach((img) => {
-      // A video pin's cover image is skipped when its video is being saved.
-      const card = img.closest("[data-grid-item]")
-      if (card && videoCards.has(card)) return
-      add("image", pinImageIdFromElement(img), img.alt || "")
+      if (!covers.has(img)) add("image", pinImageIdFromElement(img), img.alt || "")
     })
 
     if (items.length === 0) return

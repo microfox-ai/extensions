@@ -7,7 +7,13 @@ export type BulkItemKind = "image" | "video"
 
 export interface BulkItem {
   kind: BulkItemKind
+  // An image's file ("ab/cd/ef/<hash>.jpg"); a video's file hash
+  // ("ab/cd/ef/<hash>"), or "pin/<pin id>" when its card shows only a cover
+  // (as logged-in grids do) and the file is looked up when it's saved.
   id: string
+  // A video's cover image hash: often its file's own, so the fallback when
+  // that lookup fails.
+  cover?: string
   pageKey: string
   pageUrl: string
   alt: string
@@ -180,6 +186,15 @@ export function pinVideoIdFromElement(
   return url ? pinVideoId(url) : null
 }
 
+// The "ab/cd/ef/<hash>" in a pinimg.com URL, which names a pin's files.
+const PIN_HASH_RE =
+  /(?:^|\/)([0-9a-f]{2}\/[0-9a-f]{2}\/[0-9a-f]{2}\/[0-9a-f]{32})(?=[._/?#]|$)/i
+
+export const pinHashIn = (url: string) => PIN_HASH_RE.exec(url)?.[1]?.toLowerCase() ?? ""
+
+// The pin id of a video known only by it (see BulkItem).
+export const videoPinId = (id: string) => /^pin\/(\d{5,20})$/.exec(id)?.[1]
+
 // Where a video's files live, best first. Most videos have a progressive MP4
 // at one of these paths even when Pinterest's API only lists the HLS stream;
 // the rest are HLS only.
@@ -198,6 +213,106 @@ export function pinVideoSources(id: string) {
     ]
   }
 }
+
+// ---------------------------------------------------------------------------
+// Video pins on the page, for the Download button (contents/pinterest.ts) and
+// the bulk collector (content.ts).
+
+// Logged-in pins usually have no poster: a cover image, a duration badge and a
+// /pin/<id> link. The hash only appears in a /videos/ URL, which logged-out pins have.
+export const PIN_CARD_SELECTOR = [
+  "[data-test-id='pinWrapper']",
+  "[data-test-id='pin']",
+  "[data-test-id='pin-visual-wrapper']",
+  "[data-test-id='pinrep-video']",
+  "[data-test-id='gated-pin-rep']",
+  "[data-test-id='closeup-media-container']",
+  "[data-grid-item]"
+].join(", ")
+export const PIN_CLOSEUP = "[data-test-id='closeup-media-container']"
+// closeup-video-with-visibility stays after the video ends and Pinterest swaps it for its cover.
+const VIDEO_MARKER =
+  "[data-test-id='pinrep-video'], [data-test-id='gated-pin-video'], [data-test-id='pin-closeup-video'], [data-test-id='closeup-video-with-visibility']"
+const DURATION_RE = /^\d{1,2}:\d{2}(?::\d{2})?$/
+
+export interface PinCardVideo {
+  // Set only when a /videos/ URL in the card carries the file hash.
+  videoId: string
+  pinId: string
+  // Cover-image hash. Often the same file, but not always, so it's a fallback.
+  signature: string
+}
+
+function urlsIn(card: Element) {
+  const urls: string[] = []
+  const nodes: Element[] = [card, ...card.querySelectorAll("video, img, source")]
+  nodes.forEach((node) => {
+    if (node instanceof HTMLVideoElement) {
+      urls.push(node.getAttribute("poster") || "", node.currentSrc || "", node.src || "")
+    } else if (node instanceof HTMLImageElement) {
+      urls.push(node.currentSrc || "", node.src || "", node.srcset || "")
+    } else {
+      urls.push(node.getAttribute("src") || "")
+    }
+  })
+  return urls
+}
+
+function hashFrom(urls: string[], videosOnly: boolean) {
+  for (const url of urls) {
+    if (videosOnly && !/pinimg\.com\/videos\//i.test(url)) continue
+    const hash = pinHashIn(url)
+    if (hash) return hash
+  }
+  return ""
+}
+
+// A video thumbnail as an <img> counts too: that's how the bulk collector
+// found video pins before it read badges.
+function isVideoCard(card: Element) {
+  if (card instanceof HTMLVideoElement || card.matches(VIDEO_MARKER)) return true
+  if (card.querySelector(`video, ${VIDEO_MARKER}, img[src*='/videos/thumbnails/']`)) return true
+  return [...card.querySelectorAll("[data-test-id='PinTypeIdentifier']")].some((badge) =>
+    DURATION_RE.test((badge.textContent || "").trim())
+  )
+}
+
+function pinIdFrom(card: Element) {
+  const attr =
+    card.getAttribute("data-test-pin-id") ||
+    card.querySelector("[data-test-pin-id]")?.getAttribute("data-test-pin-id") ||
+    ""
+  if (/^\d{5,20}$/.test(attr)) return attr
+  const href = [...card.querySelectorAll("a[href*='/pin/']")]
+    .map((link) => link.getAttribute("href") || "")
+    .find((value) => /\/pin\/\d{5,}/.test(value))
+  const fromHref = href?.match(/\/pin\/(\d{5,20})/)?.[1]
+  if (fromHref) return fromHref
+  if (card.matches(PIN_CLOSEUP)) {
+    return location.pathname.match(/^\/pin\/(\d{5,20})/)?.[1] || ""
+  }
+  return ""
+}
+
+// The video a pin card shows, or null when it isn't a video pin.
+export function pinVideoOf(card: Element): PinCardVideo | null {
+  if (!isVideoCard(card)) return null
+  const urls = urlsIn(card)
+  const videoId = hashFrom(urls, true)
+  const pinId = pinIdFrom(card)
+  const signature = hashFrom(urls, false)
+  if (!videoId && !pinId && !signature) return null
+  return { videoId, pinId, signature }
+}
+
+// Every pin on the page once: its outermost card, or the open pin's closeup,
+// which sits inside a grid item that has neither its pin id nor its title.
+export const pinCards = () =>
+  [...document.querySelectorAll(PIN_CARD_SELECTOR)].filter(
+    (card) =>
+      card.matches(PIN_CLOSEUP) ||
+      (!card.parentElement?.closest(PIN_CARD_SELECTOR) && !card.querySelector(PIN_CLOSEUP))
+  )
 
 // A page is its path, plus the search query on search pages. Other query
 // params (rs=typed, tracking ids, ...) and the hash are ignored.

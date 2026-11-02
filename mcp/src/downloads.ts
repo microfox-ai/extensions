@@ -240,6 +240,7 @@ export async function startPinterestBulk(bridge: Bridge, { force, ...params }: P
   const library = params.destination !== "mediamake" && hasLibrary(lib)
   // The extension names the session's folder after the tab's search: <date>-<query>.
   const inbox = library && params.folder === undefined ? inboxFolder(lib, "pinterest") : undefined
+  const known = library && !force ? await knownPins(lib) : undefined
   return bridge.call("pinterest.bulkStart", {
     ...params,
     folder: params.folder !== undefined ? downloadsFolder(params.folder, lib.home) : undefined,
@@ -247,6 +248,8 @@ export async function startPinterestBulk(bridge: Bridge, { force, ...params }: P
     inboxFolder: inbox,
     takenFolders: inbox && lib.inbox ? subfolders(join(lib.inbox, "pinterest")) : undefined,
     manifest: library || undefined,
-    skipPins: library && !force ? await knownPins(lib) : undefined
+    skipPins: known?.pins,
+    // Video pins are checked against these, so a saved cover doesn't stand for its video.
+    skipVideos: known?.videos
   })
 }

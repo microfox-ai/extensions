@@ -166,7 +166,8 @@ describe("lookup", () => {
       { id: "i2", path: "video/youtube/old.mp4", height: 720, fps: 30, status: "offline", tool: "youtube", ref: "offline0001" },
       { id: "i3", path: "video/youtube/gone.mp4", height: 720, tool: "youtube", ref: "missing0001", onDisk: false },
       { id: "i4", path: "image/pinterest/aa.jpg", tool: "pinterest", ref: "aa11" },
-      { id: "i5", path: "image/pinterest/bb.jpg", tool: "pinterest", ref: "bb22", status: "offline" }
+      { id: "i5", path: "image/pinterest/bb.jpg", tool: "pinterest", ref: "bb22", status: "offline" },
+      { id: "i6", path: "footage/pinterest/ee55.mp4", tool: "pinterest", ref: "ee55" }
     ])
   })
 
@@ -219,20 +220,24 @@ describe("lookup", () => {
     assert.equal(inInbox("youtube", "deleted0001", lib), undefined)
   })
 
-  test("knownPins: online pins in the catalog and pins of earlier sessions still in the inbox", async () => {
+  test("knownPins: online pins in the catalog and pins of earlier sessions still in the inbox, and which are videos", async () => {
     const session = join(inbox, "pinterest", "2026-11-01-luffy")
     touch(join(session, "cc33.jpg"))
+    touch(join(session, "videos", "ff66.mp4"))
     touch(
       join(session, "_session.json"),
       JSON.stringify({
         schema: "mediamake.pinterest-session/v1",
         pins: [
           { id: "cc33", file: "cc33.jpg" },
-          { id: "dd44", file: "dd44.jpg" }
+          { id: "dd44", file: "dd44.jpg" },
+          { id: "ff66", file: "videos/ff66.mp4" }
         ]
       })
     )
-    assert.deepEqual((await knownPins(readLibrary(home))).sort(), ["aa11", "cc33"])
+    const { pins, videos } = await knownPins(readLibrary(home))
+    assert.deepEqual(pins.sort(), ["aa11", "cc33", "ee55", "ff66"])
+    assert.deepEqual(videos.sort(), ["ee55", "ff66"])
   })
 })
 
@@ -419,7 +424,10 @@ describe("Midjourney", () => {
 describe("Pinterest", () => {
   test("a session in the inbox skips what the library has and writes _session.json", async () => {
     writeConfig()
-    makeCatalog([{ id: "i1", path: "image/aa.jpg", tool: "pinterest", ref: "aa11" }])
+    makeCatalog([
+      { id: "i1", path: "image/aa.jpg", tool: "pinterest", ref: "aa11" },
+      { id: "i2", path: "footage/bb.mp4", tool: "pinterest", ref: "bb22" }
+    ])
     mkdirSync(join(inbox, "pinterest", "2026-11-02-luffy"), { recursive: true })
     const bridge = fakeBridge({ "pinterest.bulkStart": (params) => ({ tabId: 1, folder: "x", ...params }) })
     await startPinterestBulk(bridge, { destination: "browser", perPageLimit: 20 })
@@ -427,7 +435,8 @@ describe("Pinterest", () => {
     assert.equal(params.inboxFolder, "_INBOX/pinterest")
     assert.deepEqual(params.takenFolders, ["2026-11-02-luffy"])
     assert.equal(params.manifest, true)
-    assert.deepEqual(params.skipPins, ["aa11"])
+    assert.deepEqual([...params.skipPins].sort(), ["aa11", "bb22"])
+    assert.deepEqual(params.skipVideos, ["bb22"])
     assert.equal(params.folder, undefined)
   })
 
@@ -441,6 +450,7 @@ describe("Pinterest", () => {
     await startPinterestBulk(bridge, { destination: "browser", folder: "pins" })
     const [forced, mediamake, plain] = bridge.calls.map((c) => c.params)
     assert.equal(forced.skipPins, undefined)
+    assert.equal(forced.skipVideos, undefined)
     assert.equal(forced.manifest, true)
     assert.equal(mediamake.manifest, undefined)
     assert.equal(mediamake.inboxFolder, undefined)
