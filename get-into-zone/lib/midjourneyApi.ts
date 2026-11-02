@@ -8,6 +8,7 @@
 // Outcrop leaves the new margin empty. Repaint leaves holes where the user
 // brushed; that brush step happens in a Chrome tab, not here.
 
+import { downloadFile } from "./downloads"
 import { openTab } from "./tabs"
 
 const MJ_ORIGIN = "https://www.midjourney.com"
@@ -874,7 +875,7 @@ export async function downloadImages(params: {
   const deadline = Date.now() + READY_WAIT_MS
   const files = []
   for (const index of indexes) {
-    const downloadId = await chrome.downloads.download({
+    const downloadId = await downloadFile({
       url: await readyResultUrl(params.jobId, index, deadline),
       filename: name ? `${folder}/${name}-${index}.png` : `${folder}/${params.jobId}_${index}.png`,
       conflictAction: name ? "overwrite" : "uniquify",

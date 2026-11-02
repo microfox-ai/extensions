@@ -1,3 +1,4 @@
+import { downloadFile } from "./downloads"
 import {
   PINTEREST_SESSION_SCHEMA,
   jsonByLine,
@@ -166,7 +167,7 @@ async function saveImage(
 
   if (session.destination === "browser") {
     const file = `${session.folder}/${fileName}`
-    const downloadId = await chrome.downloads.download({
+    const downloadId = await downloadFile({
       url,
       filename: file,
       conflictAction: "uniquify",
