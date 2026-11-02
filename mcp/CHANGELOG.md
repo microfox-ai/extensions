@@ -7,6 +7,15 @@ last release; see `.github/workflows/release-browse-hack-mcp.yml`). They show
 on Browse Hack's page on MediaMake and in `get_status` / `update_browse_hack`
 after an update.
 
+## 0.9.0
+
+- Makes songs on Suno: `suno_create` fills Suno's own Create form (lyrics, styles, exclude styles, title, model, vocal gender, sliders, workspace) and clicks Create in Browse Hack's Suno tab, then waits for the two songs. Suno runs its usual checks; a captcha brings the tab forward for you.
+- Covers, extensions, mashups, samples and inspirations with `suno_cover`, from a Suno song, a MediaMake library item (one that came from Suno is covered from Suno directly) or an audio file you own.
+- Records every take in MediaMake cloud under the channel's project (`suno_list_generations`, `suno_rate`, `suno_list_presets`, `suno_save_preset`), once MediaMake has its songs database.
+- `suno_download` saves keepers into the library inbox (`_INBOX/suno/<channel>/<set>/`) with a `.source.json` holding the lyrics, styles, settings and parent; it reports Suno's monthly downloads left.
+- `suno_batch_start`, `suno_batch_status` and `suno_batch_pause` run many songs in the background and pause for a captcha or low credits. New `suno-songs` skill.
+- Needs Browse Hack 0.11.0 or later, which adds Copy for Claude, Variations and Save buttons on suno.com and a Suno tab in the popup.
+
 ## 0.8.1
 
 - `pinterest_bulk_start` tells the extension which of the pins the library has are videos, so a video pin is skipped only when the library has its video, not just its cover image. Needs Browse Hack 0.10.1, which also saves video pins as videos when you're signed in to Pinterest instead of saving their covers.

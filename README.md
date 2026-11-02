@@ -65,7 +65,7 @@ On Pinterest the overlay has more options:
 | AI Only | Runs the analysis without saving; results show up in the **Pinterest** tab |
 | View AI | Shows the last analysis for that image |
 
-On suno.com, an **Upload to Mediamake** panel appears under the open track's Remix/Edit button.
+On suno.com, songs get their own buttons; see [Make songs on Suno](#make-songs-on-suno-suno-tab-and-sunocom).
 
 ### Bulk download from Pinterest (Pinterest tab)
 
@@ -135,7 +135,7 @@ Story highlights aren't supported. Only download posts you have the right to sav
 
 The **Saver** tab controls where overlays appear. It has four switches:
 
-- **All savers**: every overlay, including the Suno upload panel
+- **All savers**: every overlay, including the buttons on suno.com
 - **Save button**: the Save buttons
 - **AI analyse**: the Save + AI, AI Only, and View AI buttons
 - **Download buttons**: the Download buttons on YouTube thumbnails, under the YouTube video title, on Pinterest video pins, and on Instagram photos and videos
@@ -172,6 +172,30 @@ Ask Claude to upload a folder that holds the video and an `info.json` (MediaMake
 - End screens, cards and subtitles are left for you to add.
 
 The `info.json` fields are listed in [`mcp/README.md`](mcp/README.md#infojson-for-youtube-uploads).
+
+### Make songs on Suno (Suno tab and suno.com)
+
+Sign in to suno.com in the same Chrome profile. Browse Hack keeps every song you make for a channel in MediaMake: each take is recorded under the channel's MediaMake project (the team sees the prompts, lyrics and ratings), and the songs you keep are saved into MediaMake's media library.
+
+**On suno.com:**
+- **On a song:** hover it in any song list (or open its page) for three buttons:
+  - **Copy for Claude**: copies its title, link, model, settings, styles, lyrics and channel, ready to paste into Claude with what to change.
+  - **Variations ▾**: makes covers, an instrumental, an extension, the same lyrics in a new style, or the same prompt again. You pick the style (or one of the channel's saved styles), how many runs, the Suno workspace, the MediaMake channel and the song folder. Browse Hack runs them in its own Suno tab.
+  - **Save**: downloads the song into the library inbox (`_INBOX/suno/<channel>/<song>/`), with a `.source.json` beside it, and marks it a keeper.
+- **On the Create form:** a bar picks the channel, saves the form's styles and settings as a preset for the channel (**Save as preset**), and presses Create several times for you (**Run ×N**).
+
+**In the popup's Suno tab:**
+- your credits and the downloads left this month
+- each MediaMake channel linked to its Suno workspace and MediaMake project
+- the download format, and whether songs you download by hand on suno.com are filed into the library too
+- **I own or license the audio I cover**: lets Browse Hack accept Suno's upload terms when it uploads one of your tracks for a cover. Only you can turn this on.
+
+Things to know:
+- Every Create makes two songs and costs credits. Downloads count against Suno's monthly download limit, so Browse Hack only downloads what you save.
+- If Suno shows a captcha, Browse Hack brings its Suno tab forward and waits for you. It never solves one.
+- Suno checks uploads against copyrighted music and refuses matches.
+
+Claude does the same with the `suno_` tools (see [`mcp/README.md`](mcp/README.md#suno)): new songs, covers of your Suno songs or library tracks, batches, ratings, and saved styles.
 
 ### Automate Midjourney (Midjourney tab)
 

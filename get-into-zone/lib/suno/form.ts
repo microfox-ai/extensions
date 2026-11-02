@@ -1,0 +1,538 @@
+// Suno's Create form, driven the way a person would: Browse Hack fills the
+// fields, picks the model and workspace, attaches audio and clicks Create, so
+// suno.com runs its own checks (including its captcha) on every song. Runs in
+// the suno.com content script. Values are set through the element's native
+// setter, which both React and this isolated world see.
+
+import { CONDITIONS, ROW, SEL, SLIDERS, TEXT } from "./selectors"
+
+export interface SunoFormJob {
+  lyrics?: string
+  instrumental?: boolean
+  styles?: string
+  excludeStyles?: string
+  title?: string
+  /** v6, v6-wild, v6-mini, as the model menu names them. */
+  model?: string
+  vocalGender?: "male" | "female"
+  /** 0-100. */
+  weirdness?: number
+  styleInfluence?: number
+  audioInfluence?: number
+  /** The Variety slider's own value. */
+  variety?: number
+  maxMode?: boolean
+  myTaste?: boolean
+  /** The workspace's name, checked against the form's workspace button. */
+  workspaceName?: string
+  /** Cover, Extend… for the audio condition. */
+  condition?: string
+  /** Extend from this many seconds into the song. */
+  extendFrom?: number
+}
+
+export interface SunoFormState {
+  ready: boolean
+  advanced: boolean
+  model?: string
+  credits?: number
+  workspace?: string
+  condition?: string
+  title?: string
+  styles?: string
+  excludeStyles?: string
+  lyrics?: string
+  sliders: Record<string, number | undefined>
+  createEnabled: boolean
+  captcha: boolean
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+export async function waitFor<T>(find: () => T | null | undefined | false, timeoutMs = 10_000, everyMs = 200) {
+  const start = Date.now()
+  for (;;) {
+    const found = find()
+    if (found) return found
+    if (Date.now() - start > timeoutMs) return null
+    await sleep(everyMs)
+  }
+}
+
+const text = (el: Element | null | undefined) => ((el as HTMLElement | null)?.innerText ?? el?.textContent ?? "").trim()
+const firstLine = (el: Element) => text(el).split("\n")[0].trim()
+const norm = (value: string) => value.replace(/\r/g, "").replace(/\s+/g, " ").trim().toLowerCase()
+
+export const visible = (el: Element | null | undefined): el is HTMLElement => {
+  if (!el) return false
+  const rect = el.getBoundingClientRect()
+  return rect.width > 0 && rect.height > 0 && getComputedStyle(el).visibility !== "hidden"
+}
+
+/** The Create panel: the nearest box holding both the Create button and the lyrics. */
+export function createPanel(): HTMLElement | null {
+  const create = document.querySelector(SEL.createButton)
+  const lyrics = document.querySelector(SEL.lyrics)
+  if (!create) return null
+  if (!lyrics) return create.closest("form") ?? (create.parentElement?.parentElement as HTMLElement | null)
+  let node: HTMLElement | null = create.parentElement
+  while (node && !node.contains(lyrics)) node = node.parentElement
+  return node
+}
+
+function within<T extends Element>(root: ParentNode, selector: string) {
+  return Array.from(root.querySelectorAll<T>(selector))
+}
+
+/** A button in the panel by its visible text (first line). */
+function buttonByText(root: ParentNode, label: string) {
+  return within<HTMLButtonElement>(root, "button").find((b) => firstLine(b) === label)
+}
+
+/** The buttons of a More Options row ("Vocal Gender": Male / Female). */
+function rowButtons(panel: HTMLElement, label: string) {
+  const leaf = within<HTMLElement>(panel, "div, span, label, p").find(
+    (el) => el.children.length === 0 && text(el) === label
+  )
+  let box: HTMLElement | null = leaf ?? null
+  for (let i = 0; box && i < 5; i++) {
+    const buttons = within<HTMLButtonElement>(box, "button")
+    if (buttons.length >= 2) return buttons
+    box = box.parentElement
+  }
+  return []
+}
+
+/** Whether a toggle-style button is the selected one. */
+function isOn(button: HTMLElement) {
+  const attrs = ["aria-pressed", "aria-checked", "aria-selected"].map((a) => button.getAttribute(a))
+  if (attrs.includes("true")) return true
+  if (attrs.includes("false")) return false
+  const state = button.getAttribute("data-state") ?? ""
+  if (/^(on|active|checked|selected)$/.test(state)) return true
+  if (/^(off|inactive|unchecked)$/.test(state)) return false
+  for (const flag of ["data-selected", "data-active"]) {
+    const value = button.getAttribute(flag)
+    if (value !== null) return value !== "false"
+  }
+  // Segmented buttons often mark the chosen one only by its colours.
+  const siblings = Array.from(button.parentElement?.querySelectorAll("button") ?? [])
+  const mine = getComputedStyle(button).backgroundColor
+  const others = siblings.filter((b) => b !== button).map((b) => getComputedStyle(b).backgroundColor)
+  const transparent = (c: string) => c === "rgba(0, 0, 0, 0)" || c === "transparent"
+  return others.length > 0 && !transparent(mine) && others.every((c) => transparent(c) || c !== mine)
+}
+
+/** Sets an input's or textarea's value so React sees the change. */
+export function setValue(el: HTMLInputElement | HTMLTextAreaElement, value: string) {
+  const proto = Object.getPrototypeOf(el)
+  const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set
+  el.focus()
+  if (setter) setter.call(el, value)
+  else el.value = value
+  el.dispatchEvent(new Event("input", { bubbles: true }))
+  el.dispatchEvent(new Event("change", { bubbles: true }))
+}
+
+/** The lyrics as lines: one per paragraph of the editor. */
+export function lyricsText(editor = document.querySelector<HTMLElement>(SEL.lyrics)) {
+  if (!editor) return undefined
+  const paragraphs = Array.from(editor.querySelectorAll("p"))
+  return paragraphs.length ? paragraphs.map((p) => p.textContent ?? "").join("\n") : (editor.textContent ?? "")
+}
+
+/** Asks contents/sunoPage.ts, in the page itself, to set the Lexical editor's text. */
+function setLyricsInPage(value: string) {
+  const id = Math.random().toString(36).slice(2)
+  return new Promise<boolean>((resolve) => {
+    const done = (ok: boolean) => {
+      clearTimeout(timer)
+      window.removeEventListener("message", onMessage)
+      resolve(ok)
+    }
+    const onMessage = (event: MessageEvent) => {
+      if (event.source === window && event.data?.source === "browse-hack-suno" && event.data.type === "lyrics-set" && event.data.id === id) {
+        done(Boolean(event.data.ok))
+      }
+    }
+    const timer = setTimeout(() => done(false), 2000)
+    window.addEventListener("message", onMessage)
+    window.postMessage({ source: "browse-hack-suno-cs", type: "set-lyrics", id, text: value }, location.origin)
+  })
+}
+
+/** Replaces the lyrics: through the page's editor, else by typing (which loses line breaks). */
+export async function setLyrics(value: string) {
+  const editor = document.querySelector<HTMLElement>(SEL.lyrics)
+  if (!editor) return false
+  const lines = (text: string) => text.replace(/\r/g, "").split("\n").map((l) => l.trim()).join("\n").trim()
+  const matches = () => lines(lyricsText(editor) ?? "") === lines(value)
+  if (await setLyricsInPage(value)) {
+    await sleep(150)
+    if (matches()) return true
+  }
+  editor.focus()
+  const range = document.createRange()
+  range.selectNodeContents(editor)
+  window.getSelection()?.removeAllRanges()
+  window.getSelection()?.addRange(range)
+  document.execCommand(value ? "insertText" : "delete", false, value)
+  await sleep(150)
+  return matches()
+}
+
+const key = (el: HTMLElement, name: string) => {
+  el.dispatchEvent(new KeyboardEvent("keydown", { key: name, code: name, bubbles: true, cancelable: true }))
+  el.dispatchEvent(new KeyboardEvent("keyup", { key: name, code: name, bubbles: true, cancelable: true }))
+}
+
+/** Moves a slider with its keyboard keys, the way the site's own sliders allow. */
+export async function setSlider(panel: HTMLElement, label: string, target: number) {
+  const slider = panel.querySelector<HTMLElement>(SEL.slider(label))
+  if (!slider) return false
+  const read = () => Number(slider.getAttribute("aria-valuenow"))
+  const min = Number(slider.getAttribute("aria-valuemin") ?? 0)
+  const max = Number(slider.getAttribute("aria-valuemax") ?? 100)
+  const goal = Math.min(max, Math.max(min, Math.round(target)))
+  slider.focus()
+  for (let guard = 0; guard < 220 && read() !== goal; guard++) {
+    const before = read()
+    const gap = goal - before
+    key(slider, Math.abs(gap) >= 10 && max - min >= 50 ? (gap > 0 ? "PageUp" : "PageDown") : gap > 0 ? "ArrowRight" : "ArrowLeft")
+    await sleep(15)
+    if (read() === before) {
+      // PageUp may be ignored; fall back to single steps once.
+      key(slider, gap > 0 ? "ArrowRight" : "ArrowLeft")
+      await sleep(15)
+      if (read() === before) return false
+    }
+  }
+  return read() === goal
+}
+
+// The workspace picker lists names with a count: "My Workspace (12 clips)".
+const bare = (value: string) => norm(value.replace(/\s*\(\d[\d,]*\s+clips?\)\s*$/i, ""))
+
+/** An item in the open menu or picker dialog whose name is `label`. */
+export function openItem(label: string, except?: Element) {
+  const scopes = within<HTMLElement>(document, SEL.popups).filter(visible)
+  const item = scopes
+    .flatMap((scope) => within<HTMLElement>(scope, "span, div, button, li, p, [role='option'], [role='menuitem']"))
+    .find((el) => el !== except && el.children.length <= 1 && visible(el) && bare(firstLine(el)) === norm(label))
+  return item ? (item.closest<HTMLElement>(SEL.clickable) ?? item) : undefined
+}
+
+const escape = () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))
+
+/** Opens a menu or picker with `opener` and clicks the item named `label`. */
+async function pickFromMenu(opener: HTMLElement, label: string) {
+  opener.click()
+  const item = await waitFor(() => openItem(label, opener), 4000)
+  if (!item) {
+    escape()
+    return false
+  }
+  item.click()
+  await sleep(400)
+  return true
+}
+
+/** The model button in the form's header: its text is the model (v6-wild). */
+function modelButton(panel: HTMLElement) {
+  return within<HTMLButtonElement>(panel, "button").find((b) => /^v\d[\w.+-]*$/i.test(firstLine(b)))
+}
+
+/** The workspace button: beside the form's "Save to..." label; it opens the workspace picker. */
+function workspaceButton(panel: HTMLElement) {
+  return within<HTMLButtonElement>(panel, 'button[aria-haspopup="dialog"]').find((b) =>
+    (b.parentElement?.textContent ?? "")
+      .replace(b.textContent ?? "", "")
+      .trim()
+      .startsWith(TEXT.saveTo)
+  )
+}
+
+function stylesBox(panel: HTMLElement) {
+  const clear = panel.querySelector(SEL.clearStyles)
+  let box = clear?.parentElement ?? null
+  for (let i = 0; box && i < 5; i++) {
+    const area = box.querySelector<HTMLTextAreaElement>("textarea")
+    if (area) return area
+    box = box.parentElement
+  }
+  return panel.querySelector<HTMLTextAreaElement>(SEL.stylesFallback) ?? undefined
+}
+
+const creditsOf = (el: Element | null) => {
+  const label = el?.getAttribute("aria-label") ?? ""
+  const n = Number(label.replace(/[^\d]/g, ""))
+  return label && Number.isFinite(n) ? n : undefined
+}
+
+export function captchaVisible() {
+  return within<HTMLIFrameElement>(document, SEL.captchaFrames).some((frame) => {
+    const rect = frame.getBoundingClientRect()
+    return rect.width > 60 && rect.height > 60 && visible(frame)
+  })
+}
+
+export function readForm(): SunoFormState {
+  const panel = createPanel()
+  const sliders: Record<string, number | undefined> = {}
+  for (const [name, label] of Object.entries(SLIDERS)) {
+    const el = panel?.querySelector(SEL.slider(label))
+    sliders[name] = el ? Number(el.getAttribute("aria-valuenow")) : undefined
+  }
+  const create = document.querySelector<HTMLButtonElement>(SEL.createButton)
+  const advancedTab = panel ? within<HTMLElement>(panel, '[role="tab"]').find((t) => text(t) === TEXT.advanced) : undefined
+  return {
+    ready: !!panel && !!document.querySelector(SEL.lyrics),
+    advanced: advancedTab ? advancedTab.getAttribute("aria-selected") === "true" || isOn(advancedTab) : false,
+    model: panel ? modelButton(panel) && firstLine(modelButton(panel)!) : undefined,
+    credits: creditsOf(document.querySelector(SEL.credits)),
+    workspace: panel ? workspaceButton(panel) && firstLine(workspaceButton(panel)!) : undefined,
+    condition: firstLine(document.querySelector(SEL.conditionType) ?? document.createElement("i")) || undefined,
+    title: document.querySelector<HTMLInputElement>(SEL.title)?.value,
+    styles: panel ? stylesBox(panel)?.value : undefined,
+    excludeStyles: document.querySelector<HTMLInputElement>(SEL.excludeStyles)?.value,
+    lyrics: lyricsText(),
+    sliders,
+    createEnabled: !!create && !create.disabled && create.getAttribute("aria-disabled") !== "true",
+    captcha: captchaVisible()
+  }
+}
+
+/** Selects the Songs tab and Advanced mode, where every field is. */
+async function ensureAdvanced(panel: HTMLElement) {
+  for (const label of [TEXT.songsTab, TEXT.advanced]) {
+    const tab = within<HTMLElement>(panel, '[role="tab"]').find((t) => text(t) === label)
+    if (tab && tab.getAttribute("aria-selected") !== "true") {
+      tab.click()
+      await sleep(300)
+    }
+  }
+}
+
+/** Opens More Options when its rows aren't on the page yet. */
+async function ensureMoreOptions(panel: HTMLElement) {
+  if (panel.querySelector(SEL.excludeStyles)) return
+  const header = within<HTMLElement>(panel, "button, div, span").find((el) => firstLine(el) === TEXT.moreOptions)
+  header?.click()
+  await waitFor(() => panel.querySelector(SEL.excludeStyles), 3000)
+}
+
+async function clickRow(panel: HTMLElement, row: string, option: string) {
+  const button = rowButtons(panel, row).find((b) => firstLine(b) === option)
+  if (!button) return false
+  if (!isOn(button)) {
+    button.click()
+    await sleep(200)
+  }
+  return true
+}
+
+/** Sets the audio condition (Cover, Extend…) when audio is attached. */
+export async function setCondition(name: string) {
+  const label = CONDITIONS[name.toLowerCase()] ?? name
+  const opener = await waitFor(() => document.querySelector<HTMLElement>(SEL.conditionType), 15_000)
+  if (!opener) return false
+  if (norm(firstLine(opener)) === norm(label)) return true
+  return pickFromMenu(opener, label)
+}
+
+const clock = (seconds: number) => {
+  const m = Math.floor(seconds / 60)
+  const s = seconds - m * 60
+  return `${String(m).padStart(2, "0")}:${s.toFixed(1).padStart(4, "0")}`
+}
+
+async function setExtendFrom(panel: HTMLElement, seconds: number) {
+  const label = within<HTMLElement>(panel, "div, span, label").find(
+    (el) => el.children.length === 0 && text(el).startsWith(TEXT.extendFrom)
+  )
+  const input = label?.parentElement?.querySelector<HTMLInputElement>("input")
+  if (!input) return false
+  setValue(input, clock(seconds))
+  key(input, "Enter")
+  input.blur()
+  return true
+}
+
+/**
+ * Fills the Create form from a job. Leaves out what the job doesn't set, so a
+ * cover keeps the lyrics and styles suno.com loaded from the source song.
+ * Returns what couldn't be set.
+ */
+export async function fillForm(job: SunoFormJob) {
+  const warnings: string[] = []
+  const panel = (await waitFor(createPanel, 15_000)) as HTMLElement | null
+  if (!panel) throw new Error("Suno's Create form isn't on the page.")
+  await ensureAdvanced(panel)
+
+  if (job.model) {
+    const button = modelButton(panel)
+    const ok = button && (norm(firstLine(button)) === norm(job.model) || (await pickFromMenu(button, job.model)))
+    if (!ok) warnings.push(`model ${job.model} isn't in the model menu`)
+  }
+  if (job.condition && !(await setCondition(job.condition))) warnings.push(`couldn't switch the audio to ${job.condition}`)
+  if (job.extendFrom !== undefined && !(await setExtendFrom(panel, job.extendFrom))) {
+    warnings.push("couldn't set where to extend from")
+  }
+
+  if (job.instrumental || job.lyrics !== undefined) {
+    const lyrics = job.instrumental ? (job.condition ? "[Instrumental]" : "") : job.lyrics ?? ""
+    if (!(await setLyrics(lyrics))) warnings.push("the lyrics didn't take; check the Lyrics box")
+  }
+  if (job.styles !== undefined) {
+    const area = stylesBox(panel)
+    if (area) setValue(area, job.styles.slice(0, area.maxLength > 0 ? area.maxLength : 1000))
+    else warnings.push("no Styles box")
+  }
+
+  const wantsMore =
+    job.excludeStyles !== undefined ||
+    job.vocalGender ||
+    job.maxMode !== undefined ||
+    job.myTaste !== undefined ||
+    [job.weirdness, job.styleInfluence, job.audioInfluence, job.variety].some((v) => v !== undefined)
+  if (wantsMore) await ensureMoreOptions(panel)
+  if (job.excludeStyles !== undefined) {
+    const input = panel.querySelector<HTMLInputElement>(SEL.excludeStyles)
+    if (input) setValue(input, job.excludeStyles)
+    else warnings.push("no Exclude styles box (Pro and Premier only)")
+  }
+  if (job.vocalGender) {
+    const option = job.vocalGender === "male" ? ROW.vocalGender.male : ROW.vocalGender.female
+    if (!(await clickRow(panel, ROW.vocalGender.label, option))) warnings.push("couldn't set Vocal Gender")
+  }
+  if (job.maxMode !== undefined && !(await clickRow(panel, ROW.maxMode.label, job.maxMode ? ROW.maxMode.on : ROW.maxMode.off))) {
+    warnings.push("couldn't set Max Mode")
+  }
+  if (job.myTaste !== undefined && !(await clickRow(panel, ROW.myTaste.label, job.myTaste ? ROW.myTaste.on : ROW.myTaste.off))) {
+    warnings.push("couldn't set My Taste")
+  }
+  const sliders: [keyof typeof SLIDERS, number | undefined][] = [
+    ["weirdness", job.weirdness],
+    ["styleInfluence", job.styleInfluence],
+    ["audioInfluence", job.audioInfluence],
+    ["variety", job.variety]
+  ]
+  for (const [name, value] of sliders) {
+    if (value === undefined) continue
+    if (!(await setSlider(panel, SLIDERS[name], value))) warnings.push(`couldn't move ${SLIDERS[name]} to ${value}`)
+  }
+
+  if (job.title !== undefined) {
+    const input = panel.querySelector<HTMLInputElement>(SEL.title)
+    if (input) setValue(input, job.title.slice(0, 100))
+    else warnings.push("no Song Title box")
+  }
+  if (job.workspaceName) {
+    const button = workspaceButton(panel)
+    const ok = button && (norm(firstLine(button)) === norm(job.workspaceName) || (await pickFromMenu(button, job.workspaceName)))
+    if (!ok) warnings.push(`couldn't pick the workspace "${job.workspaceName}"`)
+  }
+  await sleep(200)
+  return { warnings, form: readForm() }
+}
+
+/** Clicks Create. Throws with the reason when the button can't be pressed. */
+export function clickCreate() {
+  const button = document.querySelector<HTMLButtonElement>(SEL.createButton)
+  if (!button) throw new Error("Suno's Create button isn't on the page.")
+  if (button.disabled || button.getAttribute("aria-disabled") === "true") {
+    throw new Error("Suno's Create button is disabled: the form needs lyrics, styles or audio first.")
+  }
+  button.click()
+}
+
+/** Puts a file into the Create form's audio upload, as if picked in Upload. */
+export async function attachAudio(file: File) {
+  let input = document.querySelector<HTMLInputElement>(SEL.audioFileInput)
+  if (!input) {
+    document.querySelector<HTMLElement>(SEL.addAudio)?.click()
+    input = (await waitFor(() => document.querySelector<HTMLInputElement>(SEL.audioFileInput), 4000)) as HTMLInputElement | null
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))
+  }
+  if (!input) throw new Error("Suno's audio upload isn't on the page.")
+  const transfer = new DataTransfer()
+  transfer.items.add(file)
+  input.files = transfer.files
+  input.dispatchEvent(new Event("input", { bubbles: true }))
+  input.dispatchEvent(new Event("change", { bubbles: true }))
+}
+
+/** Suno's one-time upload terms dialog, if it is open: its checkbox and confirm button. */
+export function uploadTermsDialog() {
+  const dialog = within<HTMLElement>(document, '[role="dialog"], [role="alertdialog"]').find(
+    (d) => visible(d) && /terms|rights|own|permission|copyright/i.test(text(d))
+  )
+  if (!dialog) return null
+  const checkbox = dialog.querySelector<HTMLElement>('input[type="checkbox"], [role="checkbox"]')
+  const confirm = within<HTMLButtonElement>(dialog, "button").find((b) => /agree|accept|continue|confirm|upload/i.test(firstLine(b)))
+  return { dialog, checkbox, confirm, text: text(dialog).slice(0, 400) }
+}
+
+/** An error message Suno shows near the form (upload rejected, out of credits…). */
+export function visibleError() {
+  const alert = within<HTMLElement>(document, '[role="alert"], [data-sonner-toast], [role="status"]').find(
+    (el) => visible(el) && /fail|error|can't|cannot|unable|not enough|insufficient|limit|match|copyright|reject/i.test(text(el))
+  )
+  return alert ? text(alert).slice(0, 300) : undefined
+}
+
+/** The song's "…" (More options) button: in its row of a song list, or on its own page. */
+export function songMenuButton(clipId: string) {
+  const row = within<HTMLElement>(document, SEL.clipRow).find((r) => r.querySelector(`a[href^="/song/${clipId}"]`))
+  const inRow = row?.querySelector<HTMLButtonElement>(SEL.moreOptions)
+  if (inRow) return inRow
+  if (!location.pathname.startsWith(`/song/${clipId}`)) return undefined
+  // The song's own page also shows other songs (its parent, more by the artist),
+  // each with a More options of its own: take the one whose box links to this song only.
+  const near = (button: Element) => {
+    let box = button.parentElement
+    let mine = false
+    for (let i = 0; box && i < 5; i++, box = box.parentElement) {
+      for (const a of within<HTMLAnchorElement>(box, SEL.songLink)) {
+        if (a.getAttribute("href")!.startsWith(`/song/${clipId}`)) mine = true
+        else return "other"
+      }
+    }
+    return mine ? "mine" : "none"
+  }
+  const buttons = within<HTMLButtonElement>(document, SEL.moreOptions).filter(visible)
+  return buttons.find((b) => near(b) === "mine") ?? buttons.find((b) => near(b) === "none")
+}
+
+/** Opens a song's "…" menu; resolves with its Download item (not clicked). */
+export async function openSongMenu(clipId: string) {
+  const opener = (await waitFor(() => songMenuButton(clipId), 15_000)) as HTMLButtonElement | null
+  if (!opener) throw new Error(`Couldn't find the song's menu for ${clipId} on this page.`)
+  opener.scrollIntoView({ block: "center" })
+  opener.click()
+  const item = await waitFor(() => openItem(TEXT.download, opener), 5000)
+  if (!item) {
+    escape()
+    throw new Error("The song's menu has no Download item.")
+  }
+  return item
+}
+
+/** Clicks a song's Download item and the format asked for, as a person would. */
+export async function clickDownload(clipId: string, format: "mp3" | "wav") {
+  const item = await openSongMenu(clipId)
+  item.click()
+  const want = format === "wav" ? /\bwav\b/i : /\bmp3\b|^audio$/i
+  const choice = await waitFor(() => {
+    for (const scope of within<HTMLElement>(document, SEL.popups).filter(visible)) {
+      const hit = within<HTMLElement>(scope, "span, div, button, [role='menuitem']").find(
+        (el) => el.children.length <= 1 && visible(el) && want.test(firstLine(el)) && !/video/i.test(firstLine(el))
+      )
+      if (hit) return hit.closest<HTMLElement>(SEL.clickable) ?? hit
+    }
+    return null
+  }, 5000)
+  // Some accounts download straight from the menu item, with no format to pick.
+  if (choice) choice.click()
+  return { pickedFormat: Boolean(choice) }
+}

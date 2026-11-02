@@ -6,10 +6,10 @@ This is a [Plasmo extension](https://docs.plasmo.com/) project bootstrapped with
 
 | Path | What it does |
 | --- | --- |
-| `popup.tsx` | Popup shell and header tabs. Set `hidden: true` in `TABS` to hide a tab (Suno and AI Agents are hidden) |
+| `popup.tsx` | Popup shell and header tabs. Set `hidden: true` in `TABS` to hide a tab (AI Agents is hidden) |
 | `componenets/` | One component per popup tab (`SaverTab.tsx`, `MidjourneyTab.tsx`, ...) |
-| `content.ts` | Content script: Save / AI overlays on images, the Suno upload panel, the Pinterest bulk-download collector |
-| `background.ts` | Service worker: API calls, Midjourney queue, Suno upload |
+| `content.ts` | Content script: Save / AI overlays on images, the Pinterest bulk-download collector |
+| `background.ts` | Service worker: API calls, Midjourney queue, Suno transcription upload |
 | `lib/midjourneyApi.ts` | Midjourney image jobs: Editor outcrop and repaint, Create-page generate, and vary, upscale, pan and zoom on a result |
 | `lib/midjourneyEdit.ts` | Repaint sessions: opens the brush tab and submits once the user erases a region |
 | `tabs/midjourney-edit.tsx` | Brush page where the user marks the parts of an image Midjourney should repaint |
@@ -30,6 +30,12 @@ This is a [Plasmo extension](https://docs.plasmo.com/) project bootstrapped with
 | `lib/instagramBackground.ts` | Instagram lookups for the popup (run in an open instagram.com tab) and saving files to Downloads |
 | `contents/instagram.ts` | Content script on Instagram: Download / All buttons on hovered photos and videos, result toasts |
 | `componenets/InstagramTab.tsx` | Popup tab: load the current or a pasted post, download one slide or all |
+| `lib/suno/clip.ts` | Suno songs as Browse Hack uses them: normalised clips, accounts and workspaces, Copy for Claude text, file names, the MediaMake cloud record |
+| `lib/suno/form.ts`, `lib/suno/selectors.ts` | Suno's Create form, driven like a person: fields, sliders, model and workspace pickers, audio uploads, a song's Download. Every selector is in `selectors.ts`; how suno.com works is in `lib/suno/NOTES.md` |
+| `contents/suno.ts` | Content script on suno.com: reads through Suno's API with the page's sign-in, fills and submits the Create form, takes uploads, and the Copy for Claude / Variations / Save buttons and the Create-form bar |
+| `contents/sunoPage.ts` | Runs in suno.com's own page: reports what the site's Create request returned, and sets the Lexical lyrics editor |
+| `lib/sunoBridge.ts` | Suno for the MCP server and the buttons: the background Suno tab, making and downloading songs one at a time, filing downloads into the library inbox, MediaMake cloud records and presets |
+| `lib/sunoPrefs.ts`, `componenets/SunoTab.tsx` | Suno settings and their popup tab: channel ↔ workspace ↔ MediaMake project links, download format, upload terms |
 | `lib/libraryFiles.ts` | Files for MediaMake's media library, written through `chrome.downloads`: a download's `<file>.source.json` and a Pinterest session's `_session.json` |
 | `lib/saverRules.ts` | Saver toggle rules (page / site / window / everywhere) shared by popup, content script, and background |
 | `lib/saverBackground.ts` | Toolbar "OFF" badge, right-click menu, window-rule cleanup |

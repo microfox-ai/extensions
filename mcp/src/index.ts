@@ -15,6 +15,8 @@ import { downloadMidjourneyImages, instagramDownload, startPinterestBulk, youtub
 import { saveGoogleAiAnswers } from "./googleAiAnswers.js"
 import { batchStatus, pauseBatch, startBatch } from "./midjourneyBatch.js"
 import { toSource } from "./sources.js"
+import { clipIdOf, coverSong, createSongs, downloadSongs, listSongs, rateSongs, sunoStatus } from "./suno.js"
+import { pauseSunoBatch, startSunoBatch, sunoBatchStatus } from "./sunoBatch.js"
 import { Updater, serverVersion } from "./updates.js"
 
 // GET_INTO_ZONE_* are the names from before the rename to Browse Hack.
@@ -41,6 +43,10 @@ const server = new McpServer(
       "then info.json's useMyOriginals and addLyrics let the extension fill in the Mixea and lyrics pages, which the user submits), " +
       "and upload videos to YouTube Studio from local pack folders, switching to the channel info.json names and filling the " +
       "upload form (the user clicks Save, Publish or Schedule). " +
+      "Suno: suno_create and suno_cover fill Suno's own Create form and click Create in Browse Hack's Suno tab (each Create " +
+      "makes two songs and spends credits; check suno_status and agree batches with the user). If Suno shows a captcha, the user " +
+      "clears it in the tab: never try to solve one. Takes are recorded in MediaMake cloud under the channel's project " +
+      "(suno_list_generations); downloads are metered by Suno, so suno_download only the keepers, into MediaMake's library inbox. " +
       "Every tool needs the extension signed in to Mediamake; if a tool says it isn't, call sign_in_to_mediamake and tell the " +
       "user to sign in and click Allow in the window that opens. For more than a few Midjourney prompts, use midjourney_batch_start. " +
       "midjourney_repaint opens a brush tab so the user can erase part of an image by hand; tell them to paint and click Repaint, then call midjourney_repaint_status. " +
@@ -467,6 +473,224 @@ tool("saver_reset", "Removes every overlay rule, so all overlays are on everywhe
 })
 
 // --- Suno ---
+
+const songFields = {
+  lyrics: z.string().optional().describe("Lyrics, with [Verse] / [Chorus] tags on their own lines. Leave out for a cover to keep the song's"),
+  instrumental: z.boolean().optional().describe("No vocals (the lyrics box is left empty, or [Instrumental] for a cover)"),
+  styles: z.string().optional().describe("Suno's Styles box (up to 1000 characters): genre, mood, instruments, vocals"),
+  excludeStyles: z.string().optional().describe("Styles to keep out, comma-separated"),
+  title: z.string().optional().describe("Song title (up to 100 characters)"),
+  model: z
+    .string()
+    .optional()
+    .describe(`Model as Suno's menu names it: "v6", "v6-wild" or "v6-mini" (suno_status lists them). Default: the form's current one`),
+  vocalGender: z.enum(["male", "female"]).optional(),
+  weirdness: z.number().min(0).max(100).optional().describe("0-100; the form's default is 50"),
+  styleInfluence: z.number().min(0).max(100).optional().describe("0-100; how closely to follow the styles"),
+  audioInfluence: z.number().min(0).max(100).optional().describe("0-100; covers only: how close to the source audio"),
+  variety: z.number().int().min(0).max(5).optional().describe("The Variety slider's step (1 = Normal)"),
+  maxMode: z.boolean().optional().describe("Max Mode (costs more credits)"),
+  workspace: z.string().optional().describe("Suno workspace: id or name. Default: the channel's (Browse Hack's Suno tab links them), else Suno's current one"),
+  channel: z.string().optional().describe("MediaMake channel (library channel id, e.g. animemusiczone): the songs are recorded under its project and download to its inbox folder"),
+  set: z.string().optional().describe("Folder for the downloads under _INBOX/suno/<channel>/. Default: from the song's title"),
+  wait: z.boolean().optional().describe("Wait for the songs to finish (default true, up to timeoutMs). False returns the new song ids at once"),
+  timeoutMs: z.number().int().min(0).max(1_800_000).optional().describe("How long to wait for the songs (default 360000)"),
+  download: z
+    .enum(["none", "keepers", "all"])
+    .optional()
+    .describe('"keepers" (default) and "none" download nothing now: listen first, then suno_download the keepers. "all" downloads every finished take (each uses a Suno download)'),
+  waitForUserMs: z
+    .number()
+    .int()
+    .min(0)
+    .max(1_800_000)
+    .optional()
+    .describe("If Suno shows a captcha, how long to wait for the user to clear it in the tab (default 300000)")
+}
+
+localTool(
+  "suno_status",
+  "Shows the Suno account in this Chrome profile (plan, credits left, downloads left this month, models, upload limits), " +
+    "MediaMake's channels with the Suno workspace and MediaMake project each is linked to, and the library inbox songs download to. " +
+    "Call it first: credits and downloads are spent by the other suno_ tools.",
+  {},
+  () => sunoStatus(bridge),
+  true
+)
+tool("suno_list_workspaces", "Lists the Suno workspaces (Suno's folders): id, name and song count.", {}, "suno.workspaces", {
+  readOnly: true,
+  timeoutMs: 120_000
+})
+localTool(
+  "suno_list_songs",
+  "Lists songs in Suno, newest first: in a workspace or a channel's workspace, optionally matching a search. Each comes with " +
+    "its styles, lyrics, model and settings, parent (for covers and extensions) and link. Pass nextCursor back as cursor for more.",
+  {
+    workspace: z.string().optional().describe("Workspace id or name"),
+    channel: z.string().optional().describe("A MediaMake channel: its linked workspace"),
+    search: z.string().optional(),
+    cursor: z.string().optional(),
+    limit: z.number().int().min(1).max(50).optional().describe("Default 20")
+  },
+  (params) => listSongs(bridge, params as any),
+  true
+)
+tool(
+  "suno_get_songs",
+  "Reads Suno songs by id or link: status (complete when done), title, styles, lyrics, model and settings, parent, workspace.",
+  { ids: z.array(z.string()).min(1).max(100).describe("Song ids or suno.com/song links") },
+  "suno.clips",
+  {
+    readOnly: true,
+    timeoutMs: 120_000,
+    prepare: async ({ ids }) => ({ ids: (ids as string[]).map((id) => clipIdOf(id) ?? id) })
+  }
+)
+localTool(
+  "suno_create",
+  "Makes a song on Suno: fills Suno's own Create form (Advanced) in Browse Hack's Suno tab with the lyrics, styles and settings " +
+    "and clicks Create, which makes two songs and spends the account's credits. Ask the user before making more than a few. " +
+    "If Suno shows a captcha, the tab comes forward and the user clears it; never try to solve one. Waits for the songs and " +
+    "records both takes in MediaMake cloud under the channel's project. Nothing downloads unless download is \"all\": listen, " +
+    "then suno_download the keepers.",
+  songFields,
+  (params) => createSongs(bridge, params as any)
+)
+localTool(
+  "suno_cover",
+  "Makes a cover (or an extension, mashup, sample or inspiration) of a song with Suno's own Remix tools and clicks Create " +
+    "(two songs, spends credits). from is a Suno song (id or link); a MediaMake library item id (its SHA-256, from `media find`), " +
+    "which covers the Suno song it came from or else uploads the file; or an audio file's absolute path, which is uploaded to Suno. " +
+    "Uploading needs rightsConfirmed: true once the user has said they own or license the audio, and Suno rejects uploads that " +
+    "match copyrighted music. Leave lyrics and styles out to keep the source's. Waits and records like suno_create.",
+  {
+    from: z.string().describe("Suno song id or link, MediaMake library item id, or an absolute path to an audio file"),
+    kind: z.enum(["cover", "extend", "mashup", "sample", "inspo"]).optional().describe('Default "cover"'),
+    extendFrom: z.number().min(0).optional().describe("extend: where to continue from, in seconds"),
+    rightsConfirmed: z.boolean().optional().describe("The user owns or licenses this audio (needed to upload a file)"),
+    ...songFields
+  },
+  (params) => coverSong(bridge, params as any)
+)
+localTool(
+  "suno_download",
+  "Downloads Suno songs into MediaMake's media library inbox (_INBOX/suno/<channel>/<set>/<Title> [<id>].mp3) with a " +
+    "<file>.source.json holding the styles, lyrics, model, settings and parent, by clicking each song's own Download on suno.com. " +
+    "Each song uses one of the account's monthly downloads (suno_status shows how many are left), so download only the keepers. " +
+    "Songs the library already has come back in alreadyHave (force downloads them again). Marks them keepers in MediaMake cloud.",
+  {
+    ids: z.array(z.string()).min(1).max(20).describe("Song ids or links"),
+    channel: z.string().optional().describe("MediaMake channel. Default: the one linked to the song's workspace"),
+    set: z.string().optional().describe("Folder under the channel. Default: from the song's title"),
+    format: z.enum(["mp3", "wav"]).optional().describe("Default: Browse Hack's Suno setting (mp3)"),
+    force: z.boolean().optional()
+  },
+  (params) => downloadSongs(bridge, params as any)
+)
+tool(
+  "suno_list_generations",
+  "Searches a channel's Suno takes recorded in MediaMake cloud (every song made through Browse Hack, by anyone on the channel's " +
+    "project): by text in the title, styles or lyrics, by rating, model or kind, or the covers of one song (parentRef). " +
+    "Use it before writing new prompts, to reuse what worked and avoid repeats.",
+  {
+    channel: z.string().optional().describe("MediaMake channel (its linked project)"),
+    projectId: z.string().optional().describe("Or the MediaMake project id"),
+    q: z.string().optional(),
+    rating: z.enum(["keeper", "maybe", "reject"]).optional(),
+    model: z.string().optional(),
+    kind: z.string().optional().describe("create, cover, extend, remaster, reuse or upload"),
+    parentRef: z.string().optional().describe("Covers and extensions of this song id"),
+    limit: z.number().int().min(1).max(100).optional(),
+    cursor: z.string().optional()
+  },
+  "suno.listGenerations",
+  { readOnly: true, timeoutMs: 60_000 }
+)
+localTool(
+  "suno_rate",
+  "Rates Suno takes in MediaMake cloud: keeper, maybe or reject, with an optional note and the production it was used in. " +
+    "With download: true, keepers are also downloaded into the library inbox (uses Suno downloads).",
+  {
+    ids: z.array(z.string()).min(1).max(50),
+    rating: z.enum(["keeper", "maybe", "reject"]).optional(),
+    note: z.string().optional(),
+    usedIn: z.string().optional().describe("A MediaMake production slug it was used in"),
+    download: z.boolean().optional(),
+    channel: z.string().optional(),
+    set: z.string().optional()
+  },
+  (params) => rateSongs(bridge, params as any)
+)
+tool(
+  "suno_list_presets",
+  "Lists a channel's saved Suno styles (name, styles, exclude styles, settings), kept in MediaMake cloud for the whole team.",
+  { channel: z.string().optional(), projectId: z.string().optional() },
+  "suno.presets",
+  { readOnly: true, timeoutMs: 60_000 }
+)
+tool(
+  "suno_save_preset",
+  "Saves a named Suno style for a channel in MediaMake cloud, so the team and the Variations button on suno.com can reuse it.",
+  {
+    channel: z.string().optional(),
+    projectId: z.string().optional(),
+    preset: z.object({
+      name: z.string().min(1),
+      styles: z.string().max(1000),
+      excludeStyles: z.string().max(1000).optional(),
+      model: z.string().optional(),
+      settings: z.record(z.string(), z.unknown()).optional()
+    })
+  },
+  "suno.savePreset",
+  { timeoutMs: 60_000 }
+)
+
+const sunoJob = z.object({
+  name: z.string().describe('Unique in the batch, e.g. "goten-metal-1"'),
+  mode: z.enum(["create", "cover", "extend", "mashup", "sample", "inspo"]).optional().describe('Default "create"'),
+  from: z.string().optional().describe("For a cover or extension: a Suno song, a library item id or an audio file"),
+  extendFrom: z.number().optional(),
+  rightsConfirmed: z.boolean().optional(),
+  ...songFields
+})
+
+localTool(
+  "suno_batch_start",
+  "Runs many Suno songs or covers in the background with one call: one Create at a time in Browse Hack's Suno tab, a few " +
+    "in Suno at once, each recorded in MediaMake cloud (and downloaded with download: \"all\"). Every job spends credits: " +
+    "agree the list with the user first. Pauses when Suno shows a captcha (the user clears it in the tab) or credits fall " +
+    "under minCredits. Starting it again on the same folder resumes it and adds new jobs.",
+  {
+    folder: z.string().describe("Absolute path of the batch folder: state.json and run.log go here"),
+    jobs: z.array(sunoJob).optional(),
+    jobsFile: z.string().optional().describe("JSON file with the jobs: an array or { jobs: [...] }"),
+    channel: z.string().optional().describe("Default channel for every job"),
+    workspace: z.string().optional().describe("Default Suno workspace for every job"),
+    download: z.enum(["none", "all"]).optional().describe('Default "none"'),
+    concurrency: z.number().int().min(1).max(5).optional().describe("Songs in Suno at once (default 2)"),
+    minCredits: z.number().int().min(0).optional().describe("Pause under this many credits (default 200)"),
+    retryFailed: z.boolean().optional()
+  },
+  (params) => startSunoBatch(bridge, params as any)
+)
+localTool(
+  "suno_batch_status",
+  "Shows a Suno batch: jobs to do, in Suno, done and failed, the song ids, what it's waiting for, recent errors. waitMs waits for it to finish first.",
+  {
+    folder: z.string(),
+    waitMs: z.number().int().min(0).max(600_000).optional(),
+    details: z.boolean().optional()
+  },
+  (params) => sunoBatchStatus(bridge, params as any),
+  true
+)
+localTool(
+  "suno_batch_pause",
+  "Pauses a Suno batch: no new songs are sent; the ones in Suno finish and are recorded. Resume with suno_batch_start on the same folder.",
+  { folder: z.string() },
+  async (params) => pauseSunoBatch(bridge, params as any)
+)
 
 tool(
   "suno_upload_track",

@@ -73,6 +73,7 @@ import {
   type SaverScope
 } from "./saverRules"
 import { distrokidCommands } from "./distrokidBridge"
+import { sunoCommands } from "./sunoBridge"
 import { youtubeStudioCommands } from "./youtubeUploadBridge"
 import { googleAiAnswer } from "./googleAiAnswer"
 import { openTab } from "./tabs"
@@ -714,7 +715,8 @@ const commands: Record<string, (params: any) => Promise<unknown>> = {
   "google.aiAnswer": googleAiAnswer,
 
   ...distrokidCommands,
-  ...youtubeStudioCommands
+  ...youtubeStudioCommands,
+  ...sunoCommands
 }
 
 // --- Connection ---

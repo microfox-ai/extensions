@@ -1,6 +1,6 @@
 # Browse Hack MCP server
 
-Lets Claude (Claude Code, Claude Desktop, or any MCP client) use the [Browse Hack](../get-into-zone) extension running in your browser: bulk-download Pinterest, download YouTube videos and Instagram posts, save media to Mediamake, switch overlays on or off, upload Suno tracks and drive Midjourney.
+Lets Claude (Claude Code, Claude Desktop, or any MCP client) use the [Browse Hack](../get-into-zone) extension running in your browser: bulk-download Pinterest, download YouTube videos and Instagram posts, save media to Mediamake, switch overlays on or off, make songs and covers on Suno and drive Midjourney.
 
 ```
 Claude ──stdio──▶ MCP server (this folder) ◀──WebSocket 127.0.0.1:17892── extension service worker ──▶ your tabs
@@ -80,7 +80,7 @@ To tell profiles apart, give each one a name in the popup's **Settings → Profi
 | YouTube | `youtube_get_video`, `youtube_download`, `youtube_list_downloads`, `youtube_cancel_download`, `youtube_clear_finished` |
 | Instagram | `instagram_get_post`, `instagram_download` |
 | Overlays (Saver tab) | `saver_get`, `saver_set`, `saver_remove_rule`, `saver_reset` |
-| Suno | `suno_upload_track` |
+| Suno | `suno_status`, `suno_list_workspaces`, `suno_list_songs`, `suno_get_songs`, `suno_create`, `suno_cover`, `suno_download`, `suno_list_generations`, `suno_rate`, `suno_list_presets`, `suno_save_preset`, `suno_batch_start`, `suno_batch_status`, `suno_batch_pause`, `suno_upload_track` |
 | DistroKid | `distrokid_fill_releases` |
 | YouTube Studio | `youtube_list_channels`, `youtube_switch_channel`, `youtube_fill_uploads` |
 | Google AI Mode | `google_ai_save_answers` |
@@ -129,6 +129,30 @@ For more than a few prompts, `midjourney_batch_start` takes the whole list (`job
 - Moderation refusals fail a job at once with Midjourney's reason; jobs Midjourney errors on are sent again, up to 4 times. `retryFailed` sends failed jobs again.
 - `midjourney_batch_pause` stops sending new jobs and lets the ones in Midjourney finish (`now` stops at once). `midjourney_batch_start` on the same folder resumes, also from a new Claude session, and adds any new jobs. A batch runs in the MCP server of the session that started it, so it stops when that session ends; resume it the same way.
 
+### Suno
+
+Browse Hack makes songs the way you would: in a background "Browse Hack" suno.com tab it fills Suno's Create form (Advanced) and clicks Create, so Suno runs its usual checks. Songs, workspaces, credits and downloads left are read through suno.com's own API with your sign-in. It never calls Suno's generate endpoint itself.
+
+| Tool | What it does |
+| --- | --- |
+| `suno_status` | Plan, credits, downloads left this month, models, upload limits; MediaMake channels with their linked Suno workspace and project; the library inbox |
+| `suno_create` | A new song from `lyrics` (or `instrumental`), `styles` and the form's settings: `excludeStyles`, `title`, `model`, `vocalGender`, `weirdness`, `styleInfluence`, `variety`, `maxMode`. Makes two takes |
+| `suno_cover` | A cover, extension, mashup, sample or inspiration (`kind`) `from` a Suno song, a MediaMake library item (a song that came from Suno is covered from Suno; any other file is uploaded) or an audio file. Uploading needs `rightsConfirmed: true` |
+| `suno_list_songs`, `suno_get_songs`, `suno_list_workspaces` | Your songs (by workspace or channel, with a search), songs by id, your workspaces |
+| `suno_download` | Clicks each song's own Download and files it as `_INBOX/suno/<channel>/<set>/<Title> [<id>].mp3` with a `<file>.source.json` (styles, lyrics, model, settings, parent, workspace, channel). Songs the library has come back as `alreadyHave`. Uses one Suno download per song |
+| `suno_list_generations`, `suno_rate` | The channel's takes in MediaMake cloud (search by text, rating, model, kind, parent); rate keeper / maybe / reject, optionally downloading keepers |
+| `suno_list_presets`, `suno_save_preset` | A channel's saved styles in MediaMake cloud, shared with its team and the Variations button |
+| `suno_batch_start`, `suno_batch_status`, `suno_batch_pause` | Many songs or covers in the background, like the Midjourney batches: a few in Suno at once, each recorded, resumable from `<folder>/state.json` |
+
+Things to know:
+- **Credits:** each Create spends credits. The tools report them, and a batch stops under `minCredits` (default 200).
+- **Captchas:** a captcha brings the tab forward and waits (`waitForUserMs`, default 5 minutes). It's never solved or skipped.
+- **Downloads:** they're metered by Suno, so only keepers are downloaded unless `download: "all"`.
+- **Recording:** takes are recorded through MediaMake's `/api/generations`. Until a MediaMake deploy has it, recording is skipped and the tools say so.
+- **Channels:** the MCP server passes the library's channels (`~/.mediamake/config.json`) to the extension, and the popup's Suno tab links each one to a Suno workspace and a MediaMake project.
+
+The [`suno-songs`](skills/suno-songs/SKILL.md) skill tells Claude how to use these.
+
 The vary, upscale, pan and zoom tools take one of your own finished results (`jobId` plus `index`, or a `cdn.midjourney.com/<jobId>/0_<index>.png` URL) and reuse its prompt. Upscales return one image. On `--v 8.1`/`8.2`, pan and zoom are sent as Editor jobs, as midjourney.com does; older versions use Midjourney's pan and zoom jobs. `--v 8` has no upscale, pan or zoom.
 
 ## Updates
@@ -157,6 +181,7 @@ Releases: [`CHANGELOG.md`](CHANGELOG.md) holds the release notes; merging to `ma
 | [`midjourney-style-reference`](skills/midjourney-style-reference/SKILL.md) | "make a poster in the style of this image" |
 | [`midjourney-restyle`](skills/midjourney-restyle/SKILL.md) | "turn this photo into anime / watercolor / pixel art" |
 | [`midjourney-iterate`](skills/midjourney-iterate/SKILL.md) | "vary the second one", "upscale that", "pan left", "zoom out 2x" |
+| [`suno-songs`](skills/suno-songs/SKILL.md) | "make a song on Suno", "cover this song in metal", "3 variations of this", pasted "Suno song:" blocks |
 
 Install them for every project (symlinks into `~/.claude/skills`, so edits here apply right away; `-- --copy` copies instead):
 
