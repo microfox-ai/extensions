@@ -24,6 +24,10 @@ Every release is published on the [Releases page](https://github.com/microfox-ai
 
 ### Update to a new version
 
+Installed from MediaMake (the install prompt from Browse Hack's page, which puts the extension in `~/Extensions/browse-hack-chrome` and the MCP server in `~/.mediamake/mcp/browse-hack`), Browse Hack updates itself: every few hours the MCP server installs a newer MCP and a newer extension, and reloads the extension in each Chrome profile that loads it from that folder (it waits while the extension is busy downloading). The only reload by hand is the first one onto 0.10.0, since older copies can't reload themselves. To update right away, or to see which versions you have, say "update browse hack" to Claude (the `update_browse_hack` tool). `"autoUpdate": false` in `~/.mediamake/config.json` turns automatic updates off.
+
+By hand:
+
 1. Download the new zip.
 2. Delete the contents of the folder you loaded in step 5 and unzip the new version into **the same folder**.
 3. On `chrome://extensions`, click the reload icon on the **Browse Hack** card.
@@ -186,6 +190,8 @@ Each release has install notes, an auto-generated changelog, and two assets: `br
 Changes that don't need a new extension build don't trigger a release: Markdown files, and anything outside `get-into-zone/`. To release without a code change, open **Actions → Release Browse Hack extension → Run workflow**.
 
 Run `git pull` after pushing so you have the bot's version-bump commit locally.
+
+The MCP server is released the same way by its own [workflow](.github/workflows/release-browse-hack-mcp.yml): every push to `main` that changes `mcp/` tests it, packs `browse-hack.mcpb` and releases it to the MediaMake catalog as `mcp/browse-hack`, with the notes from that version's section of [`mcp/CHANGELOG.md`](mcp/CHANGELOG.md) (patch-bumping `mcp/package.json` and `mcp/manifest.json` when the version is already out, and tagging `mcp-vX.Y.Z`). It needs the repository secret `MEDIAMAKE_ADMIN_KEY` (a MediaMake admin's API key) and, for another site than mediamake.microfox.app, the variable `MEDIAMAKE_URL`; without the key it only builds and tests. Installed copies pick up both releases within a few hours.
 
 ### Develop locally
 
