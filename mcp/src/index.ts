@@ -8,6 +8,7 @@ import { z } from "zod"
 
 import { Bridge } from "./bridge.js"
 import { fillDistrokidReleases } from "./distrokid.js"
+import { fillYoutubeUploads } from "./youtubeUpload.js"
 import { downloadMidjourneyImages, instagramDownload, startPinterestBulk, youtubeDownload } from "./downloads.js"
 import { saveGoogleAiAnswers } from "./googleAiAnswers.js"
 import { batchStatus, pauseBatch, startBatch } from "./midjourneyBatch.js"
@@ -25,7 +26,9 @@ const server = new McpServer(
       "Tools for the Browse Hack browser extension running in the user's Chrome: bulk-download Pinterest pins, " +
       "download YouTube videos and Instagram posts, reels and stories, save media to Mediamake, toggle on-page saver overlays, upload Suno tracks, automate Midjourney, " +
       "and fill DistroKid's new-release form from local folders (one tab per release; the user clicks Continue, " +
-      "then info.json's useMyOriginals and addLyrics let the extension fill in the Mixea and lyrics pages, which the user submits). " +
+      "then info.json's useMyOriginals and addLyrics let the extension fill in the Mixea and lyrics pages, which the user submits), " +
+      "and upload videos to YouTube Studio from local pack folders, switching to the channel info.json names and filling the " +
+      "upload form (the user clicks Save, Publish or Schedule). " +
       "Every tool needs the extension signed in to Mediamake; if a tool says it isn't, call sign_in_to_mediamake and tell the " +
       "user to sign in and click Allow in the window that opens. For more than a few Midjourney prompts, use midjourney_batch_start. " +
       "midjourney_repaint opens a brush tab so the user can erase part of an image by hand; tell them to paint and click Repaint, then call midjourney_repaint_status. " +
@@ -757,6 +760,50 @@ localTool(
       .describe("How many DistroKid tabs to fill at the same time. Default 3.")
   },
   ({ folders, concurrency }) => fillDistrokidReleases(bridge, folders, concurrency ?? 3)
+)
+
+// --- YouTube Studio ---
+
+tool(
+  "youtube_list_channels",
+  "Lists the YouTube channels this Chrome profile can switch to in YouTube Studio's account menu: name, @handle, " +
+    "subscribers (and \"You're a manager\" for shared channels), and which one is active. Uses a background Studio tab it closes again.",
+  {},
+  "youtube.channels",
+  { readOnly: true, timeoutMs: 90_000 }
+)
+tool(
+  "youtube_switch_channel",
+  "Switches this Chrome profile's YouTube channel (Studio's Switch account), so YouTube and YouTube Studio act as that " +
+    "channel. Studio tabs already open keep their channel until reloaded. Ask the user first unless they asked for the switch.",
+  {
+    channel: z
+      .string()
+      .describe('The channel\'s @handle (e.g. "@anime-music-zone"), its name as Studio lists it, or its UC… channel id')
+  },
+  "youtube.switchChannel",
+  { timeoutMs: 120_000 }
+)
+localTool(
+  "youtube_fill_uploads",
+  "Uploads videos to YouTube Studio from local pack folders and fills in the upload form, one Studio tab per folder, " +
+    "without saving or publishing: each tab is left on the Visibility step for the user to review and click Save, Publish or Schedule. " +
+    "Each folder needs info.json with channel (switched to first), a video file (info.json \"video\", or the only video in the " +
+    "folder) and title (or title.txt). It also fills description (or description.txt), thumbnail (or the only image in " +
+    "thumbnails/), playlists, madeForKids (default false), ageRestricted, paidPromotion, alteredContent (AI use), automaticChapters, " +
+    "featuredPlaces, automaticConcepts, tags, language, license, allowEmbedding, notifySubscribers, shortsRemixing, category, " +
+    "comments, commentModeration, whoCanComment, commentSort, showLikes, visibility (private, unlisted, public, scheduled), " +
+    "scheduleAt (\"YYYY-MM-DDTHH:MM\" in Studio's time zone) and premiere. Fields left out keep YouTube's defaults. " +
+    "Picking the video starts the upload, so each folder leaves a private draft on its channel even if the user never saves it. " +
+    "Custom thumbnails only work on phone-verified channels. Folders run one after another; a parent folder works when each " +
+    "child folder has its own info.json.",
+  {
+    folders: z
+      .array(z.string())
+      .min(1)
+      .describe("Absolute paths. Each is an upload folder with info.json, or a parent whose child folders each have one.")
+  },
+  ({ folders }) => fillYoutubeUploads(bridge, folders)
 )
 
 localTool(

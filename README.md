@@ -157,6 +157,17 @@ Shortcuts:
 
 With the [MCP server](mcp) set up, Claude can run everything above for you ("download this YouTube video at 720p", "bulk-download this Pinterest board", "save every slide of this Instagram post"). In **Settings**, **Let Claude use this extension (MCP)** turns this on or off; it shows **Connected to Claude** while the server runs. Setup steps are in [`mcp/README.md`](mcp/README.md).
 
+### Upload to YouTube from a pack folder (Claude only)
+
+Ask Claude to upload a folder that holds the video and an `info.json` (MediaMake's `pack-youtube` skill writes one). For each folder, Browse Hack opens YouTube Studio, switches this Chrome profile to the channel `info.json` names (Studio's **Switch account**), picks the video and fills in the upload form: title, description, thumbnail, playlists, audience, AI-use answer, tags, language, category, licence, comments, and visibility or a schedule. It stops on the **Visibility** step; you check the tab and click **Save**, **Publish** or **Schedule** yourself.
+
+- Picking the video starts the upload, so YouTube keeps a private draft even if you close the tab.
+- Custom thumbnails work only on channels verified by phone (youtube.com/verify while on that channel); Claude says when one didn't take.
+- Switching channel changes which channel YouTube acts as in this Chrome profile, on youtube.com too.
+- End screens, cards and subtitles are left for you to add.
+
+The `info.json` fields are listed in [`mcp/README.md`](mcp/README.md#infojson-for-youtube-uploads).
+
 ### Automate Midjourney (Midjourney tab)
 
 With a midjourney.com tab open, queue prompts as plain text (one per line) or JSON, pull them from your Mediamake database, scrape your Midjourney results, and run the request queue in batches.
