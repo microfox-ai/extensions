@@ -225,11 +225,22 @@ export function openItem(label: string | RegExp, except?: Element) {
 }
 
 const escape = () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))
+const mouseDown = (el: HTMLElement) => el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }))
+
+/** Opens a menu with its button and finds an item: some of Suno's menus open on a click, others on mouse-down. */
+async function openMenu<T>(opener: HTMLElement, find: () => T | null | undefined, opensOn: "click" | "mousedown" = "click") {
+  const press = [() => opener.click(), () => mouseDown(opener)]
+  if (opensOn === "mousedown") press.reverse()
+  press[0]()
+  const found = await waitFor(find, 1500)
+  if (found) return found
+  press[1]()
+  return waitFor(find, 3000)
+}
 
 /** Opens a menu or picker with `opener` and clicks the item named `label`. */
 async function pickFromMenu(opener: HTMLElement, label: string) {
-  opener.click()
-  const item = await waitFor(() => openItem(label, opener), 4000)
+  const item = await openMenu(opener, () => openItem(label, opener))
   if (!item) {
     escape()
     return false
@@ -504,8 +515,7 @@ export async function pickAudio(file: File) {
   else {
     const add = document.querySelector<HTMLElement>(SEL.addAudio)
     if (!add) throw new Error("Suno's audio upload isn't on the page.")
-    add.click()
-    const item = await waitFor(() => openItem(UPLOAD.menuItem, add), 4000)
+    const item = await openMenu(add, () => openItem(UPLOAD.menuItem, add), "mousedown")
     if (!item) {
       escape()
       throw new Error("Suno's Add audio menu has no Upload.")
