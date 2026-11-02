@@ -99,7 +99,14 @@ const SILENCE_MS = 65_000
 const MAX_RETRY_MS = 30_000
 
 // The only methods that work before the extension is signed in to Mediamake.
-const SIGNED_OUT_METHODS = new Set(["extension.info", "auth.status", "auth.signIn"])
+// The MCP server updates and reloads the extension whether or not it is.
+const SIGNED_OUT_METHODS = new Set([
+  "extension.info",
+  "extension.status",
+  "extension.reload",
+  "auth.status",
+  "auth.signIn"
+])
 const SIGNED_OUT_MESSAGE =
   "Browse Hack isn't signed in to Mediamake, and every tool needs that. Ask the user to open the Browse Hack " +
   "popup and click Sign in to Mediamake, or call sign_in_to_mediamake to open the sign-in window for them."
@@ -110,6 +117,9 @@ let pingTimer: ReturnType<typeof setInterval> | undefined
 let lastHeardAt = 0
 let retryTimer: ReturnType<typeof setTimeout> | undefined
 let retryMs = 2000
+// Calls from Claude being handled right now, so an update doesn't reload the
+// extension under them.
+let inFlight = 0
 
 // Runs one of background.ts's message actions as if the popup had sent it.
 const dispatch = (request: Record<string, unknown>, timeoutMs = 60_000) =>
@@ -406,12 +416,37 @@ async function midjourneyQueue(params: {
   )
 }
 
+// What a reload would cut short: the MCP server waits while this isn't empty.
+async function busyWork() {
+  const busy: string[] = []
+  const youtube = (await listJobs()).filter(
+    (job) => !["done", "error", "cancelled"].includes(job.status)
+  ).length
+  if (youtube) busy.push(`${youtube} YouTube download${youtube === 1 ? "" : "s"}`)
+  const pinterest = (await listBulkSessions()).filter((session) => session.active).length
+  if (pinterest) busy.push(`${pinterest} Pinterest bulk download${pinterest === 1 ? "" : "s"}`)
+  // The extension.status call asking is one of them.
+  const calls = inFlight - 1
+  if (calls > 0) busy.push(`${calls} Claude tool call${calls === 1 ? "" : "s"} running`)
+  return busy
+}
+
 const commands: Record<string, (params: any) => Promise<unknown>> = {
   "extension.info": async () => ({
     name: chrome.runtime.getManifest().name,
     version: chrome.runtime.getManifest().version,
     extensionId: chrome.runtime.id
   }),
+  "extension.status": async () => ({
+    version: chrome.runtime.getManifest().version,
+    busy: await busyWork()
+  }),
+  // Loaded unpacked, the extension picks up new files only when reloaded. The
+  // answer goes out first; the worker restarts and reconnects on its own.
+  "extension.reload": async () => {
+    setTimeout(() => chrome.runtime.reload(), 250)
+    return { reloading: true, version: chrome.runtime.getManifest().version }
+  },
 
   "tabs.list": async ({ urlPattern }) =>
     (await chrome.tabs.query(urlPattern ? { url: urlPattern } : {})).map(
@@ -733,6 +768,7 @@ async function onFrame(ws: WebSocket, raw: unknown) {
   }
   if (message?.type !== "request") return
   const command = commands[message.method]
+  inFlight++
   try {
     if (!command) throw new Error(`Unknown method: ${message.method}`)
     if (!SIGNED_OUT_METHODS.has(message.method) && !(await authState()).signedIn) {
@@ -747,6 +783,8 @@ async function onFrame(ws: WebSocket, raw: unknown) {
       ok: false,
       error: error instanceof Error ? error.message : String(error)
     })
+  } finally {
+    inFlight--
   }
 }
 

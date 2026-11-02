@@ -1,0 +1,127 @@
+name: Release Browse Hack MCP
+
+# Tests the MCP server in mcp/ and releases it to the MediaMake catalog as
+# mcp/browse-hack on every push to main that changes it. Installed copies
+# check the catalog every few hours and update themselves, so a merge reaches
+# everyone without a manual step.
+#   - If mcp/package.json has a version the catalog doesn't have yet (bumped
+#     in the PR), that version is released as is.
+#   - Otherwise the patch version is bumped (package.json, manifest.json and
+#     the lock file), committed back to main, and released.
+# Release notes: the version's "## x.y.z" section of mcp/CHANGELOG.md, else
+# the subjects of the commits since the last release (tags mcp-vX.Y.Z).
+#
+# Needs the repository secret MEDIAMAKE_ADMIN_KEY (the API key of a MediaMake
+# admin) and, for a site other than https://mediamake.microfox.app, the
+# repository variable MEDIAMAKE_URL. Without the key it only builds and tests.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "mcp/**"
+      - "!mcp/**/*.md"
+      - "mcp/browse-hack.INSTALL.md"
+      - "!mcp/skills/**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Shared with the extension's release, so their commits to main don't race.
+concurrency:
+  group: release-browse-hack
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mcp
+    env:
+      MEDIAMAKE_URL: ${{ vars.MEDIAMAKE_URL }}
+      MEDIAMAKE_ADMIN_KEY: ${{ secrets.MEDIAMAKE_ADMIN_KEY }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: mcp/package-lock.json
+
+      - name: Catch up with main
+        run: |
+          # Pick up a bump commit pushed by a release that ran just before this one.
+          git pull --ff-only origin "${GITHUB_REF_NAME}"
+          git fetch --tags --force origin
+
+      - name: Install and test
+        run: |
+          npm ci
+          npm test
+
+      - name: Pick version
+        id: version
+        run: |
+          if [ -z "$MEDIAMAKE_ADMIN_KEY" ]; then
+            echo "::notice::MEDIAMAKE_ADMIN_KEY isn't set, so the MCP isn't released to MediaMake. Add it under Settings → Secrets and variables → Actions."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          RELEASED=$(node scripts/release-catalog.mjs status | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).released')
+          if [ "$RELEASED" = "true" ]; then
+            npm version patch --no-git-tag-version >/dev/null
+            VERSION=$(node -p "require('./package.json').version")
+            # manifest.json keeps the same version as package.json.
+            node -e 'const fs = require("fs"); const s = fs.readFileSync("manifest.json", "utf8"); fs.writeFileSync("manifest.json", s.replace(/"version": "[^"]*"/, `"version": "${process.argv[1]}"`))' "$VERSION"
+            echo "Already released; bumping to ${VERSION}"
+            echo "bumped=true" >> "$GITHUB_OUTPUT"
+          else
+            VERSION=$(node -p "require('./package.json').version")
+            echo "Releasing ${VERSION} from package.json"
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "release=true" >> "$GITHUB_OUTPUT"
+
+      - name: Release notes from commits
+        if: steps.version.outputs.release == 'true'
+        run: |
+          # Used only when CHANGELOG.md has no section for this version.
+          LAST=$(git tag --list 'mcp-v*' --sort=-v:refname | head -1)
+          {
+            echo "RELEASE_NOTES<<NOTES_END"
+            if [ -n "$LAST" ]; then git log --no-merges --format='- %s' "${LAST}..HEAD" -- .; else git log --no-merges --format='- %s' -n 10 -- .; fi
+            echo "NOTES_END"
+          } >> "$GITHUB_ENV"
+
+      - name: Pack
+        if: steps.version.outputs.release == 'true'
+        run: npm run pack:mcpb
+
+      # Pushes made with the workflow token don't trigger workflows, so this
+      # commit won't start another release.
+      - name: Commit version bump
+        if: steps.version.outputs.bumped == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json manifest.json
+          git commit -m "chore(release): browse-hack mcp ${{ steps.version.outputs.version }}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+      - name: Release to MediaMake
+        if: steps.version.outputs.release == 'true'
+        run: node scripts/release-catalog.mjs publish
+
+      - name: Tag
+        if: steps.version.outputs.release == 'true'
+        run: |
+          TAG="mcp-v${{ steps.version.outputs.version }}"
+          git tag "$TAG"
+          git push origin "$TAG"

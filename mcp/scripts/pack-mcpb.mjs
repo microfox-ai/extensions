@@ -49,7 +49,8 @@ function listTools(entry) {
     // A spare port so the extension never connects to this short-lived copy.
     const port = String(40000 + Math.floor(Math.random() * 20000))
     const child = spawn(process.execPath, [entry], {
-      env: { ...process.env, BROWSE_HACK_PORT: port },
+      // Never let this short-lived copy look for updates.
+      env: { ...process.env, BROWSE_HACK_PORT: port, BROWSE_HACK_AUTO_UPDATE: "0" },
       stdio: ["pipe", "pipe", "inherit"]
     })
     const timer = setTimeout(() => {

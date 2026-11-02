@@ -72,6 +72,7 @@ To tell profiles apart, give each one a name in the popup's **Settings → Profi
 | Area | Tools |
 | --- | --- |
 | Status, profiles and sign-in | `get_status`, `list_profiles`, `use_profile`, `sign_in_to_mediamake` |
+| Updates | `update_browse_hack` |
 | Tabs | `list_tabs`, `open_tab` |
 | Settings | `get_settings`, `update_settings`, `list_projects` |
 | Mediamake | `save_media_to_mediamake` |
@@ -129,6 +130,21 @@ For more than a few prompts, `midjourney_batch_start` takes the whole list (`job
 - `midjourney_batch_pause` stops sending new jobs and lets the ones in Midjourney finish (`now` stops at once). `midjourney_batch_start` on the same folder resumes, also from a new Claude session, and adds any new jobs. A batch runs in the MCP server of the session that started it, so it stops when that session ends; resume it the same way.
 
 The vary, upscale, pan and zoom tools take one of your own finished results (`jobId` plus `index`, or a `cdn.midjourney.com/<jobId>/0_<index>.png` URL) and reuse its prompt. Upscales return one image. On `--v 8.1`/`8.2`, pan and zoom are sent as Editor jobs, as midjourney.com does; older versions use Midjourney's pan and zoom jobs. `--v 8` has no upscale, pan or zoom.
+
+## Updates
+
+Installed through MediaMake (the install prompt from Browse Hack's page, following MediaMake's [install.md](https://github.com/microfox-ai/mediamake/blob/main/install.md)), Browse Hack keeps itself up to date:
+
+- **The MCP server.** A minute after it starts and then every 6 hours, the server asks MediaMake for `mcp/browse-hack`'s live version (`GET /api/catalog/versions`, with the update token the install saved in `~/.mediamake/config.json`). When it's newer than `~/.mediamake/mcp/browse-hack`, it fetches the install plan, downloads the package, checks its sha256, and swaps the new files in. Servers already running keep their code; the next Claude session runs the new one, and the first tool result in a running session says so once.
+- **The Chrome extension.** It picks the newest `vX.Y.Z` release here with `browse-hack-chrome.zip`. When that's newer than `~/Extensions/browse-hack-chrome`, it downloads the zip, checks GitHub's sha256 digest, swaps the folder's files (the same folder keeps the extension id and its settings), and calls `extension.reload` in each connected Chrome profile that loads the extension from that folder, then waits for each to reconnect on the new version. A profile is matched by its extension id, which Chrome derives from the folder's path. While a profile is busy (YouTube or Pinterest downloads, other Claude calls in flight, as `extension.status` reports) the update waits and tries again every 15 minutes. Extensions older than 0.10.0 can't reload themselves: the folder is updated and `get_status` asks for one click on the reload icon.
+- **Builds in a git checkout, and other folders.** For a profile that loads the extension from anywhere else, the server looks up that extension id in the browser's profile preferences (`extensions.settings.<id>.path`, read only) to find the folder. It never writes to it. When the folder is a build inside a git checkout (such as `get-into-zone/build/chrome-mv3-prod` here) and a newer release is out, `get_status` and `update_browse_hack` say so and give the commands that update it (`git -C <checkout> pull --ff-only`, then `npm install` and `npm run build` in the package); Claude runs them only if you agree. Once a newer build is on disk, the next check reloads Chrome on it. A profile on some other folder is named with the way to switch to MediaMake's folder.
+- **One at a time.** Each Claude session runs its own server; the one holding `~/.mediamake/updates/browse-hack.lock` checks, and the result is kept in `~/.mediamake/updates/browse-hack.json` for the others.
+- **Versions and release notes.** `get_status` shows the MCP version this session runs, the one installed for the next session, the live versions, each Chrome profile's extension version, and the release notes of the last update. `update_browse_hack` checks and installs right away and reports the versions before and after; `reloadBusy` reloads the extension even while it's busy. The same versions and notes are on Browse Hack's page on MediaMake.
+- **Turning it off.** `"autoUpdate": false` in `~/.mediamake/config.json` (or `update_browse_hack` with `autoUpdate: false`, or `BROWSE_HACK_AUTO_UPDATE=0` in the server's environment) stops the automatic checks; asking for an update still works.
+
+MCP servers that weren't installed through MediaMake (Claude Desktop's `.mcpb`, a server run from this checkout) aren't touched; `get_status` says where this session's server runs from. Without an update token (installs from before 0.8.0), saying "update browse hack" once with an install prompt from MediaMake saves one.
+
+Releases: [`CHANGELOG.md`](CHANGELOG.md) holds the release notes; merging to `main` releases the MCP to the catalog (see the [main README](../README.md#releases-are-automatic)).
 
 ## Skills
 
