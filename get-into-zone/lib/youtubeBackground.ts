@@ -1,3 +1,4 @@
+import { downloadFile } from "./downloads"
 import {
   cleanFolder,
   inFolder,
@@ -244,7 +245,7 @@ async function saveBlob(jobId: string, blobUrl: string) {
   }
   await updateJob(jobId, { status: "saving", blobUrl })
   try {
-    const downloadId = await chrome.downloads.download({
+    const downloadId = await downloadFile({
       url: blobUrl,
       filename: job.filename,
       conflictAction: job.overwrite ? "overwrite" : "uniquify",

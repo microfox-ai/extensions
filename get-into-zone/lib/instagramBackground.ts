@@ -1,5 +1,6 @@
 // Looks up Instagram posts for the popup and the MCP bridge, and saves files
 // for them and the on-page Download buttons.
+import { downloadFile } from "./downloads"
 import {
   isInstagramHost,
   lookupInstagramMedia,
@@ -107,7 +108,7 @@ export async function downloadInstagramFiles(
   if (!files.every(valid)) throw new Error("Only Instagram files can be saved.")
   const downloadIds = await Promise.all(
     files.map((file) =>
-      chrome.downloads.download({
+      downloadFile({
         url: file.url,
         filename: file.filename,
         conflictAction,

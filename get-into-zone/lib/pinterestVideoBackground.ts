@@ -1,3 +1,4 @@
+import { downloadFile } from "./downloads"
 import { getUploadUrl, queueSparkboardIndex } from "./mediamake"
 import {
   pinVideoSources,
@@ -162,7 +163,7 @@ export async function saveVideo(
   if (source.type === "mp4") {
     if (session.destination === "browser") {
       const file = `${session.videoFolder}/${baseName}.mp4`
-      const downloadId = await chrome.downloads.download({
+      const downloadId = await downloadFile({
         url: source.url,
         filename: file,
         conflictAction: "uniquify",
@@ -206,7 +207,7 @@ async function saveHlsVideo(
   try {
     if (session.destination === "browser") {
       const path = `${session.videoFolder}/${fileName}`
-      const downloadId = await chrome.downloads.download({
+      const downloadId = await downloadFile({
         url: file.blobUrl,
         filename: path,
         conflictAction: "uniquify",
