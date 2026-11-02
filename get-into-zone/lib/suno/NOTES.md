@@ -72,22 +72,35 @@ Premier account. When Suno changes, fix `selectors.ts` (the page) or `clip.ts`
   Create Custom Model.
 - `+ Audio` (`aria-label` "Add audio - Browse, upload, or record audio") opens
   Browse / Upload / Record; an empty Audio card has its own Upload
-  (`aria-label` "Upload audio file", which sets the audio up as a Cover). Both
-  open the file picker from a file input Suno's code makes and clicks, which
-  may not be in the page: `contents/sunoPage.ts` catches that click while
-  Browse Hack is uploading. Takes wav, flac, mp3, ogg, opus, webm, m4a, aac.
+  (`aria-label` "Upload audio file", which sets the audio up as a Cover). In
+  Advanced mode (checked live 2026-11-02) only `+ Audio` is there. It is
+  Suno's own dropdown (`data-context-menu-trigger`): mouse-down toggles it, a
+  click does nothing, and Enter toggles it too. The menu is a `position: fixed`
+  box with `[data-context-menu]` and no role, put at the end of `<body>`. Each
+  item is a `<button>` whose icon and label sit in `display: contents`
+  wrappers that measure 0×0, so look for the button, not its label. Upload
+  keeps the menu open.
+- Both Uploads open the file picker by calling `.click()` on a hidden file
+  input Suno's code adds to `<body>` (its handler is the `onchange`
+  property): `contents/sunoPage.ts` catches that click while Browse Hack is
+  uploading. Takes wav, flac, mp3, ogg, opus, webm, m4a, aac.
   With audio set: "Change condition type from Cover" (Cover, Mashup, Sample,
   Inspo; Extend, Crop, Remove Section, Reverse, Speed, Pro edits) and "Clear
   audio condition". Extend shows an "Extend from" time.
 
 ## The upload dialog (read from suno.com's code and `/locales/en/*.json`, 2026-11-02)
 
-A picked audio file goes through a dialog before it is on the Create form:
+A picked audio file goes through a dialog (a Radix Dialog, `role="dialog"`)
+before it is on the Create form. The dialog closes while the file uploads and
+comes back for the description; Escape or a pointer-down outside it cancels
+the upload. Suno decodes the file first (6 s to 1800 s on Premier). With a
+file already picked, the stages are:
 
 1. The first time: "Confirm your rights" (Yes / No), or "Upload audio" with
    "Agree to Terms" (which sets `audio-upload-tos-acceptance` in localStorage).
-2. Upload or Record: a hidden `input[type=file]` in the dialog, Upload /
-   Library buttons.
+2. Only when no file is picked yet (Record, or the dialog opened on its own):
+   Upload or Record, with a hidden `input[type=file]` in the dialog and
+   Upload / Library buttons.
 3. "Identify audio content (select up to 3)": Full Song, Song Demo, Voice,
    Instrument Stem, Loop… then Continue (none picked is fine).
 4. "Describes the contents of your uploaded audio": Suno analyses it and

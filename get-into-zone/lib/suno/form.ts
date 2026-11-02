@@ -141,25 +141,28 @@ export function lyricsText(editor = document.querySelector<HTMLElement>(SEL.lyri
   return paragraphs.length ? paragraphs.map((p) => p.textContent ?? "").join("\n") : (editor.textContent ?? "")
 }
 
-/** Asks contents/sunoPage.ts, in the page itself, to set the Lexical editor's text. */
-function setLyricsInPage(value: string) {
+/** Asks contents/sunoPage.ts, in the page itself, to do something; resolves with its answer, or null if none comes. */
+function askPage(type: string, reply: string, extra: Record<string, unknown> = {}) {
   const id = Math.random().toString(36).slice(2)
-  return new Promise<boolean>((resolve) => {
-    const done = (ok: boolean) => {
+  return new Promise<any>((resolve) => {
+    const done = (answer: any) => {
       clearTimeout(timer)
       window.removeEventListener("message", onMessage)
-      resolve(ok)
+      resolve(answer)
     }
     const onMessage = (event: MessageEvent) => {
-      if (event.source === window && event.data?.source === "browse-hack-suno" && event.data.type === "lyrics-set" && event.data.id === id) {
-        done(Boolean(event.data.ok))
+      if (event.source === window && event.data?.source === "browse-hack-suno" && event.data.type === reply && event.data.id === id) {
+        done(event.data)
       }
     }
-    const timer = setTimeout(() => done(false), 2000)
+    const timer = setTimeout(() => done(null), 2000)
     window.addEventListener("message", onMessage)
-    window.postMessage({ source: "browse-hack-suno-cs", type: "set-lyrics", id, text: value }, location.origin)
+    window.postMessage({ source: "browse-hack-suno-cs", type, id, ...extra }, location.origin)
   })
 }
+
+/** Sets the Lexical editor's text from the page. */
+const setLyricsInPage = async (value: string) => Boolean((await askPage("set-lyrics", "lyrics-set", { text: value }))?.ok)
 
 /** Replaces the lyrics: through the page's editor, else by typing (which loses line breaks). */
 export async function setLyrics(value: string) {
@@ -213,11 +216,12 @@ export async function setSlider(panel: HTMLElement, label: string, target: numbe
 // The workspace picker lists names with a count: "My Workspace (12 clips)".
 const bare = (value: string) => norm(value.replace(/\s*\(\d[\d,]*\s+clips?\)\s*$/i, ""))
 
-/** Visible elements anywhere whose name matches: for menus Suno draws without a menu role. */
-function namedLike(pattern: RegExp) {
-  return within<HTMLElement>(document, "span, div, button, li, p, [role='menuitem']")
-    .filter((el) => el.children.length <= 1 && pattern.test((el.textContent ?? "").trim()) && visible(el))
-    .map((el) => el.closest<HTMLElement>(SEL.clickable) ?? el)
+/**
+ * An item of an open Suno menu drawn without a menu role ("+ Audio"'s): a button
+ * holding an icon and a label, whose wrappers (display: contents) have no size.
+ */
+function contextMenuItem(pattern: RegExp) {
+  return within<HTMLElement>(document, `${SEL.contextMenu} button`).find((b) => visible(b) && pattern.test(text(b)))
 }
 
 /** An item in the open menu or picker dialog whose name is `label` (or matches it). */
@@ -516,23 +520,22 @@ export async function pickAudio(file: File) {
     return true
   }
   document.querySelector(`[${PICKER}]`)?.removeAttribute(PICKER)
-  window.postMessage({ source: "browse-hack-suno-cs", type: "arm-file-input" }, location.origin)
+  if (!(await askPage("arm-file-input", "file-input-armed"))) {
+    throw new Error("Browse Hack's page script isn't running in the Suno tab. Reload the tab and try again.")
+  }
   const button = document.querySelector<HTMLElement>(UPLOAD.button)
   if (button) button.click()
   else {
     const add = document.querySelector<HTMLElement>(SEL.addAudio)
     if (!add) throw new Error("Suno's audio upload isn't on the page.")
-    const before = new Set(namedLike(UPLOAD.menuItem))
-    const item = await openMenu(
-      add,
-      () => openItem(UPLOAD.menuItem, add) ?? namedLike(UPLOAD.menuItem).find((el) => !before.has(el) && el !== add),
-      "mousedown"
-    )
+    // "+ Audio" toggles its menu on mouse-down: press it only when the menu isn't open yet.
+    const upload = () => contextMenuItem(UPLOAD.menuItem) ?? openItem(UPLOAD.menuItem, add)
+    const item = upload() ?? (await openMenu(add, upload, "mousedown"))
     if (!item) {
       // Suno may ask for the rights first: the caller answers, then picks again.
       const step = uploadStep()
       if (step?.kind === "rights" || step?.kind === "terms") return false
-      const shown = [...dialogs(), ...within<HTMLElement>(document, SEL.popups).filter(visible)]
+      const shown = [...dialogs(), ...within<HTMLElement>(document, `${SEL.popups}, ${SEL.contextMenu}`).filter(visible)]
         .map((el) => `"${text(el).replace(/\s+/g, " ").slice(0, 120)}"`)
         .join(", ")
       escape()
@@ -547,6 +550,8 @@ export async function pickAudio(file: File) {
   }, 8000)
   if (!found) throw new Error("Suno's file picker didn't open.")
   if (found === "question") return false
+  // The menu stays open after Upload; close it before the upload dialog opens (Escape would close that too).
+  if (contextMenuItem(UPLOAD.menuItem)) escape()
   giveFile(found, file)
   return true
 }
