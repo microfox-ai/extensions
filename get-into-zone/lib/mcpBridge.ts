@@ -547,7 +547,8 @@ const commands: Record<string, (params: any) => Promise<unknown>> = {
       tags,
       perPageLimit: params.perPageLimit,
       manifest: params.manifest,
-      skipPins
+      skipPins,
+      skipVideos: params.skipVideos
     })
     if (!result.success) throw new Error(result.message)
     return {

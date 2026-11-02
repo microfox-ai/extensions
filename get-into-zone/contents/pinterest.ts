@@ -1,6 +1,12 @@
 import type { PlasmoCSConfig } from "plasmo"
 
 import { pinSaveProUrl } from "../lib/pinSavePro"
+import {
+  PIN_CARD_SELECTOR,
+  PIN_CLOSEUP,
+  pinVideoOf,
+  type PinCardVideo
+} from "../lib/pinterestBulk"
 import type { PinVideoJob } from "../lib/pinterestVideoDownload"
 import {
   isPinterestHost,
@@ -100,85 +106,13 @@ const enabled = () =>
 // ---------------------------------------------------------------------------
 // Finding video pins
 
-// Logged-in pins usually have no poster: a cover image, a duration badge and a
-// /pin/<id> link. The hash only appears in a /videos/ URL, which logged-out pins have.
-const CARD_SELECTOR = [
-  "[data-test-id='pinWrapper']",
-  "[data-test-id='pin']",
-  "[data-test-id='pin-visual-wrapper']",
-  "[data-test-id='pinrep-video']",
-  "[data-test-id='gated-pin-rep']",
-  "[data-test-id='closeup-media-container']",
-  "[data-grid-item]"
-].join(", ")
-const CLOSEUP = "[data-test-id='closeup-media-container']"
-// closeup-video-with-visibility stays after the video ends and Pinterest swaps it for its cover.
-const VIDEO_MARKER =
-  "[data-test-id='pinrep-video'], [data-test-id='gated-pin-video'], [data-test-id='pin-closeup-video'], [data-test-id='closeup-video-with-visibility']"
-const HASH_RE = /(?:^|\/)([0-9a-f]{2}\/[0-9a-f]{2}\/[0-9a-f]{2}\/[0-9a-f]{32})(?=[._/?#]|$)/i
-const DURATION_RE = /^\d{1,2}:\d{2}(?::\d{2})?$/
-
-interface PinVideo {
+interface PinVideo extends PinCardVideo {
   el: HTMLElement
   card: Element
-  // Set only when a /videos/ URL in the card carries the file hash.
-  videoId: string
-  pinId: string
-  // Cover-image hash. Often the same file, but not always, so it's a fallback.
-  signature: string
   key: string
 }
 
 let videos: PinVideo[] = []
-
-function urlsIn(card: Element) {
-  const urls: string[] = []
-  const nodes: Element[] = [card, ...card.querySelectorAll("video, img, source")]
-  nodes.forEach((node) => {
-    if (node instanceof HTMLVideoElement) {
-      urls.push(node.getAttribute("poster") || "", node.currentSrc || "", node.src || "")
-    } else if (node instanceof HTMLImageElement) {
-      urls.push(node.currentSrc || "", node.src || "", node.srcset || "")
-    } else {
-      urls.push(node.getAttribute("src") || "")
-    }
-  })
-  return urls
-}
-
-function hashFrom(urls: string[], videosOnly: boolean) {
-  for (const url of urls) {
-    if (videosOnly && !/pinimg\.com\/videos\//i.test(url)) continue
-    const hash = HASH_RE.exec(url)?.[1]?.toLowerCase()
-    if (hash) return hash
-  }
-  return ""
-}
-
-function isVideoCard(card: Element) {
-  if (card instanceof HTMLVideoElement || card.matches(VIDEO_MARKER)) return true
-  if (card.querySelector(`video, ${VIDEO_MARKER}`)) return true
-  return [...card.querySelectorAll("[data-test-id='PinTypeIdentifier']")].some((badge) =>
-    DURATION_RE.test((badge.textContent || "").trim())
-  )
-}
-
-function pinIdFrom(card: Element) {
-  const attr =
-    card.getAttribute("data-test-pin-id") ||
-    card.querySelector("[data-test-pin-id]")?.getAttribute("data-test-pin-id") ||
-    ""
-  if (/^\d{5,20}$/.test(attr)) return attr
-  const href = [...card.querySelectorAll("a[href*='/pin/']")]
-    .map((link) => link.getAttribute("href") || "")
-    .find((value) => /\/pin\/\d{5,}/.test(value))
-  const fromHref = href?.match(/\/pin\/(\d{5,20})/)?.[1]
-  if (fromHref) return fromHref
-  if (card.matches(CLOSEUP)) {
-    return location.pathname.match(/^\/pin\/(\d{5,20})/)?.[1] || ""
-  }
-  return ""
-}
 
 function mediaBox(card: Element): HTMLElement | null {
   let best: HTMLElement | null = null
@@ -201,30 +135,26 @@ function mediaBox(card: Element): HTMLElement | null {
 function describe(card: Element): PinVideo | null {
   // The open pin's closeup sits inside a grid item that has neither its pin id
   // nor its title; the closeup itself is described instead.
-  if (!card.matches(CLOSEUP) && card.querySelector(CLOSEUP)) return null
-  if (!isVideoCard(card)) return null
+  if (!card.matches(PIN_CLOSEUP) && card.querySelector(PIN_CLOSEUP)) return null
+  const video = pinVideoOf(card)
+  if (!video) return null
   const el = mediaBox(card)
   if (!el) return null
-  const urls = urlsIn(card)
-  const videoId = hashFrom(urls, true)
-  const pinId = pinIdFrom(card)
-  const signature = hashFrom(urls, false)
-  if (!videoId && !pinId && !signature) return null
-  return { el, card, videoId, pinId, signature, key: videoId || pinId || signature }
+  return { ...video, el, card, key: video.videoId || video.pinId || video.signature }
 }
 
 // Rebuilt on a timer: querying on every mouse move would be too slow on long boards.
 function rescan() {
   const found: PinVideo[] = []
   const seen = new Set<Element>()
-  document.querySelectorAll(CARD_SELECTOR).forEach((card) => {
+  document.querySelectorAll(PIN_CARD_SELECTOR).forEach((card) => {
     const described = describe(card)
     if (!described || seen.has(described.el)) return
     seen.add(described.el)
     found.push(described)
   })
   document.querySelectorAll("video").forEach((video) => {
-    if (video.closest(CARD_SELECTOR) || seen.has(video)) return
+    if (video.closest(PIN_CARD_SELECTOR) || seen.has(video)) return
     const described = describe(video)
     if (!described) return
     seen.add(video)
@@ -280,7 +210,7 @@ function titleFor(card: Element) {
     ""
   if (own) return own
   // Logged-out cards carry no title, and a related pin must not inherit the open pin's heading.
-  if (card.matches(CLOSEUP)) {
+  if (card.matches(PIN_CLOSEUP)) {
     return document.querySelector("h1")?.textContent?.trim() || ""
   }
   return ""

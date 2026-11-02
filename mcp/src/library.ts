@@ -221,28 +221,38 @@ export function readChannels(home = homedir()): LibraryChannel[] {
   })
 }
 
-/** Every Pinterest pin the library has: filed, or saved by an earlier session still in the inbox. */
-export async function knownPins(lib = readLibrary()): Promise<string[]> {
+// A video pin's file, by its name: the catalog's kind is the library section (images, footage…).
+const PIN_VIDEO_FILE_RE = /\.(?:mp4|m4v|mov|webm|ts)$/i
+
+/**
+ * Every Pinterest pin the library has (filed, or saved by an earlier session still in the inbox),
+ * and which of them are videos: a video pin's cover image can share its video's ref.
+ */
+export async function knownPins(lib = readLibrary()): Promise<{ pins: string[]; videos: string[] }> {
   const filed =
     (await readCatalog(lib, (db) =>
       db
         .prepare(
-          "SELECT s.ref FROM sources s JOIN items i ON i.id = s.item_id WHERE s.tool = 'pinterest' AND i.status = 'online'"
+          "SELECT s.ref, i.path FROM sources s JOIN items i ON i.id = s.item_id WHERE s.tool = 'pinterest' AND i.status = 'online'"
         )
         .all()
-        .map((row) => String(row.ref))
+        .map((row) => ({ ref: String(row.ref), file: String(row.path) }))
     )) ?? []
-  const waiting: string[] = []
+  const waiting: { ref: string; file: string }[] = []
   if (lib.inbox) {
     const manifests = filesIn(join(lib.inbox, "pinterest"), 2, (name) => /^_session.*\.json$/.test(name))
     for (const manifest of manifests) {
       for (const pin of readJson(manifest)?.pins ?? []) {
         if (typeof pin?.id !== "string" || typeof pin.file !== "string") continue
-        if (existsSync(resolve(dirname(manifest), pin.file))) waiting.push(pin.id)
+        if (existsSync(resolve(dirname(manifest), pin.file))) waiting.push({ ref: pin.id, file: pin.file })
       }
     }
   }
-  return [...new Set([...filed, ...waiting])]
+  const pins = [...filed, ...waiting]
+  return {
+    pins: [...new Set(pins.map((pin) => pin.ref))],
+    videos: [...new Set(pins.filter((pin) => PIN_VIDEO_FILE_RE.test(pin.file)).map((pin) => pin.ref))]
+  }
 }
 
 /** Names of the folders in a directory (for picking one that's free). */

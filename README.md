@@ -86,6 +86,7 @@ Rules:
 - An image that already appeared on an earlier page is not saved again.
 - Images are saved at original resolution when Pinterest has it, otherwise at 736px wide.
 - Videos are saved as MP4 at up to 720p. Pinterest only plays videos as streams, so the extension finds the pin's MP4 file; for the few pins that have none, it downloads the stream and joins picture and sound into one MP4 (older pins become a `.ts` file).
+- A video pin is saved as its video, never as its cover image, even when Pinterest shows only the cover and a duration badge (as it does when you're signed in): the extension looks the pin's video up.
 - The session belongs to that tab only and ends when you click Stop, close the tab, or quit the browser.
 
 ### Download one Pinterest video
