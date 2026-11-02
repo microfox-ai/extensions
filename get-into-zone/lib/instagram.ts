@@ -194,6 +194,13 @@ export function instagramFileName(post: IgPost, item: IgItem) {
   return `${sanitizeFileName(parts.join(" - "))}.${extensionFor(item)}`
 }
 
+// "<name>.jpg", or "<name> - 2.jpg" for the second item of a carousel.
+export function instagramNamedFile(name: string, post: IgPost, item: IgItem) {
+  const index = post.items.indexOf(item)
+  const suffix = post.items.length > 1 ? ` - ${index + 1}` : ""
+  return `${sanitizeFileName(`${name}${suffix}`)}.${extensionFor(item)}`
+}
+
 export interface IgDownload {
   url: string
   filename: string

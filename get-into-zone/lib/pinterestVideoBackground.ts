@@ -1,5 +1,10 @@
 import { getUploadUrl, queueSparkboardIndex } from "./mediamake"
-import { pinVideoSources, type BulkItem, type BulkSession } from "./pinterestBulk"
+import {
+  pinVideoSources,
+  type BulkItem,
+  type BulkSession,
+  type SavedPin
+} from "./pinterestBulk"
 
 const OFFSCREEN_URL = "tabs/offscreen.html"
 const OTHER_OFFSCREEN_WAIT_MS = 120_000
@@ -139,19 +144,24 @@ const videoMetadata = (item: BulkItem, url: string) => ({
   alt: item.alt
 })
 
-export async function saveVideo(session: BulkSession, item: BulkItem) {
+// Resolves with where the video went in Downloads (nothing for Mediamake).
+export async function saveVideo(
+  session: BulkSession,
+  item: BulkItem
+): Promise<SavedPin | undefined> {
   const source = await resolveVideo(item.id)
   const baseName = item.id.split("/").pop()!
 
   if (source.type === "mp4") {
     if (session.destination === "browser") {
-      await chrome.downloads.download({
+      const file = `${session.videoFolder}/${baseName}.mp4`
+      const downloadId = await chrome.downloads.download({
         url: source.url,
-        filename: `${session.videoFolder}/${baseName}.mp4`,
+        filename: file,
         conflictAction: "uniquify",
         saveAs: false
       })
-      return
+      return { file, downloadId, url: source.url }
     }
     const result = await queueSparkboardIndex({
       contentType: "video",
@@ -170,7 +180,7 @@ export async function saveVideo(session: BulkSession, item: BulkItem) {
 
   // HLS only: no single file exists, so the offscreen document downloads the
   // stream and builds one.
-  await withOffscreen(() => saveHlsVideo(session, item, source.url, baseName))
+  return withOffscreen(() => saveHlsVideo(session, item, source.url, baseName))
 }
 
 async function saveHlsVideo(
@@ -178,7 +188,7 @@ async function saveHlsVideo(
   item: BulkItem,
   hlsUrl: string,
   baseName: string
-) {
+): Promise<SavedPin | undefined> {
   const file = await callOffscreen<{
     blobUrl: string
     ext: string
@@ -188,14 +198,15 @@ async function saveHlsVideo(
   const fileName = `${baseName}.${file.ext}`
   try {
     if (session.destination === "browser") {
+      const path = `${session.videoFolder}/${fileName}`
       const downloadId = await chrome.downloads.download({
         url: file.blobUrl,
-        filename: `${session.videoFolder}/${fileName}`,
+        filename: path,
         conflictAction: "uniquify",
         saveAs: false
       })
       await waitForDownload(downloadId)
-      return
+      return { file: path, downloadId, url: hlsUrl }
     }
 
     const { uploadUrl, publicUrl } = await getUploadUrl(fileName, file.mime)

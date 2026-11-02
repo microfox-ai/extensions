@@ -840,22 +840,33 @@ function downloadFinished(downloadId: number) {
   })
 }
 
+const hasMidjourneyTab = async () =>
+  (await chrome.tabs.query({ url: `${MJ_ORIGIN}/*`, status: "complete", discarded: false })).length > 0
+
 /**
  * Saves a job's images to the Downloads folder, as <jobId>_<index>.png or,
  * with a name, <name>-<index>.png (replacing an earlier copy, so a retried
  * download doesn't leave "(1)" files). Each one is saved only once the CDN
  * serves it, and one at a time: starting a download right after one that
- * failed has stopped the extension's service worker.
+ * failed has stopped the extension's service worker. withPrompt also returns
+ * the job's prompt (for the media library's sidecars), read from an open
+ * midjourney.com tab; none is opened just for that.
  */
 export async function downloadImages(params: {
   jobId: string
   indexes?: number[]
   folder?: string
   name?: string
+  withPrompt?: boolean
 }) {
   let indexes = params.indexes ?? []
+  const readJob = async () => (await runInPage(jobStatusInPage, [[params.jobId]]))?.[0]
+  const job = !indexes.length
+    ? await readJob()
+    : params.withPrompt && (await hasMidjourneyTab())
+      ? await readJob().catch(() => undefined)
+      : undefined
   if (!indexes.length) {
-    const [job] = (await runInPage(jobStatusInPage, [[params.jobId]])) ?? []
     indexes = Array.from({ length: job?.batchSize ?? 4 }, (_, i) => i)
   }
   const folder = (params.folder || "midjourney").replace(/^\/+|\/+$/g, "")
@@ -871,5 +882,5 @@ export async function downloadImages(params: {
     })
     files.push(await downloadFinished(downloadId))
   }
-  return { files }
+  return { files, indexes, ...(job?.fullCommand ? { prompt: job.fullCommand } : {}) }
 }

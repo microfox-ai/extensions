@@ -1,6 +1,6 @@
 {
   "name": "browse-hack-mcp",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "MCP server that lets Claude use the Browse Hack browser extension",
   "type": "module",
   "bin": {
@@ -11,6 +11,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "test": "tsc && node --test test/*.test.mjs",
     "start": "node dist/index.js",
     "inspect": "npx @modelcontextprotocol/inspector node dist/index.js",
     "pack:mcpb": "node scripts/pack-mcpb.mjs",

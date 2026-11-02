@@ -18,8 +18,14 @@ import {
   readMcpPort,
   type McpBridgeState
 } from "./mcp"
-import { downloadsFor, parseInstagramUrl, type IgPost } from "./instagram"
+import {
+  downloadsFor,
+  instagramNamedFile,
+  parseInstagramUrl,
+  type IgPost
+} from "./instagram"
 import { downloadInstagramFiles, getInstagramPost } from "./instagramBackground"
+import { cleanFolder, inFolder, localDate, withoutExtension } from "./libraryFiles"
 import { mediamakeFetch, queueSparkboardIndex } from "./mediamake"
 import {
   ACCOUNT_KEY,
@@ -41,7 +47,12 @@ import {
   zoomOut
 } from "./midjourneyApi"
 import { repaintStatus, startRepaint } from "./midjourneyEdit"
-import { parseTags, sanitizeFolder, type BulkSession } from "./pinterestBulk"
+import {
+  parseTags,
+  sanitizeFolder,
+  sessionFolderName,
+  type BulkSession
+} from "./pinterestBulk"
 import {
   listBulkSessions,
   startBulkSession,
@@ -162,11 +173,29 @@ async function pinterestTab(tabId?: number) {
   return tab.id
 }
 
-const sessionSummary = ({ seen, pending, pages, ...session }: BulkSession) => ({
+const sessionSummary = ({
+  seen,
+  pending,
+  pages,
+  saves,
+  skipped,
+  ...session
+}: BulkSession) => ({
   ...session,
   pagesVisited: Object.keys(pages).length,
-  queued: pending.length
+  queued: pending.length,
+  ...(skipped ? { skippedInLibrary: skipped.length } : {})
 })
+
+// A session in the media library's inbox gets a folder of its own, named after
+// the tab's search: <inbox>/<YYYY-MM-DD>-<search>, then -2, -3 when taken (on
+// disk, as the MCP server lists them, or by another tab's session).
+async function inboxSessionFolder(tabId: number, inbox: string, taken: unknown) {
+  const tab = await chrome.tabs.get(tabId)
+  const inUse = (await listBulkSessions()).map((s) => s.folder.split("/").pop()!)
+  const onDisk = Array.isArray(taken) ? taken.map(String) : []
+  return `${inbox}/${sessionFolderName(tab.url ?? "", localDate(), [...onDisk, ...inUse])}`
+}
 
 // --- YouTube ---
 
@@ -232,6 +261,8 @@ async function instagramDownload(params: {
   tabId?: number
   url?: string
   items?: number[]
+  folder?: string
+  fileName?: string
 }) {
   const post = await instagramPost(params)
   const numbers = params.items?.length
@@ -241,14 +272,30 @@ async function instagramDownload(params: {
   if (picked.some((item) => !item)) {
     throw new Error(`Item numbers run from 1 to ${post.items.length}.`)
   }
-  const downloadIds = await downloadInstagramFiles(downloadsFor(post, picked))
+  const folder = cleanFolder(params.folder)
+  const name = params.fileName?.trim() ? withoutExtension(params.fileName) : ""
+  const files = downloadsFor(post, picked).map((file, index) => ({
+    url: file.url,
+    filename: inFolder(folder, name ? instagramNamedFile(name, post, picked[index]) : file.filename)
+  }))
+  // A file named by the caller replaces an older copy instead of adding " (1)".
+  const downloadIds = await downloadInstagramFiles(files, name ? "overwrite" : "uniquify")
   const saved = await Promise.all(
     downloadIds.map(async (downloadId, index) => {
       const [file] = await chrome.downloads.search({ id: downloadId })
-      return { number: numbers[index], kind: picked[index].kind, path: file?.filename, downloadId }
+      const { kind, width, height } = picked[index]
+      return { number: numbers[index], kind, path: file?.filename, downloadId, width, height }
     })
   )
-  return { username: post.username, code: post.code, saved }
+  // The MCP server writes each file's sidecar from these.
+  return {
+    username: post.username,
+    code: post.code,
+    mediaId: post.mediaId,
+    caption: post.caption,
+    count: post.items.length,
+    saved
+  }
 }
 
 const optionSummary = (video: YtVideo, mode: YtMode) =>
@@ -263,6 +310,10 @@ async function youtubeDownload(params: {
   mode?: YtMode
   optionId?: string
   maxHeight?: number
+  folder?: string
+  fileName?: string
+  // MediaMake's media library is set up: save <file>.source.json beside it.
+  sidecar?: boolean
 }) {
   const video = await youtubeVideo(params)
   const mode = params.mode && MODES.includes(params.mode) ? params.mode : "both"
@@ -278,15 +329,35 @@ async function youtubeDownload(params: {
   if (!option) {
     throw new Error("No matching format. Call youtube_get_video to see the options.")
   }
+  const [main] = option.streams
   const result: any = await startDownload({
     streams: option.streams,
     ext: option.ext,
     title: video.title,
     videoId: video.videoId,
-    label: option.label
+    label: option.label,
+    folder: params.folder,
+    fileName: params.fileName,
+    source: params.sidecar
+      ? {
+          tool: "youtube",
+          ref: video.videoId,
+          url: `https://www.youtube.com/watch?v=${video.videoId}`,
+          title: video.title,
+          author: video.author,
+          height: main.height,
+          fps: main.fps
+        }
+      : undefined
   })
   if (!result.success) throw new Error(result.message)
-  return { jobId: result.jobId, title: video.title, option: option.label }
+  return {
+    jobId: result.jobId,
+    title: video.title,
+    option: option.label,
+    videoId: video.videoId,
+    file: result.filename
+  }
 }
 
 // --- Saver overlays ---
@@ -421,11 +492,15 @@ const commands: Record<string, (params: any) => Promise<unknown>> = {
   "pinterest.bulkStart": async (params) => {
     const tabId = await pinterestTab(params.tabId)
     const folder = sanitizeFolder(
-      params.folder || `pinterest-${new Date().toISOString().slice(0, 10)}`
+      params.folder ||
+        (params.inboxFolder
+          ? await inboxSessionFolder(tabId, params.inboxFolder, params.takenFolders)
+          : `pinterest-${new Date().toISOString().slice(0, 10)}`)
     )
     const tags = Array.isArray(params.tags)
       ? params.tags
       : parseTags(String((await loadSettings()).tags || "pinterest"))
+    const skipPins = Array.isArray(params.skipPins) ? params.skipPins : undefined
     const result: any = await startBulkSession({
       tabId,
       destination: params.destination,
@@ -433,15 +508,22 @@ const commands: Record<string, (params: any) => Promise<unknown>> = {
       includeVideos: params.includeVideos,
       videoFolder: params.videoFolder,
       tags,
-      perPageLimit: params.perPageLimit
+      perPageLimit: params.perPageLimit,
+      manifest: params.manifest,
+      skipPins
     })
     if (!result.success) throw new Error(result.message)
-    return { tabId, folder, message: result.message }
+    return {
+      tabId,
+      folder,
+      message: result.message,
+      ...(skipPins?.length ? { pinsTheLibraryHas: skipPins.length } : {})
+    }
   },
   "pinterest.bulkStop": async ({ tabId }) => {
     const id = await pinterestTab(tabId)
-    await stopBulkSession(id)
-    return { tabId: id, stopped: true }
+    const { success, ...result } = await stopBulkSession(id)
+    return { tabId: id, stopped: true, ...result }
   },
   "pinterest.bulkStatus": async ({ tabId }) =>
     (await listBulkSessions())

@@ -1144,7 +1144,11 @@ function initPinterestBulkCollector() {
     collecting = false
     sentKeys = new Set()
     chrome.runtime.sendMessage(
-      { action: "pinterestBulkEnterPage", pageKey: key },
+      {
+        action: "pinterestBulkEnterPage",
+        pageKey: key,
+        pageUrl: window.location.href
+      },
       (response) => {
         if (chrome.runtime.lastError || pageKey !== key) return
         collecting = Boolean(response?.collect)

@@ -1,3 +1,5 @@
+import type { SourceFields } from "./libraryFiles"
+
 export const YT_JOBS_KEY = "youtubeJobs"
 export const YT_MODE_KEY = "youtubeMode"
 
@@ -16,6 +18,7 @@ export interface YtFormat {
   contentLength?: number
   qualityLabel?: string
   height?: number
+  fps?: number
   audioTrack?: string
 }
 
@@ -62,6 +65,13 @@ export interface YtJob {
   /** Identifies the chosen formats so expired stream URLs can be re-fetched. */
   streams?: { itag: number; contentLength?: number; audioTrack?: string }[]
   createdAt: number
+  /** Where Chrome saved the file, once done. */
+  path?: string
+  /** The caller named the file: replace an older one instead of adding " (1)". */
+  overwrite?: boolean
+  /** Saved beside the file as <file>.source.json when it's done (MediaMake's media library). */
+  source?: SourceFields
+  sidecarError?: string
 }
 
 export function parseVideoId(rawUrl?: string): string | null {
@@ -234,6 +244,7 @@ export async function fetchPlayerInPage(videoId: string) {
             contentLength: f.contentLength ? Number(f.contentLength) : undefined,
             qualityLabel: f.qualityLabel,
             height: f.height,
+            fps: f.fps,
             audioTrack: f.audioTrack?.audioIsDefault === false
               ? f.audioTrack.displayName
               : undefined,
