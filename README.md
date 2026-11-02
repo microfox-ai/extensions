@@ -24,7 +24,7 @@ Every release is published on the [Releases page](https://github.com/microfox-ai
 
 ### Update to a new version
 
-Installed from MediaMake (the install prompt from Browse Hack's page, which puts the extension in `~/Extensions/browse-hack-chrome` and the MCP server in `~/.mediamake/mcp/browse-hack`), Browse Hack updates itself: every few hours the MCP server installs a newer MCP and a newer extension, and reloads the extension in each Chrome profile that loads it from that folder (it waits while the extension is busy downloading). The only reload by hand is the first one onto 0.10.0, since older copies can't reload themselves. To update right away, or to see which versions you have, say "update browse hack" to Claude (the `update_browse_hack` tool). `"autoUpdate": false` in `~/.mediamake/config.json` turns automatic updates off.
+Installed from MediaMake (the install prompt from Browse Hack's page, which puts the extension in `~/Extensions/browse-hack-chrome` and the MCP server in `~/.mediamake/mcp/browse-hack`), Browse Hack updates itself: every few hours the MCP server installs a newer MCP and a newer extension, and reloads the extension in each Chrome profile that loads it from that folder (it waits while the extension is busy downloading). A profile that loads a build from a git checkout of this repo is never overwritten: Claude tells you it's behind and the commands to pull and rebuild, and reloads Chrome once the new build is there. The only reload by hand is the first one onto 0.10.0, since older copies can't reload themselves. To update right away, or to see which versions you have, say "update browse hack" to Claude (the `update_browse_hack` tool). `"autoUpdate": false` in `~/.mediamake/config.json` turns automatic updates off.
 
 By hand:
 

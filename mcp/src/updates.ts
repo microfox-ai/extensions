@@ -18,6 +18,10 @@
 //     reloads the extension in each Chrome profile that loads that folder.
 //     Chrome can't update unpacked extensions itself. While one of them is
 //     busy (downloads, Claude calls in flight) it waits and tries again.
+//     A profile that loads the extension from somewhere else (found in the
+//     browser's preferences by its extension id) is never written to: a build
+//     in a git checkout gets the commands that pull and rebuild it, and once a
+//     newer build is on disk Chrome is reloaded on it.
 // What happened is kept in ~/.mediamake/updates/browse-hack.json, which
 // get_status and update_browse_hack report.
 
@@ -25,6 +29,7 @@ import { createHash } from "node:crypto"
 import {
   closeSync,
   cpSync,
+  existsSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -37,7 +42,7 @@ import {
   writeFileSync
 } from "node:fs"
 import { homedir } from "node:os"
-import { basename, dirname, join } from "node:path"
+import { basename, dirname, isAbsolute, join } from "node:path"
 
 import { readTarGz, readZip, writeFiles, type ArchiveFile } from "./archive.js"
 import type { Profile } from "./bridge.js"
@@ -68,9 +73,20 @@ export interface ProfileReport {
   /** The profile's Google account email (or its name). */
   profile: string
   version?: string
-  loadedFrom: "this folder" | "another folder"
+  loadedFrom: Source["kind"]
+  folder?: string
   reloaded?: boolean
   note?: string
+  /** A build in a git checkout that is behind: the commands that bring it up to date. */
+  update?: { checkout: string; commands: string[] }
+}
+
+/** Where Chrome loads the extension from in a profile, and the version in that folder now. */
+interface Source {
+  kind: "MediaMake's folder" | "a git checkout" | "another folder" | "an unknown folder"
+  folder?: string
+  version?: string
+  checkout?: string
 }
 
 export interface PartState {
@@ -113,6 +129,8 @@ export interface UpdaterOptions {
   githubApi?: string
   platform?: NodeJS.Platform
   reconnectWaitMs?: number
+  /** Where Chromium browsers keep their profiles; see browserDataDirs. */
+  browserDirs?: string[]
 }
 
 export interface CheckOptions {
@@ -214,6 +232,55 @@ export function replaceFolder(folder: string, files: ArchiveFile[]) {
   rmSync(old, { recursive: true, force: true })
 }
 
+/** Where Chromium browsers (Chrome, Edge, Brave, Arc, Chromium, Vivaldi) keep their profiles. */
+export function browserDataDirs(home: string, platform: NodeJS.Platform, env: NodeJS.ProcessEnv) {
+  if (platform === "darwin") {
+    const base = join(home, "Library", "Application Support")
+    return [
+      "Google/Chrome",
+      "Google/Chrome Beta",
+      "Google/Chrome Canary",
+      "Chromium",
+      "Microsoft Edge",
+      "BraveSoftware/Brave-Browser",
+      "Arc/User Data",
+      "Vivaldi"
+    ].map((dir) => join(base, dir))
+  }
+  if (platform === "win32") {
+    const base = env.LOCALAPPDATA ?? join(home, "AppData", "Local")
+    return [
+      "Google/Chrome/User Data",
+      "Google/Chrome Beta/User Data",
+      "Chromium/User Data",
+      "Microsoft/Edge/User Data",
+      "BraveSoftware/Brave-Browser/User Data",
+      "Vivaldi/User Data"
+    ].map((dir) => join(base, dir))
+  }
+  const base = env.XDG_CONFIG_HOME ?? join(home, ".config")
+  return ["google-chrome", "google-chrome-beta", "chromium", "microsoft-edge", "BraveSoftware/Brave-Browser", "vivaldi"].map(
+    (dir) => join(base, dir)
+  )
+}
+
+/** The git checkout a folder sits in, if any. */
+function gitCheckout(folder: string) {
+  for (let dir = folder; ; dir = dirname(dir)) {
+    if (existsSync(join(dir, ".git"))) return dir
+    if (dirname(dir) === dir) return undefined
+  }
+}
+
+/** How to bring a checkout's build up to date: pull, then rebuild the package whose build/ holds it. */
+function rebuildCommands(checkout: string, folder: string) {
+  const pkg = basename(dirname(folder)) === "build" ? dirname(dirname(folder)) : undefined
+  return [
+    `git -C "${checkout}" pull --ff-only`,
+    ...(pkg ? [`npm --prefix "${pkg}" install`, `npm --prefix "${pkg}" run build`] : [`rebuild ${folder}`])
+  ]
+}
+
 // GitHub's generated notes follow the install steps the release workflow writes.
 const releaseNotes = (body?: string) => {
   const text = String(body ?? "")
@@ -232,6 +299,7 @@ export class Updater {
   private githubApi: string
   private platform: NodeJS.Platform
   private reconnectWaitMs: number
+  private browserDirs: string[]
   private running?: Promise<UpdateState>
   private noticeShown = false
 
@@ -243,6 +311,7 @@ export class Updater {
     this.githubApi = (options.githubApi ?? "https://api.github.com").replace(/\/$/, "")
     this.platform = options.platform ?? process.platform
     this.reconnectWaitMs = options.reconnectWaitMs ?? RECONNECT_WAIT_MS
+    this.browserDirs = options.browserDirs ?? browserDataDirs(this.home, this.platform, this.env)
   }
 
   get paths() {
@@ -479,41 +548,38 @@ export class Updater {
   }
 
   private async updateExtension(previous: PartState, reloadBusy: boolean): Promise<PartState> {
-    const manifest = readJson(join(this.paths.extension, "manifest.json"))
     const connected = (await this.options.bridge.status().catch(() => ({ profiles: [] }))).profiles ?? []
-    if (manifest?.name !== EXTENSION_NAME) {
-      return {
-        skipped: `Not installed from MediaMake (nothing at ${this.paths.extension}), so it isn't updated here.`,
-        profiles: connected.map((p) => this.report(p, false))
-      }
-    }
-    // The real folder: its path is what the extension id comes from.
-    const folder = realpathSync(this.paths.extension)
-    const id = unpackedExtensionId(folder, this.platform)
-    const here = connected.filter((p) => p.extensionId === id)
-    const installed = String(manifest.version)
-    const kept = { updatedAt: previous.updatedAt, from: previous.from, notes: previous.notes }
+    const manifest = readJson(join(this.paths.extension, "manifest.json"))
+    // The real folder: its path is what Chrome's extension id comes from.
+    const managed = manifest?.name === EXTENSION_NAME ? realpathSync(this.paths.extension) : undefined
+    const notInstalled = `Not installed from MediaMake (nothing at ${this.paths.extension}), so no release is downloaded.`
+    if (!managed && !connected.length) return { skipped: notInstalled }
 
+    const installed = managed ? String(manifest.version) : undefined
+    const kept = { updatedAt: previous.updatedAt, from: previous.from, notes: previous.notes }
     const releases = await this.latestExtension()
     const newest = releases[0]
     const latest = newest.version
-    // The folder is current, but a profile may still run an older copy from it.
-    const stale = here.filter((p) => isNewer(installed, p.version))
-    if (!isNewer(latest, installed) && !stale.length) {
-      return { ...kept, installed, latest, profiles: connected.map((p) => this.report(p, here.includes(p))) }
-    }
+    const upgrade = Boolean(managed) && isNewer(latest, installed)
 
-    const upgrade = isNewer(latest, installed)
-    const version = upgrade ? latest : installed
-    const targets = upgrade ? here : stale
+    // Where each profile loads the extension from, and the version a reload would bring it to:
+    // the new release for MediaMake's folder, whatever is on disk for any other folder.
+    const managedId = managed && unpackedExtensionId(managed, this.platform)
+    const sources = new Map(connected.map((p) => [p.id, this.sourceOf(p, managed, managedId)]))
+    const goal = (p: Profile) => {
+      const source = sources.get(p.id)!
+      return source.kind === "MediaMake's folder" && upgrade ? latest : source.version
+    }
+    const targets = connected.filter((p) => isNewer(goal(p), p.version))
+    const reports = new Map(connected.map((p) => [p.id, this.report(p, sources.get(p.id)!, latest)]))
+    const base = { ...kept, installed, latest, ...(managed ? {} : { skipped: notInstalled }) }
+
     const busy = await this.busy(targets)
     if (busy.length && !reloadBusy) {
       return {
-        ...kept,
-        installed,
-        latest,
+        ...base,
         waiting: `Waiting to update the extension until it's idle: ${busy.join("; ")}. It tries again in 15 minutes.`,
-        profiles: connected.map((p) => this.report(p, here.includes(p)))
+        profiles: [...reports.values()]
       }
     }
 
@@ -528,7 +594,7 @@ export class Updater {
       if (next?.name !== EXTENSION_NAME || next.version !== latest) {
         throw new Error(`${EXTENSION_ASSET} ${latest} isn't Browse Hack ${latest}.`)
       }
-      replaceFolder(folder, files)
+      replaceFolder(managed!, files)
       console.error(`[update] installed the Browse Hack extension ${latest} (was ${installed})`)
       update = {
         updatedAt: new Date(this.now()).toISOString(),
@@ -539,29 +605,96 @@ export class Updater {
       }
     }
 
-    const reloaded = await this.reload(targets, version)
-    const needsClick = [...reloaded.values()].filter((p) => !p.reloaded)
+    for (const profile of targets) await this.reload(profile, goal(profile)!, reports.get(profile.id)!)
+
+    // What's left for the user: a click for copies too old to reload themselves,
+    // and rebuilding a checkout whose build is behind.
+    const all = [...reports.values()]
+    const todo: string[] = []
+    const click = all.filter((r) => r.reloaded === false)
+    if (click.length) {
+      todo.push(
+        `Reload Browse Hack on chrome://extensions in ${click.map((r) => r.profile).join(", ")} (the reload icon on ` +
+          "its card); later updates reload by themselves."
+      )
+    }
+    for (const checkout of new Set(all.flatMap((r) => (r.update ? [r.update.checkout] : [])))) {
+      const behind = all.filter((r) => r.update?.checkout === checkout)
+      todo.push(
+        `Browse Hack ${latest} is out, and ${behind.map((r) => r.profile).join(", ")} run${behind.length === 1 ? "s" : ""} ` +
+          `an older build from the git checkout ${checkout}, which updates never overwrite. With the checkout on ` +
+          `main, run: ${behind[0].update!.commands.join(" && ")}. Browse Hack then reloads Chrome on the new build.`
+      )
+    }
     return {
+      ...base,
       ...update,
-      installed: version,
-      latest,
-      profiles: connected.map((p) => reloaded.get(p.id) ?? this.report(p, here.includes(p))),
-      waiting: needsClick.length
-        ? `Reload Browse Hack on chrome://extensions in ${needsClick.map((p) => p.profile).join(", ")} ` +
-          `(the reload icon on its card) to run ${version}; later updates reload by themselves.`
-        : undefined
+      installed: upgrade ? latest : installed,
+      profiles: all,
+      waiting: todo.length ? todo.join(" ") : undefined
     }
   }
 
-  private report(profile: Profile, fromHere: boolean): ProfileReport {
-    return {
+  /** Where a profile loads the extension from: MediaMake's folder, a build in a git checkout, or another folder. */
+  private sourceOf(profile: Profile, managed?: string, managedId?: string): Source {
+    if (managed && profile.extensionId === managedId) {
+      return { kind: "MediaMake's folder", folder: managed, version: readJson(join(managed, "manifest.json"))?.version }
+    }
+    const folder = this.loadedFolder(profile.extensionId)
+    if (!folder) return { kind: "an unknown folder" }
+    const version = readJson(join(folder, "manifest.json"))?.version
+    const checkout = gitCheckout(folder)
+    return checkout ? { kind: "a git checkout", folder, version, checkout } : { kind: "another folder", folder, version }
+  }
+
+  /**
+   * The folder a Chromium browser loads an unpacked extension from, as its
+   * profiles' preferences record it (extensions.settings.<id>.path). Read only,
+   * and nothing else in them is used.
+   */
+  private loadedFolder(extensionId?: string) {
+    if (!extensionId) return undefined
+    for (const dir of this.browserDirs) {
+      let profiles: string[]
+      try {
+        profiles = readdirSync(dir)
+      } catch {
+        continue
+      }
+      for (const profile of profiles) {
+        for (const file of ["Secure Preferences", "Preferences"]) {
+          const path = readJson(join(dir, profile, file))?.extensions?.settings?.[extensionId]?.path
+          if (typeof path === "string" && isAbsolute(path)) return path
+        }
+      }
+    }
+    return undefined
+  }
+
+  private report(profile: Profile, source: Source, latest: string): ProfileReport {
+    const report: ProfileReport = {
       profile: profile.email ?? profile.label,
       version: profile.version,
-      loadedFrom: fromHere ? "this folder" : "another folder",
-      note: fromHere
-        ? undefined
-        : `Loaded from another folder (extension id ${profile.extensionId}), so it isn't updated automatically.`
+      loadedFrom: source.kind,
+      ...(source.folder && source.kind !== "MediaMake's folder" ? { folder: source.folder } : {})
     }
+    if (source.kind === "a git checkout") {
+      // Never written to: it's someone's working copy.
+      report.note = `Runs the build in the git checkout ${source.checkout}, which updates never overwrite.`
+      if (isNewer(latest, source.version)) {
+        report.note += ` Browse Hack ${latest} is out and this build is ${source.version ?? "older"}: pull main and rebuild (update.commands).`
+        report.update = { checkout: source.checkout!, commands: rebuildCommands(source.checkout!, source.folder!) }
+      }
+    } else if (source.kind !== "MediaMake's folder") {
+      report.note =
+        `Loaded from ${source.folder ?? `a folder Browse Hack couldn't find (extension id ${profile.extensionId})`}, ` +
+        "which updates never overwrite. " +
+        (existsSync(join(this.paths.extension, "manifest.json"))
+          ? `For automatic updates, Remove that card on chrome://extensions and Load unpacked ${this.paths.extension} ` +
+            "instead (a new folder starts with empty settings: sign in to MediaMake again)."
+          : "For automatic updates, install Browse Hack from MediaMake.")
+    }
+    return report
   }
 
   /** What keeps each profile busy, as "<email>: <what>". Older extensions can't say. */
@@ -576,25 +709,22 @@ export class Updater {
     return busy
   }
 
-  /** Reloads the extension in each profile and waits for it to come back on `version`. */
-  private async reload(profiles: Profile[], version: string) {
-    const reports = new Map<string, ProfileReport>()
-    for (const profile of profiles) {
-      const report = this.report(profile, true)
-      try {
-        await this.options.bridge.callIn(profile.id, "extension.reload", {}, 10_000)
-        report.reloaded = await this.waitForVersion(profile.id, version)
-        report.version = report.reloaded ? version : report.version
-        if (!report.reloaded) report.note = `Reloaded, but it hasn't reconnected on ${version} yet.`
-      } catch (error) {
-        report.reloaded = false
-        report.note = /Unknown method/.test(message(error))
-          ? "This copy is too old to reload itself."
+  /** Reloads the extension in a profile and waits for it to come back on `version`. */
+  private async reload(profile: Profile, version: string, report: ProfileReport) {
+    const problem = (text: string) => (report.note = report.note ? `${report.note} ${text}` : text)
+    try {
+      await this.options.bridge.callIn(profile.id, "extension.reload", {}, 10_000)
+      report.reloaded = await this.waitForVersion(profile.id, version)
+      if (report.reloaded) report.version = version
+      else problem(`Reloaded, but it hasn't reconnected on ${version} yet.`)
+    } catch (error) {
+      report.reloaded = false
+      problem(
+        /Unknown method/.test(message(error))
+          ? `This copy is too old to reload itself; reload it by hand to run ${version}.`
           : `Couldn't reload it: ${message(error)}`
-      }
-      reports.set(profile.id, report)
+      )
     }
-    return reports
   }
 
   private async waitForVersion(profileId: string, version: string) {

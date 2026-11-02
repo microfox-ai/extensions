@@ -227,24 +227,27 @@ function writeConfig(config = { url: base, updateToken: TOKEN }) {
   write(join(home, ".mediamake", "config.json"), JSON.stringify(config))
 }
 
-// Profiles the bridge reports; `fromFolder` ones load the extension from ~/Extensions/browse-hack-chrome.
+// Profiles the bridge reports; `fromFolder` ones load the extension from ~/Extensions/browse-hack-chrome,
+// `folder` ones from that folder.
 function fakeBridge(profiles, { busy = [], old = false } = {}) {
   const calls = []
+  const folderOf = (p) => p.folder ?? (p.fromFolder ? extensionFolder() : undefined)
   const state = profiles.map((p) => ({
     id: p.id,
     label: p.email,
     email: p.email,
     version: p.version,
+    folder: folderOf(p),
     extensionId:
-      p.fromFolder && existsSync(extensionFolder())
-        ? unpackedExtensionId(realpathSync(extensionFolder()))
+      folderOf(p) && existsSync(folderOf(p))
+        ? unpackedExtensionId(realpathSync(folderOf(p)))
         : "otherfolderidaaaaaaaaaaaaaaaaaaaa",
     connectedAt: "2026-11-02T00:00:00Z"
   }))
   return {
     calls,
     profiles: state,
-    status: async () => ({ profiles: state.map((p) => ({ ...p })) }),
+    status: async () => ({ profiles: state.map(({ folder, ...p }) => ({ ...p })) }),
     callIn: async (id, method) => {
       calls.push({ id, method })
       if (old) throw new Error(`Unknown method: ${method}`)
@@ -252,7 +255,7 @@ function fakeBridge(profiles, { busy = [], old = false } = {}) {
       if (method === "extension.status") return { version: profile.version, busy }
       if (method === "extension.reload") {
         // Chrome reads the folder again.
-        setTimeout(() => (profile.version = readJson(join(extensionFolder(), "manifest.json")).version), 50)
+        setTimeout(() => (profile.version = readJson(join(profile.folder, "manifest.json")).version), 50)
         return { reloading: true }
       }
       throw new Error(`unexpected call: ${method}`)
@@ -272,11 +275,31 @@ function updater(bridge = fakeBridge([]), options = {}) {
     githubApi: `${base}/gh`,
     now: () => clock,
     reconnectWaitMs: 3000,
+    browserDirs: [join(home, "Chrome")],
     ...options
   })
 }
 
 const paths = () => requests.map((r) => r.path)
+
+// Chrome's record of where a profile loads an unpacked extension from.
+function chromeLoads(folder, profileDir = "Profile 1") {
+  const id = unpackedExtensionId(realpathSync(folder))
+  const prefs = join(home, "Chrome", profileDir, "Secure Preferences")
+  const current = existsSync(prefs) ? readJson(prefs) : { extensions: { settings: {} } }
+  current.extensions.settings[id] = { location: 4, path: folder }
+  write(prefs, JSON.stringify(current))
+}
+
+// A build of the extension in a git checkout, as `npm run build` in get-into-zone/ makes it.
+function repoBuild(version) {
+  const repo = join(home, "code", "extensions")
+  mkdirSync(join(repo, ".git"), { recursive: true })
+  const folder = join(repo, "get-into-zone", "build", "chrome-mv3-prod")
+  write(join(folder, "manifest.json"), JSON.stringify({ manifest_version: 3, name: "Browse Hack", version }))
+  write(join(folder, "background.js"), `// local build ${version}`)
+  return { repo, folder }
+}
 
 describe("versions and extension ids", () => {
   test("compares versions", () => {
@@ -517,7 +540,9 @@ describe("extension updates", () => {
     const byEmail = Object.fromEntries(state.extension.profiles.map((p) => [p.profile, p]))
     assert.equal(byEmail["one@example.com"].reloaded, true)
     assert.equal(byEmail["one@example.com"].version, "0.10.0")
-    assert.equal(byEmail["dev@example.com"].loadedFrom, "another folder")
+    assert.equal(byEmail["dev@example.com"].loadedFrom, "an unknown folder")
+    assert.match(byEmail["dev@example.com"].note, /Load unpacked .*Extensions\/browse-hack-chrome instead/)
+    assert.equal(byEmail["dev@example.com"].reloaded, undefined)
     assert.equal(state.extension.waiting, undefined)
     // No catalog or credential needed for the extension.
     assert.equal(paths().some((p) => p.startsWith("/api/")), false)
@@ -594,9 +619,61 @@ describe("extension updates", () => {
     assert.equal(existsSync(join(extensionFolder(), "old-only.js")), true)
   })
 
-  test("leaves an extension that wasn't installed from MediaMake alone", async () => {
-    const state = await updater(fakeBridge(profiles())).check()
+  test("does nothing without MediaMake's folder or a connected extension", async () => {
+    const state = await updater(fakeBridge([])).check()
     assert.match(state.extension.skipped, /Not installed from MediaMake/)
     assert.equal(paths().some((p) => p.startsWith("/gh/")), false)
+  })
+
+  test("never overwrites a build in a git checkout, and says how to update it", async () => {
+    const { repo, folder } = repoBuild("0.9.0")
+    chromeLoads(folder)
+    const bridge = fakeBridge([{ id: "p1", email: "one@example.com", version: "0.9.0", folder }])
+    const state = await updater(bridge).check()
+
+    assert.equal(readFileSync(join(folder, "background.js"), "utf8"), "// local build 0.9.0")
+    assert.equal(paths().some((p) => p.startsWith("/storage/")), false)
+    assert.deepEqual(bridge.calls, [])
+    const [report] = state.extension.profiles
+    assert.equal(report.loadedFrom, "a git checkout")
+    assert.equal(report.folder, folder)
+    assert.deepEqual(report.update, {
+      checkout: repo,
+      commands: [
+        `git -C "${repo}" pull --ff-only`,
+        `npm --prefix "${join(repo, "get-into-zone")}" install`,
+        `npm --prefix "${join(repo, "get-into-zone")}" run build`
+      ]
+    })
+    assert.match(state.extension.waiting, /0\.10\.0 is out, and one@example.com runs an older build from the git checkout/)
+    assert.match(state.extension.skipped, /Not installed from MediaMake/)
+  })
+
+  test("reloads Chrome once the checkout has a newer build", async () => {
+    const { folder } = repoBuild("0.10.0")
+    chromeLoads(folder, "Profile 6")
+    const bridge = fakeBridge([{ id: "p1", email: "one@example.com", version: "0.9.0", folder }])
+    const state = await updater(bridge).check()
+    assert.deepEqual(bridge.calls.map((c) => c.method), ["extension.status", "extension.reload"])
+    const [report] = state.extension.profiles
+    assert.equal(report.reloaded, true)
+    assert.equal(report.version, "0.10.0")
+    assert.equal(report.update, undefined)
+    assert.equal(state.extension.waiting, undefined)
+    assert.equal(readFileSync(join(folder, "background.js"), "utf8"), "// local build 0.10.0")
+  })
+
+  test("names any other folder Chrome loads, without touching it", async () => {
+    installExtension("0.9.0")
+    const folder = join(home, "Downloads", "browse-hack-old")
+    write(join(folder, "manifest.json"), JSON.stringify({ name: "Browse Hack", version: "0.8.0" }))
+    chromeLoads(folder)
+    const state = await updater(fakeBridge([{ id: "p9", email: "nine@example.com", version: "0.8.0", folder }])).check()
+    const [report] = state.extension.profiles
+    assert.equal(report.loadedFrom, "another folder")
+    assert.equal(report.folder, folder)
+    assert.match(report.note, /Load unpacked .*browse-hack-chrome instead/)
+    assert.equal(readJson(join(folder, "manifest.json")).version, "0.8.0")
+    assert.equal(readJson(join(extensionFolder(), "manifest.json")).version, "0.10.0")
   })
 })

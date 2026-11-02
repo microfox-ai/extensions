@@ -163,7 +163,9 @@ localTool(
     "them: the MCP for the next Claude session, the extension into its folder, then reloads it in each Chrome profile " +
     "that loads it from there. Returns the versions before and after and the release notes. Browse Hack also does this " +
     "by itself every few hours; autoUpdate turns that on or off. While the extension is busy (downloads, other " +
-    "Claude calls) its reload waits; reloadBusy reloads it anyway, only when the user says so.",
+    "Claude calls) its reload waits; reloadBusy reloads it anyway, only when the user says so. A Chrome profile that " +
+    "runs a build from a git checkout is never overwritten: its profile entry has update.commands to pull and rebuild " +
+    "it; run them only if the user agrees, then call this again to reload Chrome on the new build.",
   {
     reloadBusy: z.boolean().optional().describe("Reload the extension even while it's busy"),
     autoUpdate: z.boolean().optional().describe("Turn automatic updates on or off (saved in ~/.mediamake/config.json)")
