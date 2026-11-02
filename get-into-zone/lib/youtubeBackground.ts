@@ -1,4 +1,10 @@
 import {
+  cleanFolder,
+  inFolder,
+  saveSourceSidecar,
+  withoutExtension
+} from "./libraryFiles"
+import {
   YT_JOBS_KEY,
   fetchPlayerInPage,
   parseVideoId,
@@ -137,13 +143,18 @@ export async function startDownload(request: any, tabId?: number) {
         })`
   const ext = typeof request.ext === "string" ? request.ext : main.container
   const title = String(request.title || request.videoId || "YouTube video")
+  // The MCP bridge can pick the folder (a subfolder of Downloads) and the name.
+  const named = typeof request.fileName === "string" && request.fileName.trim()
+  const name = named
+    ? sanitizeFileName(withoutExtension(request.fileName))
+    : `${sanitizeFileName(title)}${suffix}`
 
   const job: YtJob = {
     id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
     videoId: String(request.videoId ?? ""),
     title,
     label: String(request.label ?? ""),
-    filename: `${sanitizeFileName(title)}${suffix}.${ext}`,
+    filename: inFolder(cleanFolder(request.folder), `${name}.${ext}`),
     status: "downloading",
     received: 0,
     total: streams.reduce((n, s) => n + (s.contentLength ?? 0), 0),
@@ -153,7 +164,9 @@ export async function startDownload(request: any, tabId?: number) {
       contentLength: s.contentLength,
       audioTrack: s.audioTrack
     })),
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    ...(named ? { overwrite: true } : {}),
+    ...(request.source ? { source: request.source } : {})
   }
   await loadJobs()
   jobs[job.id] = job
@@ -177,7 +190,7 @@ export async function startDownload(request: any, tabId?: number) {
     })
     return { success: false, message: "Couldn't start the download." }
   }
-  return { success: true, jobId: job.id }
+  return { success: true, jobId: job.id, filename: job.filename }
 }
 
 // The player API only answers requests sent from a YouTube page, so fresh
@@ -234,7 +247,7 @@ async function saveBlob(jobId: string, blobUrl: string) {
     const downloadId = await chrome.downloads.download({
       url: blobUrl,
       filename: job.filename,
-      conflictAction: "uniquify",
+      conflictAction: job.overwrite ? "overwrite" : "uniquify",
       saveAs: false
     })
     await updateJob(jobId, { downloadId })
@@ -281,7 +294,20 @@ async function onDownloadChanged(delta: chrome.downloads.DownloadDelta) {
   const job = Object.values(jobs).find((j) => j.downloadId === delta.id)
   if (!job) return
   if (state === "complete") {
-    await updateJob(job.id, { status: "done", received: job.total })
+    const [item] = await chrome.downloads.search({ id: delta.id })
+    await updateJob(job.id, {
+      status: "done",
+      received: job.total,
+      path: item?.filename
+    })
+    if (job.source && item?.filename) {
+      await saveSourceSidecar(job.filename, item.filename, job.source).catch(
+        (error) =>
+          updateJob(job.id, {
+            sidecarError: error instanceof Error ? error.message : String(error)
+          })
+      )
+    }
   } else if (job.status !== "cancelled") {
     const [item] = await chrome.downloads.search({ id: delta.id })
     await updateJob(job.id, {

@@ -95,7 +95,10 @@ function waitForDownload(downloadId: number) {
 }
 
 // Download ids come back in the order of `files`; callers rely on that.
-export async function downloadInstagramFiles(files: IgDownload[]) {
+export async function downloadInstagramFiles(
+  files: IgDownload[],
+  conflictAction: chrome.downloads.FilenameConflictAction = "uniquify"
+) {
   if (!files.length) throw new Error("Nothing to download.")
   const valid = (file: IgDownload) =>
     typeof file?.url === "string" &&
@@ -107,7 +110,7 @@ export async function downloadInstagramFiles(files: IgDownload[]) {
       chrome.downloads.download({
         url: file.url,
         filename: file.filename,
-        conflictAction: "uniquify",
+        conflictAction,
         saveAs: false
       })
     )

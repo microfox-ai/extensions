@@ -30,6 +30,7 @@ This is a [Plasmo extension](https://docs.plasmo.com/) project bootstrapped with
 | `lib/instagramBackground.ts` | Instagram lookups for the popup (run in an open instagram.com tab) and saving files to Downloads |
 | `contents/instagram.ts` | Content script on Instagram: Download / All buttons on hovered photos and videos, result toasts |
 | `componenets/InstagramTab.tsx` | Popup tab: load the current or a pasted post, download one slide or all |
+| `lib/libraryFiles.ts` | Files for MediaMake's media library, written through `chrome.downloads`: a download's `<file>.source.json` and a Pinterest session's `_session.json` |
 | `lib/saverRules.ts` | Saver toggle rules (page / site / window / everywhere) shared by popup, content script, and background |
 | `lib/saverBackground.ts` | Toolbar "OFF" badge, right-click menu, window-rule cleanup |
 

@@ -8,6 +8,7 @@ import { z } from "zod"
 
 import { Bridge } from "./bridge.js"
 import { fillDistrokidReleases } from "./distrokid.js"
+import { downloadMidjourneyImages, instagramDownload, startPinterestBulk, youtubeDownload } from "./downloads.js"
 import { saveGoogleAiAnswers } from "./googleAiAnswers.js"
 import { batchStatus, pauseBatch, startBatch } from "./midjourneyBatch.js"
 import { toSource } from "./sources.js"
@@ -29,7 +30,10 @@ const server = new McpServer(
       "user to sign in and click Allow in the window that opens. For more than a few Midjourney prompts, use midjourney_batch_start. " +
       "midjourney_repaint opens a brush tab so the user can erase part of an image by hand; tell them to paint and click Repaint, then call midjourney_repaint_status. " +
       "Tools act on the user's real browser tabs; most take an optional tabId (see list_tabs) and default to the active tab. " +
-      "Downloads land in the browser's Downloads folder. Call get_status first if a tool says the extension isn't connected. " +
+      "Downloads land in the browser's Downloads folder. When MediaMake's media library is set up (~/.mediamake/config.json), " +
+      "YouTube, Instagram, Pinterest and Midjourney downloads go to its inbox with a <file>.source.json beside each, and " +
+      "YouTube and Instagram media the library already has comes back as alreadyHave instead of downloading again (force skips that check). " +
+      "Call get_status first if a tool says the extension isn't connected. " +
       "The extension may be installed in several Chrome profiles (accounts). When two or more are connected, ask the user which " +
       "profile to use for this session before doing anything else (list_profiles shows them), then call use_profile; every tool " +
       "then runs in that profile only. Never pick a profile on the user's behalf. Name each profile to the user by its Google " +
@@ -39,6 +43,9 @@ const server = new McpServer(
 
 const tabId = z.number().int().optional().describe("Browser tab id from list_tabs. Defaults to the active tab.")
 const tags = z.array(z.string()).optional().describe("Mediamake tags. Defaults to the tags in the extension's Settings.")
+const downloadFolder = (fallback: string) =>
+  z.string().optional().describe(`Subfolder of Downloads (a path inside ~/Downloads works too). Default: ${fallback}`)
+const force = z.boolean().optional().describe("Download even when MediaMake's media library already has it")
 
 type Shape = Record<string, z.ZodType>
 type Params = Record<string, any>
@@ -211,22 +218,34 @@ tool(
 
 // --- Pinterest ---
 
-tool(
+localTool(
   "pinterest_bulk_start",
   "Starts bulk-downloading every pin image (and video) shown in a Pinterest tab. The session keeps saving new pins as the tab " +
-    "is scrolled or navigated (pages already visited are skipped) until pinterest_bulk_stop. Scroll or navigate the tab to collect more.",
+    "is scrolled or navigated (pages already visited are skipped) until pinterest_bulk_stop. Scroll or navigate the tab to collect more. " +
+    "With MediaMake's media library set up, pins the library already has are skipped, and stopping writes _session.json " +
+    "into the folder: every page visited (with its search) and every pin saved or skipped, with the search it came from.",
   {
     tabId: tabId.describe("Pinterest tab id. Defaults to the active tab if it's Pinterest, else the first Pinterest tab."),
     destination: z.enum(["browser", "mediamake"]).default("browser").describe("Browser downloads folder or Mediamake upload"),
-    folder: z.string().optional().describe('Subfolder of Downloads for images (default "pinterest-YYYY-MM-DD")'),
+    folder: downloadFolder(
+      'the library inbox\'s pinterest/<YYYY-MM-DD>-<search> (e.g. "_INBOX/pinterest/2026-11-02-luffy-gear-5"), else "pinterest-YYYY-MM-DD"'
+    ),
     includeVideos: z.boolean().optional().describe("Also download video pins (default true)"),
     videoFolder: z.string().optional().describe('Subfolder for videos (default "<folder>/videos")'),
     tags,
-    perPageLimit: z.number().int().min(0).optional().describe("Max images, and separately videos, per page; 0 = no limit")
+    perPageLimit: z.number().int().min(0).optional().describe("Max images, and separately videos, per page; 0 = no limit"),
+    force
   },
-  "pinterest.bulkStart"
+  (params) => startPinterestBulk(bridge, params)
 )
-tool("pinterest_bulk_stop", "Stops the bulk download session in a Pinterest tab.", { tabId }, "pinterest.bulkStop")
+tool(
+  "pinterest_bulk_stop",
+  "Stops the bulk download session in a Pinterest tab. With MediaMake's media library set up, returns the path of the " +
+    "session's _session.json.",
+  { tabId },
+  "pinterest.bulkStop",
+  { timeoutMs: 120_000 }
+)
 tool(
   "pinterest_bulk_status",
   "Shows bulk download sessions: saved images and videos, queued, failed, pages visited.",
@@ -284,21 +303,29 @@ tool(
   "youtube.getVideo",
   { readOnly: true, timeoutMs: 90_000 }
 )
-tool(
+localTool(
   "youtube_download",
-  "Downloads a YouTube video to the browser's Downloads folder. Runs in the background; check youtube_list_downloads for progress.",
+  "Downloads a YouTube video to the browser's Downloads folder (MediaMake's media library inbox when it's set up, with a " +
+    "<file>.source.json beside the video). Runs in the background; check youtube_list_downloads for progress and the saved " +
+    "file's path. If the library already has the video, nothing is downloaded and alreadyHave gives its path; a maxHeight " +
+    "above the library copy's height, or force, downloads it anyway.",
   {
     ...youtubeTarget,
     mode: z.enum(["both", "video", "audio"]).optional().describe('Default "both" (MP4 with sound)'),
     optionId: z.string().optional().describe("Exact option id from youtube_get_video. Default: best quality"),
-    maxHeight: z.number().int().positive().optional().describe("Best option at or below this height, e.g. 1080")
+    maxHeight: z.number().int().positive().optional().describe("Best option at or below this height, e.g. 1080"),
+    folder: downloadFolder('the library inbox\'s youtube folder (e.g. "_INBOX/youtube"), else Downloads itself'),
+    fileName: z
+      .string()
+      .optional()
+      .describe("File name without the extension, replacing a file of that name. Default: the title and quality"),
+    force
   },
-  "youtube.download",
-  { timeoutMs: 90_000 }
+  (params) => youtubeDownload(bridge, params)
 )
 tool(
   "youtube_list_downloads",
-  "Lists YouTube downloads with status (downloading, merging, saving, done, error, cancelled) and bytes received.",
+  "Lists YouTube downloads with status (downloading, merging, saving, done, error, cancelled), bytes received and, once done, the file's path.",
   {},
   "youtube.listDownloads",
   { readOnly: true }
@@ -323,19 +350,29 @@ tool(
   "instagram.getPost",
   { readOnly: true, timeoutMs: 60_000 }
 )
-tool(
+localTool(
   "instagram_download",
-  "Downloads the photos and videos of an Instagram post, reel or story to the browser's Downloads folder at full size, " +
-    "and returns each saved file's path. Waits until the files are saved.",
+  "Downloads the photos and videos of an Instagram post, reel or story to the browser's Downloads folder at full size " +
+    "(MediaMake's media library inbox when it's set up, with a <file>.source.json beside each), and returns each saved " +
+    "file's path. Waits until the files are saved. Items the library already has aren't downloaded again: they come " +
+    "back in alreadyHave with their paths (force downloads them anyway).",
   {
     ...instagramTarget,
     items: z
       .array(z.number().int().positive())
       .optional()
-      .describe("Item numbers from instagram_get_post to save, e.g. [2]. Default: every item")
+      .describe("Item numbers from instagram_get_post to save, e.g. [2]. Default: every item"),
+    folder: downloadFolder('the library inbox\'s instagram folder (e.g. "_INBOX/instagram"), else Downloads itself'),
+    fileName: z
+      .string()
+      .optional()
+      .describe(
+        'File name without the extension, replacing a file of that name; carousels add " - <item number>". ' +
+          'Default: "<username> - <post code>"'
+      ),
+    force
   },
-  "instagram.download",
-  { timeoutMs: 300_000 }
+  (params) => instagramDownload(bridge, params)
 )
 
 // --- Saver overlays ---
@@ -722,18 +759,24 @@ localTool(
   ({ folders, concurrency }) => fillDistrokidReleases(bridge, folders, concurrency ?? 3)
 )
 
-tool(
+localTool(
   "midjourney_download_images",
   "Saves a Midjourney job's images to the browser's Downloads folder as <folder>/<jobId>_<index>.png, or " +
-    "<folder>/<name>-<index>.png with a name (replacing an older file of that name). Returns each file's path.",
+    "<folder>/<name>-<index>.png with a name (replacing an older file of that name). Returns each file's path. With " +
+    "MediaMake's media library set up, they go to its inbox and each gets a <file>.source.json with the job's prompt.",
   {
     jobId: z.string(),
     indexes: z.array(z.number().int().min(0).max(3)).optional().describe("Which images (default all of them: 4, or 1 for an upscale)"),
-    folder: z.string().optional().describe('Subfolder of Downloads (default "midjourney")'),
-    name: z.string().optional().describe('File name before "-<index>.png", e.g. "pin-001-a"')
+    folder: downloadFolder(
+      'the library inbox\'s midjourney/<set> (e.g. "_INBOX/midjourney/2026-11-02"), else "midjourney"'
+    ),
+    name: z.string().optional().describe('File name before "-<index>.png", e.g. "pin-001-a"'),
+    set: z
+      .string()
+      .optional()
+      .describe("Name of the set these images belong to: their folder in the library inbox. Default: today's date (YYYY-MM-DD)")
   },
-  "midjourney.downloadImages",
-  { timeoutMs: 180_000 }
+  (params) => downloadMidjourneyImages(bridge, params as any)
 )
 
 // --- Midjourney batches ---

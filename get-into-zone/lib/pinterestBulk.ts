@@ -16,6 +16,31 @@ export interface BulkItem {
 export interface BulkPageCount {
   images: number
   videos: number
+  // The address and time of the first visit, for _session.json.
+  url?: string
+  at?: number
+}
+
+// Where a pin was saved in the browser's Downloads: the path asked for
+// (Chrome may add " (1)"), its download and the file's URL.
+export interface SavedPin {
+  file: string
+  downloadId?: number
+  url: string
+}
+
+// A pin saved this session, for _session.json; id is its pinRef.
+export interface BulkSave extends SavedPin {
+  id: string
+  pageUrl: string
+  at: number
+}
+
+// A pin MediaMake's media library already has, so it wasn't downloaded.
+export interface BulkSkip {
+  id: string
+  pageUrl: string
+  at: number
 }
 
 export interface BulkSession {
@@ -43,6 +68,14 @@ export interface BulkSession {
   savedVideos: number
   failed: number
   lastError?: string
+  // Set by the MCP server when MediaMake's media library is set up: write
+  // <folder>/_session.json when the session stops (pages, saves, skipped),
+  // and skip the `skipping` pins the library has (their refs are stored apart,
+  // under bulkSkipKey, as there can be thousands).
+  manifest?: boolean
+  saves?: BulkSave[]
+  skipped?: BulkSkip[]
+  skipping?: number
 }
 
 export interface BulkPrefs {
@@ -61,6 +94,43 @@ export const BULK_SESSION_PREFIX = "pinterestBulk:"
 export const BULK_PREFS_KEY = "pinterestBulkPrefs"
 
 export const bulkSessionKey = (tabId: number) => `${BULK_SESSION_PREFIX}${tabId}`
+export const bulkSkipKey = (tabId: number) => `pinterestBulkSkip:${tabId}`
+
+// A pin's ref in MediaMake's media library: the hash its files are named
+// after ("ab/cd/ef/<hash>.jpg" for an image, "ab/cd/ef/<hash>" for a video).
+export const pinRef = (id: string) => id.split("/").pop()!.replace(/\.\w+$/, "")
+
+// The search a Pinterest page shows (its q parameter), if any.
+export function pinterestQuery(href: string) {
+  try {
+    return new URL(href).searchParams.get("q")?.trim() || undefined
+  } catch {
+    return undefined
+  }
+}
+
+// A session folder's name: <date>-<search>, or <date>-<path> off search pages
+// (a board's "user-board"), with -2, -3, ... when that name is taken.
+export function sessionFolderName(href: string, date: string, taken: string[] = []) {
+  let topic = ""
+  try {
+    const url = new URL(href)
+    topic = url.searchParams.get("q") || url.pathname
+  } catch {
+    // Not a page address; the fallback name is used.
+  }
+  const slug =
+    topic
+      .toLowerCase()
+      .normalize("NFKC")
+      .replace(/[^\p{L}\p{M}\p{N}]+/gu, "-")
+      .slice(0, 60)
+      .replace(/^-+|-+$/g, "") || "home"
+  const used = new Set(taken)
+  let name = `${date}-${slug}`
+  for (let n = 2; used.has(name); n++) name = `${date}-${slug}-${n}`
+  return name
+}
 
 // Pin images are served as i.pinimg.com/<size>/<id>, where size is "236x",
 // "736x", "originals", ... Avatars ("75x75_RS") and video thumbnails don't
