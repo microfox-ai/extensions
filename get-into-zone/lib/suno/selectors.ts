@@ -56,6 +56,22 @@ export const TEXT = {
   saveTo: "Save to"
 } as const
 
+/**
+ * Suno's download dialog, which a song's Download opens since downloads are
+ * metered: one toggle per format (several can be on; M4A starts on on a Mac,
+ * MP3 elsewhere), then "Unlock & Download" for a song not downloaded yet, or
+ * "Download" for one that is (no download used).
+ */
+export const DOWNLOAD = {
+  formats: { m4a: "M4A", mp3: "MP3", wav: "WAV", video: "Video" },
+  confirm: /^(unlock\s*(&|and|\+)\s*)?download$/i,
+  // Other buttons in the dialog that say "download".
+  notConfirm: /buy|purchase|pack|share|link|stems|upgrade/i,
+  outOfDownloads: /out of downloads|no downloads (left|remaining)/i,
+  // Before the dialog, the song menu had Download ▸ MP3 Audio / WAV Audio / Video.
+  menu: { mp3: /\bmp3\b|^audio$/i, wav: /\bwav\b/i }
+} as const
+
 /** Condition names in the audio condition menu, by remix_type. */
 export const CONDITIONS: Record<string, string> = {
   cover: "Cover",

@@ -10,7 +10,7 @@
 
 import { downloadFinished, inFolder, saveSourceSidecar, type SourceFields } from "./libraryFiles"
 import { authorizedFetch, mediamakeEndpoint } from "./mediamakeAuth"
-import { generationRecord, songFileBase, SUNO, type SunoClip } from "./suno/clip"
+import { clipIdOf, generationRecord, songFileBase, SUNO, type SunoClip } from "./suno/clip"
 import type { SunoFormJob } from "./suno/form"
 import {
   findChannel,
@@ -245,19 +245,26 @@ export function generate(p: GenerateParams) {
 
 // --- Downloads into the library inbox ------------------------------------------------
 
-type Route = { folder: string; base: string; at: number; started: (id: number) => void }
+type Route = { clipId: string; folder: string; base: string; until: number; started: (id: number) => void }
 const routes: Route[] = []
 
-function expectDownload(folder: string, base: string) {
+// Suno prepares the file before its download starts: an MP3 in seconds, a WAV
+// after converting it (Suno itself waits up to two minutes for that).
+const START_MS = { mp3: 180_000, wav: 300_000 }
+
+function expectDownload(clipId: string, folder: string, base: string, timeoutMs: number) {
   let route!: Route
+  let timer: ReturnType<typeof setTimeout> | undefined
   const started = new Promise<number>((resolve, reject) => {
-    route = { folder, base, at: Date.now(), started: resolve }
-    setTimeout(() => reject(new Error("Suno didn't start the download.")), 90_000)
+    route = { clipId, folder, base, until: Date.now() + timeoutMs, started: resolve }
+    timer = setTimeout(() => reject(new Error(`Suno didn't start the download within ${timeoutMs / 1000} seconds.`)), timeoutMs)
   })
+  started.catch(() => {})
   routes.push(route)
   return {
     started,
     cancel: () => {
+      clearTimeout(timer)
       const i = routes.indexOf(route)
       if (i >= 0) routes.splice(i, 1)
     }
@@ -266,6 +273,50 @@ function expectDownload(folder: string, base: string) {
 
 const fromSuno = (item: chrome.downloads.DownloadItem) =>
   [item.url, item.finalUrl, item.referrer].some((u) => /^(blob:)?https:\/\/([\w-]+\.)*suno\.(com|ai)\//.test(u ?? ""))
+
+// Suno saves a song from a blob: link named after its title, so a download the
+// user starts carries no song id. contents/suno.ts reports the song whose
+// Download they pressed; those reports are kept here for a while (in session
+// storage, which outlives this worker going to sleep during a WAV conversion).
+const INTENTS_KEY = "sunoDownloadIntents"
+const INTENT_MS = 10 * 60_000
+type Intent = { clipId: string; at: number }
+
+async function loadIntents() {
+  const stored = (await chrome.storage.session.get(INTENTS_KEY))[INTENTS_KEY]
+  return (Array.isArray(stored) ? (stored as Intent[]) : []).filter((i) => Date.now() - i.at < INTENT_MS)
+}
+
+async function noteIntent(clipId: string) {
+  const intents = (await loadIntents()).filter((i) => i.clipId !== clipId)
+  await chrome.storage.session.set({ [INTENTS_KEY]: [...intents, { clipId, at: Date.now() }].slice(-10) })
+}
+
+async function dropIntent(clipId: string) {
+  await chrome.storage.session.set({ [INTENTS_KEY]: (await loadIntents()).filter((i) => i.clipId !== clipId) })
+}
+
+const squash = (value: string) => value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "")
+
+/**
+ * The song a download is of: the id in its link (cdn1.suno.ai/<id>.mp3), else
+ * the song the user pressed Download for, whose title the file is named after.
+ * A report stays until it expires, as each format picked is a download of its own.
+ */
+async function clipOfDownload(item: chrome.downloads.DownloadItem) {
+  const inLink = [item.url, item.finalUrl]
+    .filter((u) => u && !u.startsWith("blob:"))
+    .join(" ")
+    .match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0]
+  if (inLink) return read<SunoClip>("song", { id: inLink }).catch(() => undefined)
+  const stem = squash(item.filename.split(/[\\/]/).pop()?.replace(/\.[a-z0-9]+$/i, "") ?? "")
+  for (const intent of (await loadIntents()).reverse()) {
+    const clip = await read<SunoClip>("song", { id: intent.clipId }).catch(() => undefined)
+    const title = squash(clip?.title ?? "")
+    if (clip && title && stem.startsWith(title)) return clip
+  }
+  return undefined
+}
 
 function extensionOf(item: chrome.downloads.DownloadItem) {
   const fromName = item.filename.match(/\.(mp3|wav|m4a|mp4|zip|flac)$/i)?.[0]
@@ -278,31 +329,35 @@ function extensionOf(item: chrome.downloads.DownloadItem) {
 
 /** Songs downloaded by hand on suno.com, filed into the inbox when the user turned that on. */
 async function routeByHand(item: chrome.downloads.DownloadItem, suggest: (s?: chrome.downloads.DownloadFilenameSuggestion) => void) {
+  let suggested = false
   try {
     const prefs = await loadSunoPrefs()
-    const clipId = [item.url, item.finalUrl, item.filename].join(" ").match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0]
-    if (!prefs.routeDownloads || !clipId) return suggest()
-    const clip = await read<SunoClip>("song", { id: clipId }).catch(() => undefined)
-    if (!clip) return suggest()
+    const clip = prefs.routeDownloads ? await clipOfDownload(item) : undefined
+    if (!clip) {
+      suggested = true
+      return suggest()
+    }
     const channel = findChannel(prefs, { workspaceId: clip.workspace?.id })
     const folder = songFolder(prefs, channel, clip)
     const requested = inFolder(folder, `${songFileBase(clip)}${extensionOf(item)}`)
+    suggested = true
     suggest({ filename: requested, conflictAction: "uniquify" })
     const saved = await downloadFinished(item.id)
     await saveSourceSidecar(requested, saved, sourceFields(clip, channel?.id))
   } catch {
-    suggest()
+    if (!suggested) suggest()
   }
 }
 
 export function initSunoDownloads() {
   chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
     if (!fromSuno(item)) return
-    const route = routes.find((r) => Date.now() - r.at < 120_000)
+    const route = routes.find((r) => r.until > Date.now())
     if (route) {
       routes.splice(routes.indexOf(route), 1)
       suggest({ filename: inFolder(route.folder, `${route.base}${extensionOf(item)}`), conflictAction: "uniquify" })
       route.started(item.id)
+      dropIntent(route.clipId).catch(() => {})
       return
     }
     routeByHand(item, suggest)
@@ -340,11 +395,12 @@ export function sourceFields(clip: SunoClip, channel?: string, extra: { sourceIt
 /** Clicks the song's Download in the worker tab and waits for the file in the inbox. */
 export function downloadSong(p: { clipId: string; folder: string; base: string; format?: "mp3" | "wav" }) {
   return exclusive(async () => {
+    const format = p.format ?? "mp3"
     const tabId = await workerTab()
     await goTo(tabId, `${SUNO}/song/${p.clipId}`, false)
-    const route = expectDownload(p.folder, p.base)
+    const route = expectDownload(p.clipId, p.folder, p.base, START_MS[format])
     try {
-      await send(tabId, { action: "giz-suno-download", clipId: p.clipId, format: p.format ?? "mp3" }, 60_000)
+      await send(tabId, { action: "giz-suno-download", clipId: p.clipId, format }, 60_000)
       const downloadId = await route.started
       const path = await Promise.race([
         downloadFinished(downloadId),
@@ -546,9 +602,27 @@ export function handleSunoUi(request: any, sender: chrome.runtime.MessageSender,
     case "projects":
       return reply(
         cloud("/api/project").then((data) =>
-          (Array.isArray(data) ? data : []).map((p: any) => ({ id: String(p.id), name: String(p.displayName ?? p.id) }))
+          (Array.isArray(data) ? data : []).map((p: any) => ({
+            id: String(p.id),
+            name: String(p.displayName ?? p.id),
+            // Takes can't be recorded in a project shared with this account as a viewer.
+            viewOnly: p.isOwned === false && p.sharedRole === "viewer"
+          }))
         )
       )
+    case "createProject": {
+      const name = String(request.name ?? "").trim()
+      if (!name) {
+        sendResponse({ ok: false, error: "Give the project a name." })
+        return false
+      }
+      return reply(
+        cloud("/api/project", { method: "POST", body: JSON.stringify({ displayName: name }) }).then((p: any) => {
+          if (!p?.id) throw new Error("MediaMake didn't create the project.")
+          return { id: String(p.id), name: String(p.displayName ?? name) }
+        })
+      )
+    }
     // The buttons on suno.com.
     case "presets":
       return reply(presets({ channel: request.channel }))
@@ -558,6 +632,10 @@ export function handleSunoUi(request: any, sender: chrome.runtime.MessageSender,
       return reply(recordSongs({ clipIds: request.clipIds, channel: request.channel }))
     case "save":
       return reply(saveSongToLibrary({ clipId: String(request.clipId), channel: request.channel }))
+    case "downloadIntent": {
+      const clipId = clipIdOf(request.clipId)
+      return reply(clipId ? noteIntent(clipId) : Promise.resolve())
+    }
     case "variations":
       runVariations(request, tell)
       sendResponse({ ok: true, result: { note: "Browse Hack is making them in its own Suno tab; progress shows here." } })

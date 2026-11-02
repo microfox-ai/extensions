@@ -1,13 +1,14 @@
 {
   "name": "browse-hack",
   "displayName": "Browse Hack",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Browser automations for Claude: Pinterest, YouTube, Instagram, Midjourney, Suno, DistroKid and Mediamake",
   "author": "subhakar",
   "scripts": {
     "dev": "plasmo dev",
     "build": "plasmo build",
-    "package": "plasmo package"
+    "package": "plasmo package",
+    "test": "node --experimental-strip-types --test lib/*.test.mjs"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",

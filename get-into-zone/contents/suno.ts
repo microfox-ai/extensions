@@ -13,6 +13,7 @@ import {
   captchaVisible,
   clickCreate,
   clickDownload,
+  downloadDialog,
   fillForm,
   readForm,
   setCondition,
@@ -524,6 +525,33 @@ document.addEventListener(
   true
 )
 
+// Suno saves a song from a blob: link named after its title, with no song id.
+// So that one the user downloads here can be filed into the library inbox (the
+// popup's "Also file songs I download myself"), the background is told which
+// song's Download they pressed: the one whose "…" menu they opened last.
+let menuSong: { id: string; at: number } | undefined
+const songPageId = () => location.pathname.match(/^\/song\/([0-9a-f-]{36})/i)?.[1]
+
+document.addEventListener(
+  "click",
+  (event) => {
+    const target = event.target as Element | null
+    const more = target?.closest?.(SEL.moreOptions)
+    if (more) {
+      const id = (more.closest(SEL.clipRow) ? rowAt(more)?.id : undefined) ?? songPageId() ?? rowAt(more)?.id
+      menuSong = id ? { id, at: Date.now() } : undefined
+      return
+    }
+    if (!menuSong || Date.now() - menuSong.at > 5 * 60_000) return
+    const pressed = target?.closest?.("button, [role='menuitem']")
+    const dialog = downloadDialog()
+    // The dialog's Download, or the older menu's MP3 Audio / WAV Audio.
+    const download = dialog ? pressed === dialog.confirm : !!pressed && /\b(mp3|wav)\b/i.test(pressed.textContent ?? "")
+    if (download) ask("downloadIntent", { clipId: menuSong.id }).catch(() => {})
+  },
+  true
+)
+
 async function copySong(id: string) {
   try {
     const clip = normalizeClip(await api(`/clip/${id}`))
@@ -542,11 +570,10 @@ async function saveSong(id: string) {
     const clip = normalizeClip(await api(`/clip/${id}`))
     const channel = findChannel(prefs, { workspaceId: clip.workspace?.id })
     const where = channel ? `${prefs.inboxFolder}/suno/${channel.id}` : `${prefs.inboxFolder}/suno`
-    const ok = window.confirm(
-      `Save "${clip.title}" to MediaMake's library (${where})?\n\nIt uses one of your Suno downloads${
-        left !== undefined ? ` (${left} left this month)` : ""
-      }.`
-    )
+    const cost = clip.downloadUnlocked
+      ? "You've downloaded it before, so this uses none of your Suno downloads."
+      : `It uses one of your Suno downloads${left !== undefined ? ` (${left} left this month)` : ""}.`
+    const ok = window.confirm(`Save "${clip.title}" to MediaMake's library (${where})?\n\n${cost}`)
     if (!ok) return
     toast("Saving to MediaMake…")
     const result = await ask("save", { clipId: id, channel: channel?.id })

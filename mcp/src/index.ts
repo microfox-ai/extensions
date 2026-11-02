@@ -576,7 +576,8 @@ localTool(
   "suno_download",
   "Downloads Suno songs into MediaMake's media library inbox (_INBOX/suno/<channel>/<set>/<Title> [<id>].mp3) with a " +
     "<file>.source.json holding the styles, lyrics, model, settings and parent, by clicking each song's own Download on suno.com. " +
-    "Each song uses one of the account's monthly downloads (suno_status shows how many are left), so download only the keepers. " +
+    "A song's first download uses one of the account's monthly downloads (suno_status shows how many are left), so download " +
+    "only the keepers; a song downloaded before, in any format, downloads again for free. " +
     "Songs the library already has come back in alreadyHave (force downloads them again). Marks them keepers in MediaMake cloud.",
   {
     ids: z.array(z.string()).min(1).max(20).describe("Song ids or links"),

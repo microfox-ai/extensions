@@ -90,6 +90,42 @@ export function findChannel(prefs: SunoPrefs, by: { channel?: string; workspaceI
   return undefined
 }
 
+const squash = (value: string) => value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "")
+const words = (value: string) =>
+  value
+    .replace(/(\p{Ll})(\p{Lu})/gu, "$1 $2")
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((word) => word.length >= 2)
+
+/**
+ * How well a name (a Suno workspace's, a MediaMake project's) fits a channel,
+ * by its id or folder: 3 the same name ("Inverted Devils" for inverteddevils),
+ * 2 close ("anime zone" or "AnimeZone" for animemusiczone, "Omkaram" for
+ * omkara), 0 not.
+ */
+export function channelNameScore(channel: Pick<SunoChannel, "id" | "folder">, name: string) {
+  const target = squash(name)
+  if (!target) return 0
+  let score = 0
+  for (const key of [channel.id, channel.folder ?? ""].map(squash).filter(Boolean)) {
+    if (key === target) return 3
+    const parts = words(name)
+    const holds = key.length >= 4 && target.length >= 4 && (key.includes(target) || target.includes(key))
+    if (holds || (parts.length >= 2 && parts.every((word) => key.includes(word)))) score = 2
+  }
+  return score
+}
+
+/** The option whose name clearly fits the channel best, if one does. */
+export function suggestFor<T extends { name: string }>(channel: Pick<SunoChannel, "id" | "folder">, options: T[]) {
+  const ranked = options
+    .map((option) => ({ option, score: channelNameScore(channel, option.name) }))
+    .filter((r) => r.score >= 2)
+    .sort((a, b) => b.score - a.score)
+  return ranked[0] && ranked[0].score !== ranked[1]?.score ? ranked[0].option : undefined
+}
+
 /** A folder name for a set of songs: the song's name without what Suno adds. */
 export const songSet = (title: string) =>
   title

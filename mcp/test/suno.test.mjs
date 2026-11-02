@@ -290,9 +290,14 @@ describe("downloads", () => {
     // A song already downloaded and waiting in the inbox.
     const old = touch(join(inbox, "suno", "animemusiczone", "dbz-goten-theme", "Old [5e6f7a8b].mp3"))
     writeFileSync(`${old}.source.json`, JSON.stringify({ tool: "suno", ref: B }))
+    let made = 0
     const bridge = fakeBridge({
+      "suno.status": () => ({ account: { downloads: { left: 40 - made, limit: 60 } } }),
       "suno.clips": ({ ids }) => ({ songs: ids.map((id) => song(id)) }),
-      "suno.download": ({ folder, base }) => ({ path: touch(join(downloads, folder, `${base}.mp3`)) })
+      "suno.download": ({ folder, base }) => {
+        made++
+        return { path: touch(join(downloads, folder, `${base}.mp3`)) }
+      }
     })
     const result = await downloadSongs(bridge, { ids: [A, B] })
     assert.deepEqual(result.alreadyHave.map((h) => h.id), [B])
@@ -313,9 +318,23 @@ describe("downloads", () => {
 
   test("refuses when the month's downloads won't cover it", async () => {
     writeConfig()
-    const bridge = fakeBridge({ "suno.status": () => ({ account: { downloads: { left: 1, limit: 60 } } }) })
+    const bridge = fakeBridge({
+      "suno.status": () => ({ account: { downloads: { left: 1, limit: 60 } } }),
+      "suno.clips": ({ ids }) => ({ songs: ids.map((id) => song(id)) })
+    })
     await assert.rejects(downloadSongs(bridge, { ids: [A, B] }), /1 downloads left this month and this needs 2/)
     assert.equal(bridge.called("suno.download").length, 0)
+  })
+
+  test("songs downloaded before don't count against the month's downloads", async () => {
+    writeConfig()
+    const bridge = fakeBridge({
+      "suno.status": () => ({ account: { downloads: { left: 1, limit: 60 } } }),
+      "suno.clips": ({ ids }) => ({ songs: ids.map((id) => song(id, { downloadUnlocked: id === B })) }),
+      "suno.download": ({ folder, base }) => ({ path: touch(join(downloads, folder, `${base}.mp3`)) })
+    })
+    const result = await downloadSongs(bridge, { ids: [A, B] })
+    assert.equal(result.saved.length, 2)
   })
 
   test("unfinished songs aren't downloaded", async () => {

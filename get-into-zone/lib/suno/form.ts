@@ -4,7 +4,7 @@
 // the suno.com content script. Values are set through the element's native
 // setter, which both React and this isolated world see.
 
-import { CONDITIONS, ROW, SEL, SLIDERS, TEXT } from "./selectors"
+import { CONDITIONS, DOWNLOAD, ROW, SEL, SLIDERS, TEXT } from "./selectors"
 
 export interface SunoFormJob {
   lyrics?: string
@@ -518,21 +518,91 @@ export async function openSongMenu(clipId: string) {
   return item
 }
 
-/** Clicks a song's Download item and the format asked for, as a person would. */
+type DownloadFormat = keyof typeof DOWNLOAD.formats
+
+const dialogs = () => within<HTMLElement>(document, '[role="dialog"], [role="alertdialog"]').filter(visible)
+
+/** Whether a format is picked in Suno's download dialog: it shows a check mark. */
+function formatOn(button: HTMLElement) {
+  const state = button.getAttribute("aria-pressed") ?? button.getAttribute("aria-checked")
+  if (state !== null) return state === "true"
+  return !!button.querySelector("svg")
+}
+
+/** Suno's open download dialog: its format toggles and its Download button. */
+export function downloadDialog() {
+  for (const dialog of dialogs()) {
+    const buttons = within<HTMLButtonElement>(dialog, "button")
+    const formats = new Map<DownloadFormat, HTMLButtonElement>()
+    for (const button of buttons) {
+      const label = norm(firstLine(button))
+      const key = (Object.keys(DOWNLOAD.formats) as DownloadFormat[]).find((k) => norm(DOWNLOAD.formats[k]) === label)
+      if (key && !formats.has(key)) formats.set(key, button)
+    }
+    if (formats.size < 2) continue
+    const others = buttons.filter((b) => ![...formats.values()].includes(b))
+    const confirm =
+      others.find((b) => DOWNLOAD.confirm.test(firstLine(b))) ??
+      others.filter((b) => /download/i.test(firstLine(b)) && !DOWNLOAD.notConfirm.test(firstLine(b))).pop()
+    return { dialog, formats, confirm }
+  }
+  return null
+}
+
+/** The older song menu's Download ▸ MP3 Audio / WAV Audio item. */
+function menuFormatItem(format: "mp3" | "wav") {
+  for (const menu of within<HTMLElement>(document, '[role="menu"]').filter(visible)) {
+    const hit = within<HTMLElement>(menu, "span, div, button, [role='menuitem']").find(
+      (el) => el.children.length <= 1 && visible(el) && DOWNLOAD.menu[format].test(firstLine(el)) && !/video/i.test(firstLine(el))
+    )
+    if (hit) return hit.closest<HTMLElement>(SEL.clickable) ?? hit
+  }
+  return null
+}
+
+/** Picks only `format` in Suno's download dialog and presses its Download button. */
+async function downloadFromDialog(format: "mp3" | "wav") {
+  const found = downloadDialog()
+  const label = DOWNLOAD.formats[format]
+  if (!found?.formats.has(format)) throw new Error(`Suno's download dialog has no ${label}.`)
+  for (const [key, button] of found.formats) {
+    if ((key === format) === formatOn(button)) continue
+    button.click()
+    await waitFor(() => formatOn(button) === (key === format), 2000, 50)
+  }
+  const picked = [...found.formats].filter(([, b]) => formatOn(b)).map(([key]) => DOWNLOAD.formats[key])
+  if (picked.join() !== label) {
+    throw new Error(`Couldn't pick only ${label} in Suno's download dialog (picked: ${picked.join(", ") || "none"}).`)
+  }
+  const confirm = await waitFor(() => {
+    const button = downloadDialog()?.confirm
+    return button && !button.disabled && button.getAttribute("aria-disabled") !== "true" ? button : null
+  }, 3000)
+  if (!confirm) throw new Error("Suno's download dialog has no Download button to press.")
+  // "Unlock & Download" uses one of the month's downloads; "Download" means the song is unlocked already.
+  const unlocked = /unlock/i.test(firstLine(confirm))
+  confirm.click()
+  const refused = await waitFor(visibleError, 4000, 250)
+  if (refused) throw new Error(`Suno refused the download: ${refused}`)
+  return { pickedFormat: true, dialog: true, unlocked }
+}
+
+/**
+ * Downloads a song in `format` from its "…" menu, as a person would: Download
+ * opens Suno's download dialog, where only that format is picked before its
+ * Download is pressed. Older menus listed the formats in the menu itself.
+ */
 export async function clickDownload(clipId: string, format: "mp3" | "wav") {
   const item = await openSongMenu(clipId)
   item.click()
-  const want = format === "wav" ? /\bwav\b/i : /\bmp3\b|^audio$/i
-  const choice = await waitFor(() => {
-    for (const scope of within<HTMLElement>(document, SEL.popups).filter(visible)) {
-      const hit = within<HTMLElement>(scope, "span, div, button, [role='menuitem']").find(
-        (el) => el.children.length <= 1 && visible(el) && want.test(firstLine(el)) && !/video/i.test(firstLine(el))
-      )
-      if (hit) return hit.closest<HTMLElement>(SEL.clickable) ?? hit
-    }
-    return null
-  }, 5000)
+  const opened = await waitFor(() => (downloadDialog() ? "dialog" : menuFormatItem(format)), 10_000)
+  if (opened === "dialog") return downloadFromDialog(format)
+  if (opened) {
+    opened.click()
+    return { pickedFormat: true, dialog: false }
+  }
+  const other = dialogs()[0]
+  if (other) throw new Error(`Suno showed "${text(other).replace(/\s+/g, " ").slice(0, 200)}" instead of its download formats.`)
   // Some accounts download straight from the menu item, with no format to pick.
-  if (choice) choice.click()
-  return { pickedFormat: Boolean(choice) }
+  return { pickedFormat: false, dialog: false }
 }
