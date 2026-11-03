@@ -74,6 +74,15 @@ type SwitchReply = {
   channels?: YoutubeChannel[]
 }
 
+/** Puts the tab in front of its window and the window in front. Studio draws its account menu (and the
+ *  channel list behind "Switch account") only in a tab Chrome is painting: in a background tab the
+ *  menu stays empty and the switch fails with "Couldn't find Switch account". */
+async function bringForward(tabId: number) {
+  const tab = await chrome.tabs.update(tabId, { active: true }).catch(() => null)
+  if (tab?.windowId !== undefined) await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {})
+  await sleep(300)
+}
+
 /** Makes the tab's Studio (and the whole profile's YouTube) act as this channel. */
 async function ensureChannel(tabId: number, wanted: string) {
   let state = await waitForStudio(tabId)
@@ -82,6 +91,7 @@ async function ensureChannel(tabId: number, wanted: string) {
     return { channelId: key.value, name: state.channelName || "", switched: false }
   }
   const target = key.kind === "id" ? await handleForChannelId(key.value) : wanted
+  await bringForward(tabId)
   const reply = (await chrome.tabs.sendMessage(tabId, {
     action: "giz-ytstudio-switch",
     channel: target
@@ -112,7 +122,7 @@ async function ensureChannel(tabId: number, wanted: string) {
   }
 }
 
-/** A background Studio tab for one quick job, closed afterwards. */
+/** A Studio tab for one quick job, closed afterwards (it comes to the front while it reads or uses the account menu). */
 async function withStudioTab<T>(run: (tabId: number) => Promise<T>): Promise<T> {
   const tab = await openTab(STUDIO, false, true)
   if (!tab.id) throw new Error("Chrome did not open a YouTube Studio tab.")
@@ -133,6 +143,7 @@ export const youtubeStudioCommands: Record<string, (params: any) => Promise<unkn
   "youtube.channels": async () =>
     withStudioTab(async (tabId) => {
       await waitForStudio(tabId)
+      await bringForward(tabId)
       const reply = await chrome.tabs.sendMessage(tabId, { action: "giz-ytstudio-channels" })
       if (!reply?.ok) throw new Error(reply?.error || "Couldn't read YouTube Studio's channel list.")
       return { channels: reply.channels as YoutubeChannel[] }

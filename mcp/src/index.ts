@@ -1040,7 +1040,7 @@ localTool(
 tool(
   "youtube_list_channels",
   "Lists the YouTube channels this Chrome profile can switch to in YouTube Studio's account menu: name, @handle, " +
-    "subscribers (and \"You're a manager\" for shared channels), and which one is active. Uses a background Studio tab it closes again.",
+    "subscribers (and \"You're a manager\" for shared channels), and which one is active. Opens a Studio tab in front for a moment (its account menu only draws in a visible tab) and closes it again.",
   {},
   "youtube.channels",
   { readOnly: true, timeoutMs: 90_000 }
