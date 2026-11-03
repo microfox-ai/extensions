@@ -7,6 +7,10 @@ last release; see `.github/workflows/release-browse-hack-mcp.yml`). They show
 on Browse Hack's page on MediaMake and in `get_status` / `update_browse_hack`
 after an update.
 
+## 0.10.2
+
+- `youtube_fill_uploads`, `youtube_switch_channel` and `youtube_list_channels` switch channels again on profiles that manage several: with Browse Hack 0.12.3 the Studio tab comes to the front while it opens the account menu (Studio only draws that menu in a visible tab), instead of failing with "Couldn't find Switch account".
+
 ## 0.10.1
 
 - Browse Hack's own logo, the green cursor, replaces Plasmo's default purple icon in Claude's extensions list. Browse Hack 0.12.2 shows the same logo in Chrome's toolbar and on `chrome://extensions`, with icons drawn for 16, 32 and 48 px so it stays sharp in the toolbar.
