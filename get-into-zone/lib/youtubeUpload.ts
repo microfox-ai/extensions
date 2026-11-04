@@ -64,6 +64,8 @@ export type YoutubeFillResult = {
   warnings: string[]
   filled: string[]
   videoUrl?: string
+  /** Schedule was clicked (only when the popup asked for it). */
+  scheduled?: boolean
 }
 
 export const TITLE_MAX = 100

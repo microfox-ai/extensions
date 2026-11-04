@@ -17,6 +17,7 @@ import {
 import { initMidjourneyEdit } from "./lib/midjourneyEdit"
 import { initMcpBridge } from "./lib/mcpBridge"
 import { handleSunoUi, initSunoDownloads } from "./lib/sunoBridge"
+import { startStudioJob } from "./lib/studioJobs"
 
 initMediamakeAuth()
 initSaverBackground()
@@ -92,6 +93,10 @@ const handleMessage = (
   sendResponse: (response?: any) => void
 ) => {
   if (request.action === "suno-ui") return handleSunoUi(request, sender, sendResponse)
+  if (request.action === "studio-job") {
+    startStudioJob(request.job).then(sendResponse, (error) => sendResponse({ ok: false, error: String(error?.message || error) }))
+    return true
+  }
   if (request.action === "startWorkflow") {
     chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
       if (tabs.length > 0) {

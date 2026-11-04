@@ -36,6 +36,12 @@ This is a [Plasmo extension](https://docs.plasmo.com/) project bootstrapped with
 | `contents/sunoPage.ts` | Runs in suno.com's own page: reports what the site's Create request returned, and sets the Lexical lyrics editor |
 | `lib/sunoBridge.ts` | Suno for the MCP server and the buttons: the background Suno tab, making and downloading songs one at a time, filing downloads into the library inbox, MediaMake cloud records and presets |
 | `lib/sunoPrefs.ts`, `componenets/SunoTab.tsx` | Suno settings and their popup tab: channel ↔ workspace ↔ MediaMake project links, download format, upload terms |
+| `contents/youtubeStudio.ts` | Content script on YouTube Studio: switches channels, fills the upload dialog from info.json (Details, Monetisation, Ad suitability, Video elements, Visibility), reads the Shorts list and a video's details, opens drafts |
+| `contents/youtubeStudioPage.ts` | Runs in Studio's own page: sets thumbnail files (from the isolated world their upload fails) and reads the thumbnail editor's error |
+| `lib/youtubeUploadBridge.ts` | YouTube Studio for the MCP server and the popup's jobs: channel switching, one Studio tab per upload, drafts |
+| `componenets/StudioTab.tsx` | Popup tab: Upload from a pack (info.json), Bulk Upload Shorts (shorts-pack.json), Autofill Shorts (drafts copy their most similar short and go on the next day with no short) |
+| `lib/studioJobs.ts`, `lib/studioFiles.ts` | The popup's Studio jobs, run by the service worker from files the popup saved in IndexedDB (the popup closes once Studio comes to the front) |
+| `lib/youtubePackFiles.ts`, `lib/youtubeShorts.ts` | Reading a picked pack folder (info.json or shorts-pack.json), empty-day scheduling, and which short a draft copies |
 | `lib/libraryFiles.ts` | Files for MediaMake's media library, written through `chrome.downloads`: a download's `<file>.source.json` and a Pinterest session's `_session.json` |
 | `lib/saverRules.ts` | Saver toggle rules (page / site / window / everywhere) shared by popup, content script, and background |
 | `lib/saverBackground.ts` | Toolbar "OFF" badge, right-click menu, window-rule cleanup |

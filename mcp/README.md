@@ -291,3 +291,35 @@ Put it in the upload folder beside the video. Only `channel` and the title are r
 | `abTest` | Details → A/B testing: 2 or 3 variants, each `{ "thumbnail": "<file>", "title": "…" }`. Thumbnails on every variant, titles on every variant, or both (Studio's Thumbnail only, Title only, or Title and thumbnail); it clicks Set test |
 
 Subtitles and the Checks step are left as they are.
+
+## `shorts-pack.json` for Bulk Upload Shorts
+
+The popup's YouTube Studio tab (**Bulk Upload Shorts**) uploads every short a folder's `shorts-pack.json` lists.
+`defaults` holds the `info.json` fields the shorts share; each entry of `shorts` adds its own and wins over them.
+Paths are relative to the folder. A short without `scheduleAt` goes on the next day from `schedule.from` (default
+tomorrow) that has no short on the channel's Shorts tab, at `schedule.time`.
+
+```json
+{
+  "channel": "@atomic-rap",
+  "schedule": { "time": "18:30", "from": "2026-11-06" },
+  "defaults": {
+    "descriptionFile": "description.txt",
+    "tags": ["deadpool", "aura edit"],
+    "madeForKids": false,
+    "alteredContent": false,
+    "category": "Entertainment",
+    "monetization": true,
+    "adSuitability": "none"
+  },
+  "shorts": [
+    { "video": "shorts/deadpool-1.mp4", "title": "Deadpool Aura Edit #deadpool" },
+    { "video": "shorts/deadpool-2.mp4", "title": "Deadpool Aura Edit #deadpool", "scheduleAt": "2026-11-20T09:00" }
+  ]
+}
+```
+
+The same tab's **Autofill Shorts** needs no file: for each draft on the channel's Shorts tab it copies the details and
+title of the most similar short already filled in (by title; else the latest) and schedules it on the next day that has
+no short. With **Click Schedule for me** on, the popup clicks Schedule on uploads that have a schedule; off, each waits in
+its own tab.

@@ -8,6 +8,7 @@ import {
   type YoutubeFillResult,
   type YoutubeUploadInfo
 } from "../lib/youtubeUpload"
+import { studioDay, type StudioShort } from "../lib/youtubeShorts"
 
 // YouTube Studio: lists the channels in the account menu, switches between
 // them, and fills the upload dialog from info.json: Details, Monetisation, Ad
@@ -25,7 +26,17 @@ export const config: PlasmoCSConfig = {
 type FileStart = { type: "file-start"; id: string; name: string; mime: string; total: number }
 // Port messages are JSON, so chunks travel as base64 text.
 type FileChunk = { type: "chunk"; id: string; index: number; base64: string }
-type FillMsg = { type: "fill"; info: YoutubeUploadInfo; videoId: string; thumbnailId?: string; abThumbnailIds?: string[] }
+type FillMsg = {
+  type: "fill"
+  info: YoutubeUploadInfo
+  videoId: string
+  thumbnailId?: string
+  abThumbnailIds?: string[]
+  /** Click Schedule at the end (the popup's choice). */
+  finish?: boolean
+}
+/** Fill a draft that's already uploaded: its row is on this tab's content list. */
+type FillDraftMsg = { type: "fill-draft"; info: YoutubeUploadInfo; draftId: string; finish?: boolean }
 
 const CATEGORY_PREFIX = "CREATOR_VIDEO_CATEGORY_"
 const COMMENT_STATE = { on: "COMMENTS_ENABLEMENT_STATE_ON", off: "COMMENTS_ENABLEMENT_STATE_OFF" }
@@ -59,6 +70,20 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     )
     return true
   }
+  if (msg?.action === "giz-ytstudio-shorts") {
+    listShorts().then(
+      (shorts) => sendResponse({ ok: true, shorts }),
+      (error) => sendResponse({ ok: false, error: errorText(error) })
+    )
+    return true
+  }
+  if (msg?.action === "giz-ytstudio-details") {
+    readDetails().then(
+      (fields) => sendResponse({ ok: true, fields }),
+      (error) => sendResponse({ ok: false, error: errorText(error) })
+    )
+    return true
+  }
   if (msg?.action === "giz-ytstudio-switch") {
     switchChannel(String(msg.channel || "")).then(sendResponse, (error) =>
       sendResponse({ ok: false, error: errorText(error) })
@@ -72,7 +97,23 @@ chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== "giz-youtube-upload") return
   const bins = new Map<string, { name: string; mime: string; total: number; parts: Uint8Array[] }>()
 
-  port.onMessage.addListener((msg: FileStart | FileChunk | FillMsg) => {
+  const reply = (result: Promise<YoutubeFillResult>) =>
+    void result.then(
+      (outcome) => port.postMessage({ type: "result", result: outcome }),
+      (error) => port.postMessage({ type: "result", result: { ok: false, message: errorText(error), warnings: [], filled: [] } })
+    )
+
+  port.onMessage.addListener((msg: FileStart | FileChunk | FillMsg | FillDraftMsg) => {
+    if (msg.type === "fill-draft") {
+      reply(
+        openDraft(msg.draftId).then((opened) =>
+          typeof opened === "string"
+            ? { ok: false, message: opened, warnings: [], filled: [] }
+            : fillForm(opened, msg.info, null, [], !!msg.finish, [`Draft: ${msg.draftId}`], [])
+        )
+      )
+      return
+    }
     if (msg.type === "file-start") {
       bins.set(msg.id, { name: msg.name, mime: msg.mime, total: msg.total, parts: [] })
       return
@@ -92,14 +133,7 @@ chrome.runtime.onConnect.addListener((port) => {
       const thumbnail = take(msg.thumbnailId)
       const abThumbnails = (msg.abThumbnailIds || []).map((id) => take(id))
       bins.clear()
-      void fillUpload(msg.info, video, thumbnail, abThumbnails).then(
-        (result) => port.postMessage({ type: "result", result }),
-        (error) =>
-          port.postMessage({
-            type: "result",
-            result: { ok: false, message: errorText(error), warnings: [], filled: [] }
-          })
-      )
+      reply(fillUpload(msg.info, video, thumbnail, abThumbnails, !!msg.finish))
     }
   })
 })
@@ -1012,6 +1046,143 @@ async function setVisibility(info: YoutubeUploadInfo, filled: string[], warnings
   }
 }
 
+// --- Shorts: the channel's list, a filled-in short's details, and its drafts ---
+
+function rowVideoId(row: Element): string {
+  const link = row.querySelector<HTMLAnchorElement>("a#video-title, a[href*='/video/']")
+  return link?.getAttribute("href")?.match(/\/video\/([\w-]{11})/)?.[1] || ""
+}
+
+function readRow(row: HTMLElement): StudioShort {
+  const visibility = text(row.querySelector(".tablecell-visibility"))
+  const editDraft = shownIn<HTMLElement>("ytcp-button, button", row).some((button) => /edit draft/i.test(text(button)))
+  return {
+    videoId: rowVideoId(row),
+    title: text(row.querySelector("a#video-title") || row.querySelector("#video-title")),
+    visibility,
+    date: studioDay(text(row.querySelector(".tablecell-date"))),
+    draft: editDraft || /^draft/i.test(visibility)
+  }
+}
+
+/** Every row of the content list this tab shows (the channel's Shorts tab), page by page. */
+async function listShorts(): Promise<StudioShort[]> {
+  const rows = () => shownIn<HTMLElement>("ytcp-video-row")
+  if (!(await waitFor(() => rows().length || firstShown("ytcp-video-section-content #empty-state, ytcp-video-list-empty-state"), 20_000))) {
+    throw new Error("YouTube Studio's Shorts list didn't load.")
+  }
+  const shorts = new Map<string, StudioShort>()
+  for (let page = 0; page < 20; page++) {
+    for (const row of rows()) {
+      const short = readRow(row)
+      if (short.videoId) shorts.set(short.videoId, short)
+    }
+    const next = document.querySelector<HTMLElement>("ytcp-table-footer #navigate-after")
+    if (!enabled(next)) break
+    const first = rowVideoId(rows()[0] || document.body)
+    press(next)
+    if (!(await waitFor(() => rows().length && rowVideoId(rows()[0]) !== first, 10_000))) break
+  }
+  return [...shorts.values()]
+}
+
+/** The playlists ticked in Studio's playlist picker, read and closed without a change. */
+async function readPlaylists(): Promise<string[] | null> {
+  const trigger = document.querySelector<HTMLElement>("ytcp-video-metadata-playlists ytcp-text-dropdown-trigger")
+  if (!trigger) return null
+  trigger.click()
+  const list = await waitFor(() => firstShown<HTMLElement>("ytcp-playlist-dialog #playlists-list"), 5000)
+  if (!list) return null
+  await sleep(500)
+  const names = shownIn<HTMLElement>("ytcp-checkbox-lit", list)
+    .filter((box) => checkboxState(box) === true)
+    .map((box) => box.querySelector("[role=checkbox]")?.getAttribute("aria-label")?.trim() || text(box.closest("li, label") || box))
+  const pdialog = list.closest("ytcp-playlist-dialog") || document
+  const done =
+    shownIn<HTMLElement>("ytcp-button", pdialog).find((button) => /done/.test(button.className) || /^done$/i.test(text(button))) ||
+    shownIn<HTMLElement>("ytcp-button", pdialog).pop()
+  if (done) press(done)
+  await sleep(400)
+  return names
+}
+
+/** A video's details on its Studio page, as info.json fields (only what the page shows). */
+async function readDetails(): Promise<Record<string, unknown>> {
+  const editor = await waitFor(() => firstShown<HTMLElement>("ytcp-video-metadata-editor"), 20_000)
+  if (!editor) throw new Error("YouTube Studio's video details didn't load.")
+  const advanced = () => editor.querySelector("ytcp-video-metadata-editor-advanced")
+  if (!shown(advanced())) {
+    const toggle = editor.querySelector<HTMLElement>("#toggle-button")
+    if (toggle) press(toggle)
+    await waitFor(() => shown(advanced()), 3000)
+  }
+  const fields: Record<string, unknown> = {}
+  const box = (selector: string) => editor.querySelector<HTMLElement>(selector)
+  fields.title = text(box("#title-textarea #textbox"))
+  const description = box("#description-textarea #textbox")
+  if (description) fields.description = description.innerText.replace(/\n+$/, "")
+  const tags = shownIn<HTMLElement>("#tags-container ytcp-chip, #tags-container ytcp-chip-lit", editor).map(text).filter(Boolean)
+  if (tags.length) fields.tags = tags
+
+  const checked = (name: string) => editor.querySelector(`tp-yt-paper-radio-button[name="${name}"]`)?.getAttribute("aria-checked") === "true"
+  const pair = (yes: string, no: string) => (checked(yes) ? true : checked(no) ? false : undefined)
+  fields.madeForKids = pair("VIDEO_MADE_FOR_KIDS_MFK", "VIDEO_MADE_FOR_KIDS_NOT_MFK")
+  fields.ageRestricted = pair("VIDEO_AGE_RESTRICTION_SELF", "VIDEO_AGE_RESTRICTION_NONE")
+  fields.paidPromotion = pair("VIDEO_PAID_PRODUCT_PLACEMENT_NOTIFY", "VIDEO_PAID_PRODUCT_PLACEMENT_NO")
+  fields.alteredContent = pair("VIDEO_HAS_ALTERED_CONTENT_YES", "VIDEO_HAS_ALTERED_CONTENT_NO")
+  const remix = Object.entries(REMIXING).find(([, name]) => checked(name))
+  if (remix) fields.shortsRemixing = remix[0]
+
+  const flags: [string, HTMLElement | null][] = [
+    ["automaticChapters", advancedCheckbox(/chapter/i)],
+    ["featuredPlaces", editor.querySelector<HTMLElement>("#has-autoplaces-mentioned-checkbox")],
+    ["automaticConcepts", advancedCheckbox(/concept/i)],
+    ["allowEmbedding", editor.querySelector<HTMLElement>("#allow-embed ytcp-checkbox-lit")],
+    ["notifySubscribers", editor.querySelector<HTMLElement>("#notify-subscribers")],
+    ["showLikes", editor.querySelector<HTMLElement>(".allow-ratings ytcp-checkbox-lit") ?? advancedCheckbox(/like/i)]
+  ]
+  for (const [key, element] of flags) {
+    const state = element && shown(element) ? checkboxState(element) : null
+    if (state !== null) fields[key] = state
+  }
+
+  // A dropdown's text is its label then its value ("Licence Standard YouTube licence").
+  const value = (selector: string, label: RegExp) => {
+    const trigger = editor.querySelector(`${selector} ytcp-dropdown-trigger, ${selector} ytcp-text-dropdown-trigger`)
+    const shownText = text(trigger || editor.querySelector(selector)).replace(label, "").trim()
+    return shownText && !/^select$/i.test(shownText) ? shownText : undefined
+  }
+  fields.category = value("ytcp-form-select#category", /^category\s*/i)
+  fields.language = value("ytcp-form-language-input#language-input", /^video language\s*/i)
+  fields.license = value("ytcp-form-select#license", /^licen[cs]e\s*/i)
+  fields.comments = value("ytcp-select#enablement-state-select", /^comments\s*/i)?.toLowerCase()
+  fields.commentModeration = value("ytcp-select#moderation-type-select", /^moderation\s*/i)
+  fields.whoCanComment = value("ytcp-select#allowed-commenter-mode-select", /^who can comment\s*/i)
+  const sort = shownIn<HTMLElement>("ytcp-video-metadata-editor-advanced ytcp-form-select:not([id])", editor)
+    .map((select) => text(select))
+    .find((label) => /^sort by/i.test(label))
+  if (sort) fields.commentSort = sort.replace(/^sort by\s*/i, "")
+
+  const playlists = await readPlaylists()
+  if (playlists?.length) fields.playlists = playlists
+  for (const key of Object.keys(fields)) if (fields[key] === undefined) delete fields[key]
+  return fields
+}
+
+/** Opens a draft from the content list (the channel's Shorts tab) into the upload dialog. */
+async function openDraft(videoId: string): Promise<HTMLElement | string> {
+  const row = await waitFor(() => shownIn<HTMLElement>("ytcp-video-row").find((item) => rowVideoId(item) === videoId), 20_000)
+  if (!row) return `The draft ${videoId} isn't on this page of the Shorts list.`
+  const opener =
+    shownIn<HTMLElement>("ytcp-button, button", row).find((button) => /edit draft/i.test(text(button))) ||
+    row.querySelector<HTMLElement>("a#video-title, a[href*='/video/']")
+  if (!opener) return `There's no Edit draft on the draft ${videoId}.`
+  opener.scrollIntoView({ block: "center" })
+  press(opener)
+  const titleBox = await waitFor(() => firstShown<HTMLElement>("ytcp-uploads-dialog #title-textarea #textbox"), 20_000)
+  return titleBox || `Studio didn't open the draft ${videoId} in its upload dialog.`
+}
+
 function dialogErrors(): string[] {
   return Array.from(
     dialog()?.querySelectorAll<HTMLElement>(".error-short, #error-message, .error-details, ytcp-uploads-dialog-error") || []
@@ -1025,7 +1196,8 @@ async function fillUpload(
   info: YoutubeUploadInfo,
   video: File | null,
   thumbnail: File | null,
-  abThumbnails: (File | null)[]
+  abThumbnails: (File | null)[],
+  finish = false
 ): Promise<YoutubeFillResult> {
   const filled: string[] = []
   const warnings: string[] = []
@@ -1052,6 +1224,19 @@ async function fillUpload(
     }
   }
   filled.push(`Video: ${video.name}`)
+  return fillForm(titleBox, info, thumbnail, abThumbnails, finish, filled, warnings)
+}
+
+/** Fills the upload dialog from its Details step on: a new upload's, or a draft's. */
+async function fillForm(
+  titleBox: HTMLElement,
+  info: YoutubeUploadInfo,
+  thumbnail: File | null,
+  abThumbnails: (File | null)[],
+  finish: boolean,
+  filled: string[],
+  warnings: string[]
+): Promise<YoutubeFillResult> {
   await sleep(800)
 
   if (setEditable(titleBox, info.title)) filled.push("Title")
@@ -1191,11 +1376,41 @@ async function fillUpload(
   const link = dialog()?.querySelector<HTMLAnchorElement>('a[href*="youtu.be/"], a[href*="youtube.com/shorts/"]')
   const progress = text(dialog()?.querySelector("ytcp-video-upload-progress, .progress-label"))
   if (progress) filled.push(`Upload: ${progress}`)
+  const videoUrl = link?.href
+  if (finish && step === "visibility") {
+    const problem = await scheduleIt(info, warnings)
+    if (!problem) {
+      return { ok: true, message: `Scheduled for ${info.scheduleAt?.date} ${info.scheduleAt?.time}.`, warnings, filled, videoUrl, scheduled: true }
+    }
+    warnings.push(problem)
+  }
   return {
     ok: true,
     message: "Filled. Nothing was saved or published: review the tab and click Save, Publish or Schedule.",
     warnings,
     filled,
-    videoUrl: link?.href
+    videoUrl
   }
+}
+
+/**
+ * Clicks Schedule, when the popup was asked to: only for a schedule that went in (a schedule can
+ * be changed later; Save and Publish stay the user's), and closes Studio's "Video scheduled".
+ */
+async function scheduleIt(info: YoutubeUploadInfo, warnings: string[]): Promise<string | null> {
+  if (info.visibility !== "scheduled" || !info.scheduleAt) return "Not scheduled in info.json, so Save or Publish is left for you."
+  if (warnings.some((warning) => /schedule/i.test(warning))) return "The schedule didn't all go in, so Schedule is left for you."
+  const done = dialog()?.querySelector<HTMLElement>("#done-button")
+  if (!enabled(done)) return "Studio's Schedule button is off; check the tab."
+  press(done)
+  if (!(await waitFor(() => !shown(dialog()?.querySelector("#done-button")), 20_000))) {
+    const errors = dialogErrors()
+    return `Studio didn't take Schedule${errors.length ? ` (${errors.join(" ")})` : ""}; check the tab.`
+  }
+  const close = await waitFor(
+    () => shownIn<HTMLElement>("ytcp-dialog ytcp-button#close-button").find((button) => !button.closest("ytcp-uploads-dialog")),
+    8000
+  )
+  if (close) press(close)
+  return null
 }
