@@ -2,6 +2,7 @@ import type { PlasmoCSConfig } from "plasmo"
 
 import {
   channelMatches,
+  type YoutubeAbVariant,
   type YoutubeChannel,
   type YoutubeChannelCard,
   type YoutubeFillResult,
@@ -24,7 +25,7 @@ export const config: PlasmoCSConfig = {
 type FileStart = { type: "file-start"; id: string; name: string; mime: string; total: number }
 // Port messages are JSON, so chunks travel as base64 text.
 type FileChunk = { type: "chunk"; id: string; index: number; base64: string }
-type FillMsg = { type: "fill"; info: YoutubeUploadInfo; videoId: string; thumbnailId?: string }
+type FillMsg = { type: "fill"; info: YoutubeUploadInfo; videoId: string; thumbnailId?: string; abThumbnailIds?: string[] }
 
 const CATEGORY_PREFIX = "CREATOR_VIDEO_CATEGORY_"
 const COMMENT_STATE = { on: "COMMENTS_ENABLEMENT_STATE_ON", off: "COMMENTS_ENABLEMENT_STATE_OFF" }
@@ -89,8 +90,9 @@ chrome.runtime.onConnect.addListener((port) => {
       }
       const video = take(msg.videoId)
       const thumbnail = take(msg.thumbnailId)
+      const abThumbnails = (msg.abThumbnailIds || []).map((id) => take(id))
       bins.clear()
-      void fillUpload(msg.info, video, thumbnail).then(
+      void fillUpload(msg.info, video, thumbnail, abThumbnails).then(
         (result) => port.postMessage({ type: "result", result }),
         (error) =>
           port.postMessage({
@@ -384,43 +386,74 @@ function thumbnailError(): string {
   return [...new Set([...near, ...toasts].filter(shown).map(text).filter(Boolean))].join(" ")
 }
 
-/** Custom thumbnails need a phone-verified channel; Studio drops the file quietly otherwise. */
-async function setThumbnail(file: File): Promise<string | null> {
-  const uploader = dialog()?.querySelector<HTMLElement>("ytcp-thumbnail-uploader")
-  const input = uploader?.querySelector<HTMLInputElement>("input#file-loader")
-  if (!uploader || !input) return "There's no thumbnail upload on this page."
+/** Asks contents/youtubeStudioPage.ts, in Studio's own page, to act on this element; null if no answer comes. */
+function askPage(type: string, target: Element, extra: Record<string, unknown> = {}): Promise<any> {
+  const id = Math.random().toString(36).slice(2)
+  target.setAttribute("data-browse-hack-target", id)
+  return new Promise((resolve) => {
+    const done = (answer: any) => {
+      clearTimeout(timer)
+      window.removeEventListener("message", onMessage)
+      target.removeAttribute("data-browse-hack-target")
+      resolve(answer)
+    }
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data
+      if (event.source === window && data?.source === "browse-hack-ytstudio" && data.type === `${type}-done` && data.id === id) done(data)
+    }
+    const timer = setTimeout(() => done(null), 3000)
+    window.addEventListener("message", onMessage)
+    window.postMessage({ source: "browse-hack-ytstudio-cs", type, id, ...extra }, location.origin)
+  })
+}
+
+/**
+ * Gives one of Studio's thumbnail uploaders (the video's, or an A/B testing slot's) an image, and
+ * waits for it to go up. Studio previews the file at once and uploads it after, so a failure can
+ * come a few seconds after the preview. Null when it went up.
+ */
+async function uploadImage(uploader: HTMLElement, file: File): Promise<string | null> {
+  const input = uploader.querySelector<HTMLInputElement>("input#file-loader")
+  if (!input) return `There's no file input for the thumbnail ${file.name}.`
+  const editor = uploader.closest<HTMLElement>("ytcp-video-custom-still-editor")
   let started = false
   let failed = false
   const onStart = () => (started = true)
-  const onError = () => (failed = true)
+  const onFail = () => (failed = true)
   uploader.addEventListener("upload-started", onStart)
-  const editor = uploader.closest("ytcp-video-custom-still-editor")
-  editor?.addEventListener("custom-still-upload-error", onError)
-  // A local preview of the picked file also means Studio took it.
-  const preview = () =>
-    Array.from(editor?.querySelectorAll<HTMLImageElement>("img") || []).some(
-      (img) => shown(img) && /^(blob|data):/.test(img.src)
-    )
+  uploader.addEventListener("upload-reverted", onFail)
+  editor?.addEventListener("custom-still-upload-error", onFail)
   try {
-    setFile(input, file)
-    await waitFor(() => started || failed || preview(), 6000)
-    started ||= preview()
+    // Set from the isolated world, the file previews but its upload fails; set from the page it goes up.
+    const set = await askPage("set-file", input, { file })
+    // No page script (a tab opened before Browse Hack was updated): set it from here.
+    if (!set?.ok) setFile(input, file)
+    await waitFor(() => started || failed, 8000)
+    if (started && !failed) await waitFor(() => failed, 5000)
   } finally {
     uploader.removeEventListener("upload-started", onStart)
-    editor?.removeEventListener("custom-still-upload-error", onError)
+    uploader.removeEventListener("upload-reverted", onFail)
+    editor?.removeEventListener("custom-still-upload-error", onFail)
   }
   if (failed) {
-    // The error event carries no message a content script can read; Studio's own text says why.
-    await sleep(500)
-    return `Studio refused the thumbnail ${file.name}: ${thumbnailError() || "it showed no reason"}.`
+    const said = editor ? ((await askPage("read-errors", editor))?.errors as string[] | undefined)?.join(" ") : ""
+    return `Studio refused the thumbnail ${file.name}: ${said || thumbnailError() || "it showed no reason"}.`
   }
   if (!started) {
     return (
       `Studio didn't take the thumbnail ${file.name}. Custom thumbnails need a phone-verified channel ` +
-      "(youtube.com/verify while on this channel); add it by hand under Thumbnail → Upload file."
+      "(youtube.com/verify while on this channel)."
     )
   }
   return null
+}
+
+/** The video's own thumbnail. Custom thumbnails need a phone-verified channel. */
+async function setThumbnail(file: File): Promise<string | null> {
+  const uploader = dialog()?.querySelector<HTMLElement>("ytcp-video-custom-still-editor ytcp-thumbnail-uploader") ||
+    dialog()?.querySelector<HTMLElement>("ytcp-thumbnail-uploader")
+  if (!uploader) return "There's no thumbnail upload on this page."
+  return uploadImage(uploader, file)
 }
 
 async function choosePlaylists(names: string[], filled: string[], warnings: string[]) {
@@ -493,6 +526,11 @@ function currentStep(): Step | null {
 const enabled = (button: HTMLElement | null | undefined): button is HTMLElement =>
   shown(button) && !button.hasAttribute("disabled") && button.getAttribute("aria-disabled") !== "true"
 
+/** Clicks a Studio button where a person's click lands: the <button> inside its ytcp-button. */
+function press(button: HTMLElement) {
+  ;(button.querySelector<HTMLElement>("button") || button).click()
+}
+
 /** Clicks Next and waits for the step after this one; null when Studio stays put. */
 async function nextStep(): Promise<Step | null> {
   const from = currentStep()
@@ -501,7 +539,7 @@ async function nextStep(): Promise<Step | null> {
     return enabled(next) ? next : null
   }, 10_000)
   if (!button) return null
-  button.click()
+  press(button)
   return waitFor(() => {
     const step = currentStep()
     return step && step !== from ? step : null
@@ -526,7 +564,7 @@ async function closePicker(inside: Element | null | undefined) {
   const close = shownIn<HTMLElement>("ytcp-icon-button, ytcp-button, button", box || document).find((button) =>
     /^(close|cancel)$/i.test(button.getAttribute("aria-label") || text(button))
   )
-  close?.click()
+  if (close) press(close)
   await sleep(400)
 }
 
@@ -556,7 +594,7 @@ async function setMonetization(info: YoutubeUploadInfo, filled: string[], warnin
     warnings.push(`Couldn't turn monetisation ${on ? "on" : "off"}; set it under Monetisation.`)
     return
   }
-  done.click()
+  press(done)
   await waitFor(() => !shown(choice), 3000)
   filled.push(`Monetisation: ${on ? "on" : "off"}`)
 }
@@ -576,14 +614,18 @@ async function answerAdSuitability(info: YoutubeUploadInfo, filled: string[], wa
     warnings.push("Couldn't tick None of the above under Ad suitability.")
     return
   }
-  const button = await waitFor(() => (enabled(submit()) ? submit() : null), 3000)
-  if (!button) {
-    warnings.push("Ad suitability's Submit rating stayed off; submit it by hand.")
+  // Studio works out its overall rating ("Safe for ads") first; a Submit pressed before that is ignored.
+  await sleep(2500)
+  for (let attempt = 0; attempt < 2 && enabled(submit()); attempt++) {
+    const button = await waitFor(() => (enabled(submit()) ? submit() : null), 5000)
+    if (!button) break
+    press(button)
+    if (await waitFor(() => !enabled(submit()), 8000)) break
+  }
+  if (enabled(submit())) {
+    warnings.push("Studio didn't take the Ad suitability rating: click Submit rating, then Next.")
     return
   }
-  button.click()
-  // Studio rates the answers before Next goes on.
-  await waitFor(() => !enabled(submit()), 6000)
   filled.push("Ad suitability: None of the above")
 }
 
@@ -609,7 +651,7 @@ async function closeEditor(panel: string, save: boolean, what: string, warnings:
     warnings.push(`Couldn't save the ${what}: Studio's Save stayed off${errors ? ` (${errors})` : ""}. Finish it in the editor.`)
     return false
   }
-  button?.click()
+  if (button) press(button)
   if (!(await waitFor(() => !editorWith(panel), 15_000))) {
     warnings.push(`The ${what} editor didn't close${save ? " after Save" : ""}; check it.`)
     return false
@@ -667,7 +709,7 @@ async function importEndScreen(spec: NonNullable<YoutubeUploadInfo["endScreen"]>
     warnings.push("There's no end screen Import from video on this page; add the end screen by hand.")
     return
   }
-  button.click()
+  press(button)
   const titleOf = (card: HTMLElement) => (card.getAttribute("aria-label") || text(card)).replace(/, (not )?selected$/i, "")
   const listed = () => shownIn<HTMLElement>("ytcp-video-pick-dialog-contents ytcp-entity-card")
   let cards = await waitFor(() => (listed().length ? listed() : null), 10_000)
@@ -786,7 +828,7 @@ async function addCards(cards: YoutubeChannelCard[], filled: string[], warnings:
     warnings.push("There's no Cards Add button on this page; add the cards by hand.")
     return
   }
-  button.click()
+  press(button)
   const host = await waitFor(() => editorWith(CARDS_EDITOR), 10_000)
   if (!host) {
     warnings.push("Studio's cards editor didn't open; add the cards by hand.")
@@ -797,6 +839,84 @@ async function addCards(cards: YoutubeChannelCard[], filled: string[], warnings:
   if (await closeEditor(CARDS_EDITOR, added.length > 0, "cards", warnings)) {
     for (const card of added) filled.push(`Card: ${card.channel} "${card.message}"`)
   }
+}
+
+// Details → A/B testing (beside the title) opens ytcp-creator-experiment-create-dialog. Its chips
+// pick what's tested; each of its three slots has a thumbnail uploader and a title box.
+const AB_MODES = {
+  titles: ["chip-0", /^title only$/i],
+  thumbnails: ["chip-1", /^thumbnail only$/i],
+  both: ["chip-2", /^title and thumbnail$/i]
+} as const
+
+async function setAbTest(variants: YoutubeAbVariant[], files: (File | null)[], filled: string[], warnings: string[]) {
+  const titles = variants.every((variant) => variant.title)
+  const thumbnails = variants.every((variant) => variant.thumbnail)
+  if (thumbnails && variants.some((_, index) => !files[index])) {
+    warnings.push("The A/B test's thumbnails didn't all arrive; set the test by hand under A/B testing.")
+    return
+  }
+  const opener =
+    dialog()?.querySelector<HTMLElement>("ytcp-button#ab-test-button") ||
+    dialog()?.querySelector<HTMLElement>('ytcp-thumbnails-experiment-editor [aria-label="A/B testing"]')
+  if (!enabled(opener)) {
+    warnings.push("There's no A/B testing on this upload form; set the test on the video's page in Studio.")
+    return
+  }
+  press(opener)
+  const create = () => document.querySelector<HTMLElement>("ytcp-creator-experiment-create-dialog")
+  const chips = () => shownIn<HTMLElement>("ytcp-static-chip-bar ytcp-chip", create() || document)
+  const keep = () => firstShown<HTMLElement>("ytcp-creator-experiment-delete-confirmation-dialog ytcp-button#cancel-button")
+  await waitFor(() => keep() || chips().length, 8000)
+  const cancel = keep()
+  if (cancel) {
+    // "Start a new experiment? This deletes your current experiment."
+    press(cancel)
+    warnings.push("This video already has an A/B test; it was left as it is.")
+    return
+  }
+  const host = create()
+  if (!host || !chips().length) {
+    warnings.push("Studio's A/B testing didn't open; set the test by hand.")
+    return
+  }
+  const [chipId, label] = titles && thumbnails ? AB_MODES.both : thumbnails ? AB_MODES.thumbnails : AB_MODES.titles
+  const chip = chips().find((item) => label.test(text(item))) || chips().find((item) => item.id === chipId)
+  if (chip && chip.getAttribute("aria-checked") !== "true") chip.click()
+  if (!chip || !(await waitFor(() => chip.getAttribute("aria-checked") === "true", 3000))) {
+    warnings.push("Couldn't pick what the A/B test compares; set the test by hand.")
+    await closePicker(chips()[0])
+    return
+  }
+  await sleep(500)
+  const giveUp = async (problem: string) => {
+    warnings.push(`${problem} The A/B test wasn't set; set it by hand.`)
+    await closePicker(chips()[0])
+  }
+  for (const [index, variant] of variants.entries()) {
+    if (variant.title) {
+      const box = shownIn<HTMLElement>("ytcp-social-suggestion-input #textbox", host)[index]
+      if (!box || !setEditable(box, variant.title)) return giveUp(`Title ${index + 1} of the A/B test didn't stick.`)
+    }
+    const file = files[index]
+    if (variant.thumbnail && file) {
+      const uploader = Array.from(host.querySelectorAll<HTMLElement>("ytcp-thumbnail-uploader"))[index]
+      const problem = uploader ? await uploadImage(uploader, file) : `There's no thumbnail slot ${index + 1} in A/B testing.`
+      if (problem) return giveUp(problem)
+    }
+  }
+  const setTest = () => host.querySelector<HTMLElement>("ytcp-button#set-test-button")
+  if (!(await waitFor(() => enabled(setTest()), 8000))) {
+    const errors = editorErrors(host)
+    return giveUp(`Studio's Set test stayed off${errors ? ` (${errors})` : ""}.`)
+  }
+  press(setTest()!)
+  if (!(await waitFor(() => !chips().length, 10_000))) {
+    warnings.push("The A/B testing dialog didn't close after Set test; check it.")
+    return
+  }
+  const what = titles && thumbnails ? "thumbnails with their titles" : thumbnails ? "thumbnails" : "titles"
+  filled.push(`A/B test: ${variants.length} ${what}`)
 }
 
 function formatLike(sample: string, date: Date): string {
@@ -904,7 +1024,8 @@ function dialogErrors(): string[] {
 async function fillUpload(
   info: YoutubeUploadInfo,
   video: File | null,
-  thumbnail: File | null
+  thumbnail: File | null,
+  abThumbnails: (File | null)[]
 ): Promise<YoutubeFillResult> {
   const filled: string[] = []
   const warnings: string[] = []
@@ -1034,11 +1155,12 @@ async function fillUpload(
   }
 
   if (thumbnail && thumbnailProblem) {
-    // Studio has refused a thumbnail picked right as the video started uploading; try again now it's under way.
+    // One more try once the video's upload is under way.
     thumbnailProblem = await setThumbnail(thumbnail)
     if (thumbnailProblem) warnings.push(`${thumbnailProblem} Add it by hand under Thumbnail → Upload file.`)
     else filled.push(`Thumbnail: ${thumbnail.name} (second try)`)
   }
+  if (info.abTest) await setAbTest(info.abTest, abThumbnails, filled, warnings)
 
   // On to Visibility, one step at a time; Checks is left as it is.
   let step: Step | null = "details"

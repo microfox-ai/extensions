@@ -65,6 +65,7 @@ async function readUpload(dir: string): Promise<{
   infoJson: string
   video: LocalFile
   thumbnail?: LocalFile
+  abThumbnails: LocalFile[]
   notes: string[]
 }> {
   let info: Record<string, unknown>
@@ -107,9 +108,19 @@ async function readUpload(dir: string): Promise<{
     throw new Error(`${video.name} is ${(video.size / 1024 ** 3).toFixed(1)} GB; upload videos over 4 GB in YouTube Studio by hand.`)
   }
 
+  // A/B testing's thumbnails, one per variant that has one, in the variants' order.
+  const variants: unknown[] = Array.isArray(info.abTest) ? info.abTest : []
+  const abThumbnails: LocalFile[] = []
+  for (const variant of variants) {
+    const path = variant && typeof variant === "object" ? (variant as Record<string, unknown>).thumbnail : undefined
+    if (typeof path === "string" && path.trim()) {
+      abThumbnails.push(await localFile(dir, path.trim(), IMAGE_MIME, "The A/B test thumbnail"))
+    }
+  }
+
   let thumbnail: LocalFile | undefined
   if (text("thumbnail")) thumbnail = await localFile(dir, text("thumbnail"), IMAGE_MIME, "The thumbnail")
-  else {
+  else if (!abThumbnails.length) {
     const picked = await filesIn(join(dir, "thumbnails"), IMAGE_MIME)
     const loose = (await filesIn(dir, IMAGE_MIME)).filter((file) => /^thumbnail\./i.test(basename(file)))
     const candidates = picked.length ? picked : loose
@@ -117,17 +128,19 @@ async function readUpload(dir: string): Promise<{
     else if (candidates.length > 1) {
       notes.push(
         `${candidates.length} thumbnails and none named in info.json "thumbnail", so none was set. ` +
-          "For YouTube's Test & Compare, add them under Thumbnail → A/B testing."
+          'To test them, list them in info.json "abTest" (YouTube\'s A/B testing).'
       )
     }
   }
-  if (thumbnail && thumbnail.size > THUMBNAIL_MAX) throw new Error(`${thumbnail.name} is over YouTube's 50 MB thumbnail limit.`)
+  for (const file of [thumbnail, ...abThumbnails]) {
+    if (file && file.size > THUMBNAIL_MAX) throw new Error(`${file.name} is over YouTube's 50 MB thumbnail limit.`)
+  }
 
   const merged: Record<string, unknown> = { ...info, title }
   delete merged.titleFile
   delete merged.descriptionFile
   if (description !== undefined) merged.description = description
-  return { infoJson: JSON.stringify(merged), video, thumbnail, notes }
+  return { infoJson: JSON.stringify(merged), video, thumbnail, abThumbnails, notes }
 }
 
 async function sendFile(bridge: Bridge, sessionId: string, fileId: string, file: LocalFile) {
@@ -168,9 +181,16 @@ async function fillOne(bridge: Bridge, folder: string): Promise<UploadOutcome> {
   try {
     await sendFile(bridge, opened.sessionId, "video", upload.video)
     if (upload.thumbnail) await sendFile(bridge, opened.sessionId, "thumbnail", upload.thumbnail)
+    const abThumbnailIds = upload.abThumbnails.map((_, index) => `ab-${index}`)
+    for (const [index, file] of upload.abThumbnails.entries()) await sendFile(bridge, opened.sessionId, abThumbnailIds[index], file)
     const result = (await bridge.call(
       "youtube.uploadCommit",
-      { sessionId: opened.sessionId, videoId: "video", thumbnailId: upload.thumbnail ? "thumbnail" : undefined },
+      {
+        sessionId: opened.sessionId,
+        videoId: "video",
+        thumbnailId: upload.thumbnail ? "thumbnail" : undefined,
+        ...(abThumbnailIds.length ? { abThumbnailIds } : {})
+      },
       330_000
     )) as Omit<UploadOutcome, "folder">
     return {

@@ -211,7 +211,7 @@ export const youtubeStudioCommands: Record<string, (params: any) => Promise<unkn
     return { ok: true }
   },
 
-  "youtube.uploadCommit": async ({ sessionId, videoId, thumbnailId }) => {
+  "youtube.uploadCommit": async ({ sessionId, videoId, thumbnailId, abThumbnailIds }) => {
     const session = takeSession(sessionId)
     // Chrome slows timers in background tabs to one a second, and the user
     // reviews this tab next anyway.
@@ -240,7 +240,8 @@ export const youtubeStudioCommands: Record<string, (params: any) => Promise<unkn
         type: "fill",
         info: session.info,
         videoId: String(videoId || "video"),
-        thumbnailId: thumbnailId ? String(thumbnailId) : undefined
+        thumbnailId: thumbnailId ? String(thumbnailId) : undefined,
+        abThumbnailIds: Array.isArray(abThumbnailIds) ? abThumbnailIds.map(String) : undefined
       })
     })
     sessions.delete(sessionId)
