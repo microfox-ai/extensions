@@ -7,6 +7,10 @@ last release; see `.github/workflows/release-browse-hack-mcp.yml`). They show
 on Browse Hack's page on MediaMake and in `get_status` / `update_browse_hack`
 after an update.
 
+## 0.13.0
+
+- New tool `youtube_bulk_upload_shorts`: the popup's Bulk Upload Shorts from Claude. Give it a folder with `shorts-pack.json` (MediaMake's pack-youtube writes one for a production's shorts) and it uploads each short in its own YouTube Studio tab on the next day that has no short on the channel, at the pack's time, with Browse Hack 0.16.0. It stops on Visibility for you to click Schedule, or clicks Schedule itself with `clickSchedule` when you ask. A mistake in the pack (a missing video, a short with no title) stops it before anything goes up.
+
 ## 0.12.0
 
 - `youtube_fill_uploads` sets up YouTube's A/B testing from info.json's `abTest`, with Browse Hack 0.14.0: 2 or 3 variants, each a thumbnail, a title or both (Thumbnail only, Title only, or Title and thumbnail). It uploads every thumbnail, types the titles and clicks Set test. A video that already has a test keeps it.

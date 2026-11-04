@@ -10,7 +10,7 @@ import { z } from "zod"
 
 import { Bridge } from "./bridge.js"
 import { fillDistrokidReleases } from "./distrokid.js"
-import { fillYoutubeUploads } from "./youtubeUpload.js"
+import { bulkUploadShorts, fillYoutubeUploads } from "./youtubeUpload.js"
 import { downloadMidjourneyImages, instagramDownload, startPinterestBulk, youtubeDownload } from "./downloads.js"
 import { saveGoogleAiAnswers } from "./googleAiAnswers.js"
 import { batchStatus, pauseBatch, startBatch } from "./midjourneyBatch.js"
@@ -42,7 +42,8 @@ const server = new McpServer(
       "and fill DistroKid's new-release form from local folders (one tab per release; the user clicks Continue, " +
       "then info.json's useMyOriginals and addLyrics let the extension fill in the Mixea and lyrics pages, which the user submits), " +
       "and upload videos to YouTube Studio from local pack folders, switching to the channel info.json names and filling the " +
-      "upload form (the user clicks Save, Publish or Schedule). " +
+      "upload form (the user clicks Save, Publish or Schedule), or a Shorts pack's shorts (shorts-pack.json, youtube_bulk_upload_shorts), " +
+      "each on the next day with no short on the channel. " +
       "Suno: suno_create and suno_cover fill Suno's own Create form and click Create in Browse Hack's Suno tab (each Create " +
       "makes two songs and spends credits; check suno_status and agree batches with the user). If Suno shows a captcha, the user " +
       "clears it in the tab: never try to solve one. Takes are recorded in MediaMake cloud under the channel's project " +
@@ -1082,6 +1083,34 @@ localTool(
       .describe("Absolute paths. Each is an upload folder with info.json, or a parent whose child folders each have one.")
   },
   ({ folders }) => fillYoutubeUploads(bridge, folders)
+)
+
+localTool(
+  "youtube_bulk_upload_shorts",
+  "Uploads every short of a Shorts pack to YouTube Studio, the popup's Bulk Upload Shorts: one Studio tab per short, one " +
+    "after another. Each folder needs shorts-pack.json (MediaMake's pack-youtube writes it): channel (switched to first), " +
+    "schedule { time \"HH:MM\", from \"YYYY-MM-DD\" (default tomorrow) }, defaults (info.json fields every short shares, e.g. " +
+    "descriptionFile, tags, madeForKids, alteredContent, category, language, monetization) and shorts [{ video, title, ... }], " +
+    "whose own fields win over the defaults; paths are relative to the folder. A short without scheduleAt goes on the next day " +
+    "from schedule.from that has no short on the channel's Shorts tab, at schedule.time; one with its own scheduleAt keeps it. " +
+    "Every short is checked before anything goes up. Picking each video starts its upload, so every short leaves a draft on the " +
+    "channel even if it's never scheduled, and running the pack again uploads the shorts again. Returns each short's day and " +
+    "time, tab, what was filled and any warnings.",
+  {
+    folders: z
+      .array(z.string())
+      .min(1)
+      .describe("Absolute paths. Each is a Shorts pack folder with shorts-pack.json, or a parent whose child folders each have one."),
+    clickSchedule: z
+      .boolean()
+      .optional()
+      .describe(
+        "Click Schedule in each tab once its short is filled with a day (never Save or Publish). Default false: each short waits " +
+          "on the Visibility step for the user to click Schedule. Set true only when the user asked in this conversation for the " +
+          "shorts to be scheduled."
+      )
+  },
+  ({ folders, clickSchedule }) => bulkUploadShorts(bridge, folders, { clickSchedule })
 )
 
 localTool(

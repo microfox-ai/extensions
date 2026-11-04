@@ -96,22 +96,22 @@ function imageSize(buf: Buffer): { w: number; h: number } | null {
   return null
 }
 
-async function hasInfoJson(dir: string): Promise<boolean> {
+async function hasInfoJson(dir: string, file = "info.json"): Promise<boolean> {
   try {
-    return (await stat(join(dir, "info.json"))).isFile()
+    return (await stat(join(dir, file))).isFile()
   } catch {
     return false
   }
 }
 
-/** A folder with info.json, or a parent whose child folders each have one. */
-export async function resolveReleaseFolders(inputs: string[]): Promise<string[]> {
+/** A folder with info.json (or `file`), or a parent whose child folders each have one. */
+export async function resolveReleaseFolders(inputs: string[], file = "info.json"): Promise<string[]> {
   const folders: string[] = []
   for (const input of inputs) {
     const dir = resolvePath(input)
     const info = await stat(dir).catch(() => null)
     if (!info?.isDirectory()) throw new Error(`${dir} is not a folder.`)
-    if (await hasInfoJson(dir)) {
+    if (await hasInfoJson(dir, file)) {
       folders.push(dir)
       continue
     }
@@ -120,10 +120,10 @@ export async function resolveReleaseFolders(inputs: string[]): Promise<string[]>
       .map((entry) => join(dir, entry.name))
     const releases: string[] = []
     for (const child of children) {
-      if (await hasInfoJson(child)) releases.push(child)
+      if (await hasInfoJson(child, file)) releases.push(child)
     }
     if (releases.length === 0) {
-      throw new Error(`${dir} has no info.json, and none of its folders do either.`)
+      throw new Error(`${dir} has no ${file}, and none of its folders do either.`)
     }
     releases.sort((a, b) => a.localeCompare(b))
     folders.push(...releases)
