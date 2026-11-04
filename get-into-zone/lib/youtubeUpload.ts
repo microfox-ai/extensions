@@ -35,7 +35,17 @@ export type YoutubeUploadInfo = {
   /** Studio's own time zone; date YYYY-MM-DD, time HH:MM (24 h). */
   scheduleAt: { date: string; time: string } | null
   premiere: boolean | null
+  /** The Monetisation step of channels in the Partner Programme. Left out: On. */
+  monetization: boolean | null
+  /** The Ad suitability step: "none" ticks None of the above and submits. Left out: "none". */
+  adSuitability: "none" | "skip" | null
+  /** Video elements → End screen → Import from video, then the playlist element's playlist. */
+  endScreen: { importFrom: string; playlist: string | null } | null
+  /** Video elements → Cards: channel cards. */
+  cards: YoutubeChannelCard[]
 }
+
+export type YoutubeChannelCard = { channel: string; message: string; teaser: string }
 
 export type YoutubeChannel = {
   name: string
@@ -56,6 +66,8 @@ export type YoutubeFillResult = {
 export const TITLE_MAX = 100
 export const DESCRIPTION_MAX_BYTES = 5000
 export const TAGS_MAX = 500
+/** A card's custom message and teaser text. */
+export const CARD_TEXT_MAX = 30
 
 const CATEGORIES: Record<string, string> = {
   autos: "AUTOS",
@@ -111,8 +123,8 @@ function asBool(value: unknown): boolean | null {
   if (typeof value === "boolean") return value
   if (typeof value === "string") {
     const s = value.trim().toLowerCase()
-    if (["true", "yes", "1"].includes(s)) return true
-    if (["false", "no", "0"].includes(s)) return false
+    if (["true", "yes", "1", "on"].includes(s)) return true
+    if (["false", "no", "0", "off"].includes(s)) return false
   }
   return null
 }
@@ -130,6 +142,7 @@ const KNOWN_KEYS = new Set(
     "automaticConcepts", "tags", "language", "license", "licence", "allowEmbedding",
     "notifySubscribers", "shortsRemixing", "category", "comments", "commentModeration",
     "whoCanComment", "commentSort", "showLikes", "visibility", "scheduleAt", "premiere",
+    "monetization", "monetisation", "adSuitability", "endScreen", "cards",
     "$schema", "notes"
   ].map(fold)
 )
@@ -206,6 +219,44 @@ function parseSchedule(raw: string): { date: string; time: string } | null {
   const day = new Date(y, m - 1, d)
   if (day.getFullYear() !== y || day.getMonth() !== m - 1 || day.getDate() !== d) return null
   return { date: match[1], time: `${String(hours).padStart(2, "0")}:${match[3]}` }
+}
+
+/** "endScreen": "<video title>" or { "importFrom": "<video title>", "playlist": "<playlist>" }. */
+function parseEndScreen(raw: unknown, errors: string[]): YoutubeUploadInfo["endScreen"] {
+  if (raw === undefined) return null
+  const obj = asRecord(raw)
+  const importFrom = asText(obj ? pick(obj, ["importFrom", "from", "video"]) : raw)
+  if (!importFrom) {
+    errors.push('endScreen must be the title of the video to import it from, or { "importFrom": "<title>", "playlist": "<playlist>" }.')
+    return null
+  }
+  return { importFrom, playlist: (obj && asText(pick(obj, ["playlist"]))) || null }
+}
+
+function parseCards(raw: unknown, errors: string[]): YoutubeChannelCard[] {
+  if (raw === undefined) return []
+  const cards: YoutubeChannelCard[] = []
+  for (const [index, item] of (Array.isArray(raw) ? raw : [raw]).entries()) {
+    const obj = asRecord(item)
+    const label = `cards[${index}]`
+    if (!obj) {
+      errors.push(`${label} must be an object like { "channel": "@handle", "message": "…", "teaser": "…" }.`)
+      continue
+    }
+    const channel = asText(pick(obj, ["channel"]))
+    if (!channel) {
+      errors.push(`${label}: only channel cards can be added for now; give "channel" (its @handle or name).`)
+      continue
+    }
+    const message = asText(pick(obj, ["message", "customMessage"]))
+    const teaser = asText(pick(obj, ["teaser", "teaserText"]))
+    if (!message) errors.push(`${label}: a channel card needs a "message" (YouTube's Custom message).`)
+    for (const [name, value] of [["message", message], ["teaser", teaser]]) {
+      if (value.length > CARD_TEXT_MAX) errors.push(`${label}: ${name} is ${value.length} characters; YouTube allows ${CARD_TEXT_MAX}.`)
+    }
+    if (message) cards.push({ channel, message, teaser: teaser || message })
+  }
+  return cards
 }
 
 export function parseYoutubeUploadInfo(raw: unknown): {
@@ -350,7 +401,16 @@ export function parseYoutubeUploadInfo(raw: unknown): {
     showLikes: parseFlag(obj, ["showLikes"], errors),
     visibility: finalVisibility,
     scheduleAt,
-    premiere
+    premiere,
+    monetization: parseFlag(obj, ["monetization", "monetisation"], errors),
+    adSuitability: parseChoice(obj, ["adSuitability"], {
+      none: "none",
+      noneoftheabove: "none",
+      skip: "skip",
+      manual: "skip"
+    }, errors),
+    endScreen: parseEndScreen(pick(obj, ["endScreen"]), errors),
+    cards: parseCards(pick(obj, ["cards"]), errors)
   }
   return { info, errors, warnings }
 }
