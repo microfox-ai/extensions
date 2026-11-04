@@ -5,7 +5,7 @@
 // to the content script. Nothing is saved or published.
 
 import { openTab, waitForTabLoad } from "./tabs"
-import type { StudioShort } from "./youtubeShorts"
+import { emptyDays, isoDay, type StudioShort } from "./youtubeShorts"
 import {
   channelKey,
   parseYoutubeUploadInfo,
@@ -227,6 +227,30 @@ export const youtubeStudioCommands: Record<string, (params: any) => Promise<unkn
     return {
       ...result,
       note: "YouTube and YouTube Studio in this Chrome profile now act as this channel. Tabs already open keep the channel they loaded with until reloaded."
+    }
+  },
+
+  /** For the MCP's youtube_bulk_upload_shorts: the first `count` days from `from` (default tomorrow) with no short on
+   *  the channel's Shorts tab. It switches the profile's YouTube to the channel, as an upload would. */
+  "youtube.shortsFreeDays": async ({ channel, count, from }) => {
+    const wanted = String(channel || "").trim()
+    if (!wanted) throw new Error("Name the channel: its @handle, name or channel id.")
+    const first = String(from || "").trim()
+    if (first && !/^\d{4}-\d{2}-\d{2}$/.test(first)) throw new Error('from must be "YYYY-MM-DD".')
+    const tomorrow = new Date()
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    const tab = await openChannelTab(wanted)
+    try {
+      const shorts = await readShortsList(tab.tabId, tab.channelId)
+      const taken = [...new Set(shorts.filter((short) => !short.draft && short.date).map((short) => short.date as string))].sort()
+      return {
+        channel: { name: tab.name, handle: tab.handle },
+        days: emptyDays(taken, Math.max(0, Number(count) || 0), first || isoDay(tomorrow)),
+        taken,
+        drafts: shorts.filter((short) => short.draft).length
+      }
+    } finally {
+      await chrome.tabs.remove(tab.tabId).catch(() => {})
     }
   },
 
