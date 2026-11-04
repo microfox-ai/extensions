@@ -251,7 +251,11 @@ Put it in the upload folder beside the video. Only `channel` and the title are r
   "showLikes": true,
   "visibility": "scheduled",
   "scheduleAt": "2026-11-09T18:30",
-  "premiere": false
+  "premiere": false,
+  "monetization": true,
+  "adSuitability": "none",
+  "endScreen": { "importFrom": "Full Metal Heart - Edward Elric 「 AMZ 」( Lyric Video )", "playlist": "OST Tracks" },
+  "cards": [{ "channel": "@get-into-zone", "message": "Music on Get into Zone", "teaser": "Music on Get into Zone" }]
 }
 ```
 
@@ -276,5 +280,9 @@ Put it in the upload folder beside the video. Only `channel` and the title are r
 | `visibility` | `private`, `unlisted`, `public` or `scheduled` |
 | `scheduleAt` | `YYYY-MM-DDTHH:MM` (24-hour) in the time zone Studio shows; sets visibility to scheduled |
 | `premiere` | Set as Premiere (public or scheduled only) |
+| `monetization` | The Monetisation step (channels in the Partner Programme): `true` (On) or `false` (Off). Default On |
+| `adSuitability` | The Ad suitability step that follows: `none` ticks None of the above and clicks Submit rating; `skip` leaves it to you. Default `none` |
+| `endScreen` | Video elements → End screen → Import from video: that video's title, or `{ "importFrom": "<title>", "playlist": "<playlist>" }` to also point the imported playlist element at another playlist |
+| `cards` | Video elements → Cards: channel cards, each `{ "channel": "@handle or name", "message": "…", "teaser": "…" }` (30 characters each; the teaser defaults to the message) |
 
-Video elements (end screen, cards, subtitles) are left for you to add in Studio.
+Subtitles and the Checks step are left as they are.

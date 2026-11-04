@@ -3,13 +3,15 @@ import type { PlasmoCSConfig } from "plasmo"
 import {
   channelMatches,
   type YoutubeChannel,
+  type YoutubeChannelCard,
   type YoutubeFillResult,
   type YoutubeUploadInfo
 } from "../lib/youtubeUpload"
 
 // YouTube Studio: lists the channels in the account menu, switches between
-// them, and fills the upload dialog from info.json. It stops on the Visibility
-// step and never clicks Save, Publish or Schedule.
+// them, and fills the upload dialog from info.json: Details, Monetisation, Ad
+// suitability and Video elements (end screen, cards) on the way. It stops on the
+// Visibility step and never clicks Save, Publish or Schedule.
 //
 // Content scripts can't read Studio's Polymer data, so everything here goes by
 // the page's markup: element ids, radio names and the menus' test-id values.
@@ -373,15 +375,24 @@ async function addTags(tags: string[]): Promise<number> {
   return bar.querySelectorAll("ytcp-chip, ytcp-chip-lit").length
 }
 
+/** What Studio says about a thumbnail it refused: an error under the thumbnails, or its toast. */
+function thumbnailError(): string {
+  const near = Array.from(
+    dialog()?.querySelectorAll<HTMLElement>("ytcp-video-thumbnail-editor [class*=error], ytcp-video-thumbnail-editor #error-message") || []
+  )
+  const toasts = Array.from(document.querySelectorAll<HTMLElement>("tp-yt-paper-toast, ytcp-toast, ytcp-app-snackbar, #toast"))
+  return [...new Set([...near, ...toasts].filter(shown).map(text).filter(Boolean))].join(" ")
+}
+
 /** Custom thumbnails need a phone-verified channel; Studio drops the file quietly otherwise. */
 async function setThumbnail(file: File): Promise<string | null> {
   const uploader = dialog()?.querySelector<HTMLElement>("ytcp-thumbnail-uploader")
   const input = uploader?.querySelector<HTMLInputElement>("input#file-loader")
   if (!uploader || !input) return "There's no thumbnail upload on this page."
   let started = false
-  let failed = ""
+  let failed = false
   const onStart = () => (started = true)
-  const onError = (event: Event) => (failed = text(event.target as Element) || "Studio rejected the thumbnail.")
+  const onError = () => (failed = true)
   uploader.addEventListener("upload-started", onStart)
   const editor = uploader.closest("ytcp-video-custom-still-editor")
   editor?.addEventListener("custom-still-upload-error", onError)
@@ -398,7 +409,11 @@ async function setThumbnail(file: File): Promise<string | null> {
     uploader.removeEventListener("upload-started", onStart)
     editor?.removeEventListener("custom-still-upload-error", onError)
   }
-  if (failed) return `Thumbnail ${file.name}: ${failed}`
+  if (failed) {
+    // The error event carries no message a content script can read; Studio's own text says why.
+    await sleep(500)
+    return `Studio refused the thumbnail ${file.name}: ${thumbnailError() || "it showed no reason"}.`
+  }
   if (!started) {
     return (
       `Studio didn't take the thumbnail ${file.name}. Custom thumbnails need a phone-verified channel ` +
@@ -451,17 +466,337 @@ async function choosePlaylists(names: string[], filled: string[], warnings: stri
   await sleep(400)
 }
 
-const STEP_SECTIONS = ["ytcp-uploads-details", "ytcp-uploads-video-elements", "ytcp-uploads-checks", "ytcp-uploads-review"]
+// The dialog's steps after Details, by the section Studio shows for each. Channels in the
+// Partner Programme get Monetisation, and Ad suitability once monetisation is on.
+const STEPS = [
+  ["monetization", "ytcp-uploads-monetization"],
+  ["ad-suitability", "ytcp-uploads-content-ratings"],
+  ["video-elements", "ytcp-uploads-video-elements"],
+  ["checks", "ytcp-uploads-checks"],
+  ["visibility", "ytcp-uploads-review"]
+] as const
+type Step = "details" | (typeof STEPS)[number][0]
+const STEP_NAMES: Record<Step, string> = {
+  details: "Details",
+  monetization: "Monetisation",
+  "ad-suitability": "Ad suitability",
+  "video-elements": "Video elements",
+  checks: "Checks",
+  visibility: "Visibility"
+}
 
-async function goToStep(step: number): Promise<boolean> {
-  for (let i = 0; i < 4; i++) {
-    if (shown(dialog()?.querySelector(STEP_SECTIONS[step]))) return true
+function currentStep(): Step | null {
+  for (const [step, tag] of STEPS) if (shown(dialog()?.querySelector(tag))) return step
+  return shown(dialog()?.querySelector("#title-textarea #textbox")) ? "details" : null
+}
+
+const enabled = (button: HTMLElement | null | undefined): button is HTMLElement =>
+  shown(button) && !button.hasAttribute("disabled") && button.getAttribute("aria-disabled") !== "true"
+
+/** Clicks Next and waits for the step after this one; null when Studio stays put. */
+async function nextStep(): Promise<Step | null> {
+  const from = currentStep()
+  const button = await waitFor(() => {
     const next = dialog()?.querySelector<HTMLElement>("#next-button")
-    if (!shown(next) || next.hasAttribute("disabled") || next.getAttribute("aria-disabled") === "true") return false
-    next.click()
-    await waitFor(() => shown(dialog()?.querySelector(STEP_SECTIONS[step])) || null, 2500)
+    return enabled(next) ? next : null
+  }, 10_000)
+  if (!button) return null
+  button.click()
+  return waitFor(() => {
+    const step = currentStep()
+    return step && step !== from ? step : null
+  }, 6000)
+}
+
+const norm = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase()
+
+/** The item named exactly this, else the first whose name starts with it. */
+function findByName<T extends HTMLElement>(items: T[], name: string, label: (item: T) => string): T | undefined {
+  const want = norm(name)
+  return items.find((item) => norm(label(item)) === want) || items.find((item) => norm(label(item)).startsWith(want))
+}
+
+function shownIn<T extends HTMLElement>(selector: string, root: ParentNode = document): T[] {
+  return Array.from(root.querySelectorAll<T>(selector)).filter(shown)
+}
+
+/** Closes the small picker dialog holding this element with its Close or Cancel button. */
+async function closePicker(inside: Element | null | undefined) {
+  const box = inside?.closest("ytcp-dialog, tp-yt-paper-dialog")
+  const close = shownIn<HTMLElement>("ytcp-icon-button, ytcp-button, button", box || document).find((button) =>
+    /^(close|cancel)$/i.test(button.getAttribute("aria-label") || text(button))
+  )
+  close?.click()
+  await sleep(400)
+}
+
+async function setMonetization(info: YoutubeUploadInfo, filled: string[], warnings: string[]) {
+  const on = info.monetization ?? true
+  if (info.monetization === null) warnings.push('monetization isn\'t in info.json; turned it On (set "monetization": false for Off).')
+  const field = dialog()?.querySelector<HTMLElement>("ytcp-uploads-monetization ytcp-video-monetization")
+  const opener = field?.querySelector<HTMLElement>(".clickable") || field?.querySelector<HTMLElement>("ytcp-icon-button")
+  if (!opener) {
+    warnings.push("There's no monetisation setting on this page.")
+    return
   }
-  return shown(dialog()?.querySelector(STEP_SECTIONS[step]))
+  opener.click()
+  const name = on ? "ON" : "OFF"
+  const choice = await waitFor(
+    () => firstShown<HTMLElement>(`ytcp-video-monetization-edit-dialog tp-yt-paper-radio-button[name="${name}"]`),
+    5000
+  )
+  if (!choice) {
+    warnings.push("Studio's monetisation dialog didn't open; set it under Monetisation.")
+    return
+  }
+  if (choice.getAttribute("aria-checked") !== "true") choice.click()
+  await sleep(200)
+  const done = choice.closest("ytcp-video-monetization-edit-dialog")?.querySelector<HTMLElement>("ytcp-button#save-button")
+  if (choice.getAttribute("aria-checked") !== "true" || !done) {
+    warnings.push(`Couldn't turn monetisation ${on ? "on" : "off"}; set it under Monetisation.`)
+    return
+  }
+  done.click()
+  await waitFor(() => !shown(choice), 3000)
+  filled.push(`Monetisation: ${on ? "on" : "off"}`)
+}
+
+async function answerAdSuitability(info: YoutubeUploadInfo, filled: string[], warnings: string[]) {
+  if (info.adSuitability === "skip") {
+    warnings.push("Ad suitability is left for you (adSuitability is skip): answer it, click Submit rating, then Next.")
+    return
+  }
+  const section = dialog()?.querySelector<HTMLElement>("ytcp-uploads-content-ratings")
+  const none = section?.querySelector<HTMLElement>("ytcp-checkbox-lit.all-none-checkbox")
+  const submit = () => section?.querySelector<HTMLElement>("ytcp-button#submit-questionnaire-button")
+  // A draft opened again shows its rating instead of the questions.
+  if (!shown(none) || !shown(submit())) return
+  if (info.adSuitability === null) warnings.push('adSuitability isn\'t in info.json; answered None of the above (set "skip" to answer it yourself).')
+  if (!(await setCheckbox(none, true))) {
+    warnings.push("Couldn't tick None of the above under Ad suitability.")
+    return
+  }
+  const button = await waitFor(() => (enabled(submit()) ? submit() : null), 3000)
+  if (!button) {
+    warnings.push("Ad suitability's Submit rating stayed off; submit it by hand.")
+    return
+  }
+  button.click()
+  // Studio rates the answers before Next goes on.
+  await waitFor(() => !enabled(submit()), 6000)
+  filled.push("Ad suitability: None of the above")
+}
+
+// The end screen and cards editors open over the upload dialog, each in a ytve-modal-host.
+const END_SCREEN_EDITOR = "ytve-endscreen-editor-options-panel"
+const CARDS_EDITOR = "ytve-info-cards-editor-options-panel"
+
+function editorWith(panel: string): HTMLElement | null {
+  return firstShown<HTMLElement>(panel)?.closest<HTMLElement>("ytve-modal-host") ?? null
+}
+
+function editorErrors(host: HTMLElement): string {
+  return [...new Set(shownIn<HTMLElement>("[class*=error], #error-message", host).map(text).filter(Boolean))].join(" ")
+}
+
+/** Saves an open editor and waits for it to close. Without changes to save, Discard closes it. */
+async function closeEditor(panel: string, save: boolean, what: string, warnings: string[]): Promise<boolean> {
+  const host = editorWith(panel)
+  if (!host) return !save
+  const button = host.querySelector<HTMLElement>(save ? "ytcp-button#save-button" : "ytcp-button#discard-button")
+  if (save && !(await waitFor(() => enabled(button), 5000))) {
+    const errors = editorErrors(host)
+    warnings.push(`Couldn't save the ${what}: Studio's Save stayed off${errors ? ` (${errors})` : ""}. Finish it in the editor.`)
+    return false
+  }
+  button?.click()
+  if (!(await waitFor(() => !editorWith(panel), 15_000))) {
+    warnings.push(`The ${what} editor didn't close${save ? " after Save" : ""}; check it.`)
+    return false
+  }
+  return true
+}
+
+/** Points the end screen's playlist element (the imported one) at this playlist. */
+async function setEndScreenPlaylist(name: string, filled: string[], warnings: string[]) {
+  const host = editorWith(END_SCREEN_EDITOR)
+  // Timeline rows shorten their labels to fit ("Playlist: ..."); the selected element's panel has the full name.
+  const row = shownIn<HTMLElement>("ytve-endscreen-row #element", host || document).find((el) => /^playlist:/i.test(text(el)))
+  if (!row) {
+    warnings.push(`The imported end screen has no playlist element to point at "${name}".`)
+    return
+  }
+  row.click()
+  const select = await waitFor(() => firstShown<HTMLElement>(`${END_SCREEN_EDITOR} #playlist-select`), 3000)
+  const trigger = select?.querySelector<HTMLElement>("ytcp-dropdown-trigger") || select
+  const playlistOf = (el: HTMLElement) => text(el).replace(/^playlist:\s*/i, "")
+  if (!select || !trigger) {
+    warnings.push(`Couldn't open the end screen's playlist element to set "${name}".`)
+    return
+  }
+  if (findByName([select], name, playlistOf)) {
+    filled.push(`End screen playlist: ${playlistOf(select)}`)
+    return
+  }
+  trigger.click()
+  const options = await waitFor(() => {
+    const list = shownIn<HTMLElement>("ytcp-playlist-pick-dialog ytcp-entity-card")
+    return list.length ? list : null
+  }, 5000)
+  const option = options && findByName(options, name, text)
+  if (!option) {
+    warnings.push(
+      `No playlist "${name}" for the end screen` +
+        (options ? ` (it has: ${options.map(text).join("; ")}).` : " (the playlist picker didn't open).")
+    )
+    await closePicker(options?.[0])
+    return
+  }
+  option.click()
+  const changed = await waitFor(() => {
+    const now = firstShown<HTMLElement>(`${END_SCREEN_EDITOR} #playlist-select`)
+    return now && findByName([now], name, playlistOf)
+  }, 5000)
+  if (changed) filled.push(`End screen playlist: ${playlistOf(changed)}`)
+  else warnings.push(`The end screen's playlist didn't change to "${name}"; check it.`)
+}
+
+async function importEndScreen(spec: NonNullable<YoutubeUploadInfo["endScreen"]>, filled: string[], warnings: string[]) {
+  const button = dialog()?.querySelector<HTMLElement>("ytcp-button#import-from-video-button")
+  if (!enabled(button)) {
+    warnings.push("There's no end screen Import from video on this page; add the end screen by hand.")
+    return
+  }
+  button.click()
+  const titleOf = (card: HTMLElement) => (card.getAttribute("aria-label") || text(card)).replace(/, (not )?selected$/i, "")
+  const listed = () => shownIn<HTMLElement>("ytcp-video-pick-dialog-contents ytcp-entity-card")
+  let cards = await waitFor(() => (listed().length ? listed() : null), 10_000)
+  let card = cards && findByName(cards, spec.importFrom, titleOf)
+  const search =
+    cards &&
+    firstShown<HTMLInputElement>(
+      "input:not([type]), input[type=text], input[type=search]",
+      cards[0].closest("ytcp-video-pick-dialog-contents") || document
+    )
+  if (cards && !card && search) {
+    // Only the latest videos are listed until you search.
+    typeText(search, spec.importFrom)
+    card = (await waitFor(() => findByName(listed(), spec.importFrom, titleOf), 6000)) || undefined
+    cards = listed()
+  }
+  if (!card) {
+    warnings.push(
+      `No video "${spec.importFrom}" to import the end screen from` +
+        (cards?.length ? ` (Studio lists: ${cards.slice(0, 8).map(titleOf).join("; ")}).` : ".")
+    )
+    await closePicker(cards?.[0])
+    await closeEditor(END_SCREEN_EDITOR, false, "end screen", warnings)
+    return
+  }
+  const from = titleOf(card)
+  card.scrollIntoView({ block: "center" })
+  card.click()
+  // The end screen editor opens with the imported elements on its timeline.
+  const rows = await waitFor(() => {
+    const list = shownIn("ytve-endscreen-row", editorWith(END_SCREEN_EDITOR) || document)
+    return list.length ? list : null
+  }, 15_000)
+  if (!rows) {
+    warnings.push(`Studio didn't import the end screen from "${from}"; add it by hand.`)
+    await closeEditor(END_SCREEN_EDITOR, false, "end screen", warnings)
+    return
+  }
+  if (spec.playlist) await setEndScreenPlaylist(spec.playlist, filled, warnings)
+  if (await closeEditor(END_SCREEN_EDITOR, true, "end screen", warnings)) {
+    filled.push(`End screen: imported from "${from}" (${rows.length} elements)`)
+  }
+}
+
+/** Types into an input or textarea the way a person would, so Studio's model sees it. */
+function typeText(box: HTMLInputElement | HTMLTextAreaElement, value: string): boolean {
+  box.focus()
+  box.select()
+  document.execCommand("insertText", false, value)
+  if (box.value !== value) {
+    box.value = value
+    box.dispatchEvent(new Event("input", { bubbles: true, composed: true }))
+  }
+  box.dispatchEvent(new Event("change", { bubbles: true }))
+  box.blur()
+  return box.value === value
+}
+
+async function addChannelCard(host: HTMLElement, card: YoutubeChannelCard, warnings: string[]): Promise<boolean> {
+  // The editor sometimes opens on "Oops, something went wrong"; Retry brings it back.
+  const retry = firstShown<HTMLElement>("ytcp-button#error-retry-button", host)
+  if (retry) {
+    retry.click()
+    await sleep(1500)
+  }
+  // An empty editor offers the card types as icons; with a card there already, + Card opens them as a menu.
+  const channelType = () =>
+    firstShown<HTMLElement>('ytcp-icon-button[aria-label*="linking to a channel" i]', host) ||
+    shownIn<HTMLElement>("tp-yt-paper-item").find((item) => /^channel$/i.test(text(item)))
+  if (!(await waitFor(channelType, 4000))) {
+    host.querySelector<HTMLElement>("ytcp-button#add-card-button")?.click()
+    await waitFor(channelType, 3000)
+  }
+  const add = channelType()
+  if (!add) {
+    warnings.push(`Couldn't find the channel card type to add ${card.channel}.`)
+    return false
+  }
+  add.click()
+  const search = await waitFor(() => firstShown<HTMLInputElement>("input#search-any"), 5000)
+  if (!search) {
+    warnings.push(`The channel search for the card didn't open (${card.channel}).`)
+    return false
+  }
+  const handle = card.channel.startsWith("@") ? norm(card.channel) : ""
+  const name = norm(handle ? handle.slice(1).replace(/[-_.]+/g, " ") : card.channel)
+  typeText(search, handle ? handle.slice(1) : card.channel)
+  const picker = search.closest("tp-yt-paper-dialog") || document
+  const results = () => shownIn<HTMLElement>("ytcp-entity-card", picker)
+  const result = await waitFor(
+    () => results().find((item) => (handle && norm(text(item)).includes(handle)) || norm(text(item)).includes(name)),
+    8000
+  )
+  if (!result) {
+    const found = results().map((item) => text(item).slice(0, 40))
+    warnings.push(`No channel "${card.channel}" in the card's search` + (found.length ? ` (it found: ${found.join("; ")}).` : "."))
+    await closePicker(search)
+    return false
+  }
+  result.click()
+  const last = (selector: string) => shownIn<HTMLTextAreaElement>(selector, host).pop()
+  const message = await waitFor(() => last("ytve-lightweight-textarea#custom-message textarea"), 5000)
+  const teaser = last("ytve-lightweight-textarea#teaser-text textarea")
+  if (!message || !teaser) {
+    warnings.push(`The channel card for ${card.channel} didn't open its message fields.`)
+    return false
+  }
+  const ok = typeText(message, card.message) && typeText(teaser, card.teaser)
+  if (!ok) warnings.push(`The channel card's message or teaser didn't stick (${card.channel}); check it.`)
+  return ok
+}
+
+async function addCards(cards: YoutubeChannelCard[], filled: string[], warnings: string[]) {
+  const button = dialog()?.querySelector<HTMLElement>("ytcp-button#cards-button")
+  if (!enabled(button)) {
+    warnings.push("There's no Cards Add button on this page; add the cards by hand.")
+    return
+  }
+  button.click()
+  const host = await waitFor(() => editorWith(CARDS_EDITOR), 10_000)
+  if (!host) {
+    warnings.push("Studio's cards editor didn't open; add the cards by hand.")
+    return
+  }
+  const added: YoutubeChannelCard[] = []
+  for (const card of cards) if (await addChannelCard(host, card, warnings)) added.push(card)
+  if (await closeEditor(CARDS_EDITOR, added.length > 0, "cards", warnings)) {
+    for (const card of added) filled.push(`Card: ${card.channel} "${card.message}"`)
+  }
 }
 
 function formatLike(sample: string, date: Date): string {
@@ -534,7 +869,10 @@ async function setVisibility(info: YoutubeUploadInfo, filled: string[], warnings
     return
   }
   if (!shown(dialog()?.querySelector("#datepicker-trigger"))) {
-    dialog()?.querySelector<HTMLElement>("#second-container-expand-button")?.click()
+    ;(
+      dialog()?.querySelector<HTMLElement>("#second-container-expand-button") ||
+      dialog()?.querySelector<HTMLElement>("ytcp-video-visibility-select #second-container")
+    )?.click()
     await waitFor(() => shown(dialog()?.querySelector("#datepicker-trigger")) || null, 3000)
   }
   if (!info.scheduleAt) return
@@ -604,11 +942,8 @@ async function fillUpload(
     else warnings.push("The description didn't stick; check it.")
   }
 
-  if (thumbnail) {
-    const problem = await setThumbnail(thumbnail)
-    if (problem) warnings.push(problem)
-    else filled.push(`Thumbnail: ${thumbnail.name}`)
-  }
+  let thumbnailProblem = thumbnail ? await setThumbnail(thumbnail) : null
+  if (thumbnail && !thumbnailProblem) filled.push(`Thumbnail: ${thumbnail.name}`)
 
   if (info.playlists.length) await choosePlaylists(info.playlists, filled, warnings)
 
@@ -698,14 +1033,37 @@ async function fillUpload(
     else warnings.push("Couldn't set Sort by for comments.")
   }
 
-  // Video elements and Checks are left as they are.
-  if (await goToStep(3)) {
-    await setVisibility(info, filled, warnings)
-  } else {
-    const errors = dialogErrors()
-    warnings.push(
-      "Stayed on Details: Studio wouldn't go on to Visibility" + (errors.length ? ` (${errors.join(" ")})` : "") + "."
-    )
+  if (thumbnail && thumbnailProblem) {
+    // Studio has refused a thumbnail picked right as the video started uploading; try again now it's under way.
+    thumbnailProblem = await setThumbnail(thumbnail)
+    if (thumbnailProblem) warnings.push(`${thumbnailProblem} Add it by hand under Thumbnail → Upload file.`)
+    else filled.push(`Thumbnail: ${thumbnail.name} (second try)`)
+  }
+
+  // On to Visibility, one step at a time; Checks is left as it is.
+  let step: Step | null = "details"
+  const seen = new Set<Step>()
+  while (step && step !== "visibility" && !seen.has(step)) {
+    seen.add(step)
+    if (step === "monetization") await setMonetization(info, filled, warnings)
+    if (step === "ad-suitability") await answerAdSuitability(info, filled, warnings)
+    if (step === "video-elements") {
+      if (info.endScreen) await importEndScreen(info.endScreen, filled, warnings)
+      if (info.cards.length) await addCards(info.cards, filled, warnings)
+    }
+    const from: Step = step
+    step = await nextStep()
+    if (!step) {
+      const errors = dialogErrors()
+      warnings.push(
+        `Stayed on ${STEP_NAMES[from]}: Studio wouldn't go on to the next step` + (errors.length ? ` (${errors.join(" ")})` : "") + "."
+      )
+    }
+  }
+  if (step === "visibility") await setVisibility(info, filled, warnings)
+  else if (step) warnings.push(`Studio went back to ${STEP_NAMES[step]}; check that step and go on from there.`)
+  if ((info.endScreen || info.cards.length) && !seen.has("video-elements")) {
+    warnings.push("The end screen and cards weren't added: the form didn't reach Video elements.")
   }
 
   const link = dialog()?.querySelector<HTMLAnchorElement>('a[href*="youtu.be/"], a[href*="youtube.com/shorts/"]')
