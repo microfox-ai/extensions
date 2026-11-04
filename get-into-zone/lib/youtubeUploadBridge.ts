@@ -5,10 +5,12 @@
 // to the content script. Nothing is saved or published.
 
 import { openTab, waitForTabLoad } from "./tabs"
+import type { StudioShort } from "./youtubeShorts"
 import {
   channelKey,
   parseYoutubeUploadInfo,
   type YoutubeChannel,
+  type YoutubeFillResult,
   type YoutubeUploadInfo
 } from "./youtubeUpload"
 
@@ -133,6 +135,75 @@ async function withStudioTab<T>(run: (tabId: number) => Promise<T>): Promise<T> 
   }
 }
 
+// --- For the popup's Studio jobs (lib/studioJobs.ts) ---
+
+/** A Studio tab acting as this channel (it switches the whole profile's YouTube to it). */
+export async function openChannelTab(channel: string) {
+  const tab = await openTab(STUDIO, false, true)
+  if (!tab.id) throw new Error("Chrome did not open a YouTube Studio tab.")
+  try {
+    return { tabId: tab.id, ...(await ensureChannel(tab.id, channel)) }
+  } catch (error) {
+    await chrome.tabs.remove(tab.id).catch(() => {})
+    throw error
+  }
+}
+
+async function goTo(tabId: number, url: string) {
+  await chrome.tabs.update(tabId, { url })
+  await sleep(500)
+  await waitForTabLoad(tabId, 30_000).catch(() => {})
+  await waitForStudio(tabId)
+}
+
+async function ask<T>(tabId: number, action: string, key: string): Promise<T> {
+  const reply = await chrome.tabs.sendMessage(tabId, { action })
+  if (!reply?.ok) throw new Error(reply?.error || "YouTube Studio didn't answer.")
+  return reply[key] as T
+}
+
+/** The channel's Shorts tab, every page of it. */
+export async function readShortsList(tabId: number, channelId: string): Promise<StudioShort[]> {
+  await goTo(tabId, `${STUDIO}channel/${channelId}/videos/short`)
+  return ask<StudioShort[]>(tabId, "giz-ytstudio-shorts", "shorts")
+}
+
+/** A video's details from its Studio page, as info.json fields. */
+export async function readVideoDetails(tabId: number, videoId: string): Promise<Record<string, unknown>> {
+  await goTo(tabId, `${STUDIO}video/${videoId}/edit`)
+  return ask<Record<string, unknown>>(tabId, "giz-ytstudio-details", "fields")
+}
+
+/** Opens a draft from the channel's Shorts list and fills its upload dialog. */
+export async function fillDraft(
+  tabId: number,
+  channelId: string,
+  draftId: string,
+  info: YoutubeUploadInfo,
+  finish: boolean
+): Promise<YoutubeFillResult> {
+  await goTo(tabId, `${STUDIO}channel/${channelId}/videos/short`)
+  await chrome.tabs.update(tabId, { active: true }).catch(() => {})
+  const port = chrome.tabs.connect(tabId, { name: "giz-youtube-upload" })
+  try {
+    return await new Promise<YoutubeFillResult>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("YouTube Studio took too long to fill the draft.")), 300_000)
+      port.onMessage.addListener((msg: any) => {
+        if (msg?.type !== "result" || !msg.result) return
+        clearTimeout(timer)
+        resolve(msg.result)
+      })
+      port.onDisconnect.addListener(() => {
+        clearTimeout(timer)
+        reject(new Error("Lost the YouTube Studio tab before the draft was filled."))
+      })
+      port.postMessage({ type: "fill-draft", info, draftId, finish })
+    })
+  } finally {
+    port.disconnect()
+  }
+}
+
 function takeSession(sessionId: unknown): Session {
   const session = sessions.get(String(sessionId || ""))
   if (!session) throw new Error("That YouTube Studio tab is no longer being filled. Start that folder again.")
@@ -211,7 +282,7 @@ export const youtubeStudioCommands: Record<string, (params: any) => Promise<unkn
     return { ok: true }
   },
 
-  "youtube.uploadCommit": async ({ sessionId, videoId, thumbnailId, abThumbnailIds }) => {
+  "youtube.uploadCommit": async ({ sessionId, videoId, thumbnailId, abThumbnailIds, finish: clickSchedule }) => {
     const session = takeSession(sessionId)
     // Chrome slows timers in background tabs to one a second, and the user
     // reviews this tab next anyway.
@@ -241,7 +312,8 @@ export const youtubeStudioCommands: Record<string, (params: any) => Promise<unkn
         info: session.info,
         videoId: String(videoId || "video"),
         thumbnailId: thumbnailId ? String(thumbnailId) : undefined,
-        abThumbnailIds: Array.isArray(abThumbnailIds) ? abThumbnailIds.map(String) : undefined
+        abThumbnailIds: Array.isArray(abThumbnailIds) ? abThumbnailIds.map(String) : undefined,
+        finish: clickSchedule === true
       })
     })
     sessions.delete(sessionId)

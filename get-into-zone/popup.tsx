@@ -10,12 +10,14 @@ import { PinterestTab } from "./componenets/PinterestTab"
 import { YouTubeTab } from "./componenets/YouTubeTab"
 import { InstagramTab } from "./componenets/InstagramTab"
 import { DistroKidTab } from "./componenets/DistroKidTab"
+import { StudioTab } from "./componenets/StudioTab"
 import { SignInScreen, useAuthState } from "./componenets/SignInScreen"
 
 type MainTab =
   | "midjourney"
   | "pinterest"
   | "youtube"
+  | "studio"
   | "instagram"
   | "suno"
   | "distrokid"
@@ -43,6 +45,12 @@ const TABS: {
     label: "YouTube",
     activeColor: "#FF0000",
     component: YouTubeTab
+  },
+  {
+    id: "studio",
+    label: "YouTube Studio",
+    activeColor: "#CC0000",
+    component: StudioTab
   },
   {
     id: "instagram",
