@@ -98,6 +98,50 @@ describe("fillYoutubeUploads", () => {
     assert.match(result.results[0].warnings.join(" "), /2 thumbnails/)
   })
 
+  test("streams the A/B test's thumbnails in the variants' order", async () => {
+    const folder = pack("wakeup", {
+      "info.json": {
+        channel: "@get-into-zone",
+        title: "WAKE UP",
+        abTest: [
+          { thumbnail: "thumbnails/D1.jpg", title: "WAKE UP" },
+          { thumbnail: "thumbnails/E1.jpg", title: "WAKE UP | Mirror" },
+          { thumbnail: "thumbnails/G2.jpg", title: "WAKE UP | Dream" }
+        ]
+      },
+      "WAKE UP.mp4": "v",
+      "thumbnails/D1.jpg": "d",
+      "thumbnails/E1.jpg": "e",
+      "thumbnails/G2.jpg": "g"
+    })
+    const bridge = fakeBridge()
+    const result = await fillYoutubeUploads(bridge, [folder])
+
+    assert.equal(result.results[0].ok, true)
+    assert.deepEqual(result.results[0].warnings, [])
+    assert.deepEqual(
+      bridge.called("youtube.uploadChunk").map((call) => `${call.params.fileId}:${call.params.name}`),
+      ["video:WAKE UP.mp4", "ab-0:D1.jpg", "ab-1:E1.jpg", "ab-2:G2.jpg"]
+    )
+    assert.deepEqual(bridge.called("youtube.uploadCommit")[0].params, {
+      sessionId: "s1",
+      videoId: "video",
+      thumbnailId: undefined,
+      abThumbnailIds: ["ab-0", "ab-1", "ab-2"]
+    })
+  })
+
+  test("an A/B test thumbnail that isn't in the pack fails the pack", async () => {
+    const folder = pack("missing", {
+      "info.json": { channel: "@x", title: "X", abTest: [{ thumbnail: "thumbnails/A.jpg" }, { thumbnail: "thumbnails/B.jpg" }] },
+      "x.mp4": "v",
+      "thumbnails/A.jpg": "a"
+    })
+    const result = await fillYoutubeUploads(fakeBridge(), [folder])
+    assert.equal(result.results[0].ok, false)
+    assert.match(result.results[0].message, /A\/B test thumbnail thumbnails\/B\.jpg isn't in/)
+  })
+
   test("a parent folder runs each child pack, and a pack without one clear video fails on its own", async () => {
     pack("a", { "info.json": { channel: "@x", title: "A" }, "a.mp4": "v" })
     pack("b", { "info.json": { channel: "@x", title: "B" }, "x.mp4": "v", "y.webm": "v" })

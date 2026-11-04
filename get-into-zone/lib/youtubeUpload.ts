@@ -43,9 +43,12 @@ export type YoutubeUploadInfo = {
   endScreen: { importFrom: string; playlist: string | null } | null
   /** Video elements → Cards: channel cards. */
   cards: YoutubeChannelCard[]
+  /** Details → A/B testing: 2 or 3 variants, each a thumbnail (a file in the pack), a title, or both. */
+  abTest: YoutubeAbVariant[] | null
 }
 
 export type YoutubeChannelCard = { channel: string; message: string; teaser: string }
+export type YoutubeAbVariant = { title: string | null; thumbnail: string | null }
 
 export type YoutubeChannel = {
   name: string
@@ -142,7 +145,7 @@ const KNOWN_KEYS = new Set(
     "automaticConcepts", "tags", "language", "license", "licence", "allowEmbedding",
     "notifySubscribers", "shortsRemixing", "category", "comments", "commentModeration",
     "whoCanComment", "commentSort", "showLikes", "visibility", "scheduleAt", "premiere",
-    "monetization", "monetisation", "adSuitability", "endScreen", "cards",
+    "monetization", "monetisation", "adSuitability", "endScreen", "cards", "abTest",
     "$schema", "notes"
   ].map(fold)
 )
@@ -257,6 +260,35 @@ function parseCards(raw: unknown, errors: string[]): YoutubeChannelCard[] {
     if (message) cards.push({ channel, message, teaser: teaser || message })
   }
   return cards
+}
+
+/** "abTest": [{ "thumbnail": "thumbnails/A.jpg", "title": "…" }, …]: what Studio's A/B testing compares. */
+function parseAbTest(raw: unknown, errors: string[]): YoutubeAbVariant[] | null {
+  if (raw === undefined) return null
+  if (!Array.isArray(raw)) {
+    errors.push('abTest must be a list of 2 or 3 variants, each { "thumbnail": "<file>", "title": "<title>" } (either or both).')
+    return null
+  }
+  const variants = raw.map((item) => {
+    const obj = asRecord(item)
+    return {
+      title: (obj && asText(pick(obj, ["title"]))) || null,
+      thumbnail: (obj && asText(pick(obj, ["thumbnail"]))) || null
+    }
+  })
+  if (variants.length < 2 || variants.length > 3) errors.push(`abTest has ${variants.length} variants; YouTube tests 2 or 3.`)
+  const titles = variants.filter((variant) => variant.title).length
+  const thumbnails = variants.filter((variant) => variant.thumbnail).length
+  if (!titles && !thumbnails) errors.push("abTest's variants need a thumbnail, a title or both.")
+  // Studio tests titles, thumbnails, or both, across every variant.
+  if (titles && titles !== variants.length) errors.push("abTest: give every variant a title, or none.")
+  if (thumbnails && thumbnails !== variants.length) errors.push("abTest: give every variant a thumbnail, or none.")
+  for (const [index, variant] of variants.entries()) {
+    if (!variant.title) continue
+    if (variant.title.length > TITLE_MAX) errors.push(`abTest[${index}]'s title is ${variant.title.length} characters; YouTube allows ${TITLE_MAX}.`)
+    if (/[<>]/.test(variant.title)) errors.push(`abTest[${index}]'s title can't contain < or >.`)
+  }
+  return variants
 }
 
 export function parseYoutubeUploadInfo(raw: unknown): {
@@ -410,7 +442,8 @@ export function parseYoutubeUploadInfo(raw: unknown): {
       manual: "skip"
     }, errors),
     endScreen: parseEndScreen(pick(obj, ["endScreen"]), errors),
-    cards: parseCards(pick(obj, ["cards"]), errors)
+    cards: parseCards(pick(obj, ["cards"]), errors),
+    abTest: parseAbTest(pick(obj, ["abTest"]), errors)
   }
   return { info, errors, warnings }
 }

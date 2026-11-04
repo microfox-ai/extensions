@@ -1070,6 +1070,7 @@ localTool(
     "monetization (default on) and answers Ad suitability (adSuitability: none = None of the above, the default; skip leaves it). " +
     "Video elements: endScreen (the title of a video to import the end screen from, or { importFrom, playlist } to also point its " +
     "playlist element at another playlist) and cards (channel cards: [{ channel, message, teaser }], 30 characters each). " +
+    "abTest sets up Studio's A/B testing: 2 or 3 variants [{ thumbnail, title }], thumbnails on all, titles on all, or both. " +
     "Other fields left out keep YouTube's defaults. " +
     "Picking the video starts the upload, so each folder leaves a private draft on its channel even if the user never saves it. " +
     "Custom thumbnails only work on phone-verified channels. Folders run one after another; a parent folder works when each " +

@@ -54,6 +54,30 @@ describe("info.json for the steps after Details", () => {
     assert.equal(parseYoutubeUploadInfo({ ...base, cards: { channel: "Get into Zone", message: "Hi", teaser: "Yo" } }).info.cards.length, 1)
   })
 
+  test("reads an A/B test of thumbnails with their titles", () => {
+    const { info, errors } = parseYoutubeUploadInfo({
+      ...base,
+      abTest: [
+        { thumbnail: "thumbnails/D1.jpg", title: "WAKE UP - by Get into Zone ( Official Lyric Video )" },
+        { thumbnail: "thumbnails/E1.jpg", title: "WAKE UP | Stop Running From the Mirror" },
+        { thumbnail: "thumbnails/G2.jpg", title: "WAKE UP | We All Live Inside a Dream" }
+      ]
+    })
+    assert.deepEqual(errors, [])
+    assert.equal(info.abTest.length, 3)
+    assert.deepEqual(info.abTest[1], { thumbnail: "thumbnails/E1.jpg", title: "WAKE UP | Stop Running From the Mirror" })
+    assert.deepEqual(parseYoutubeUploadInfo({ ...base, abTest: [{ title: "A" }, { title: "B" }] }).errors, [])
+  })
+
+  test("refuses A/B tests Studio can't run", () => {
+    const errorsOf = (abTest) => parseYoutubeUploadInfo({ ...base, abTest }).errors
+    assert.match(errorsOf([{ thumbnail: "a.jpg" }]).join(" "), /YouTube tests 2 or 3/)
+    assert.match(errorsOf([1, 2, 3, 4].map((n) => ({ title: `T${n}` }))).join(" "), /YouTube tests 2 or 3/)
+    assert.match(errorsOf([{ thumbnail: "a.jpg", title: "A" }, { thumbnail: "b.jpg" }]).join(" "), /every variant a title, or none/)
+    assert.match(errorsOf([{}, {}]).join(" "), /need a thumbnail, a title or both/)
+    assert.match(errorsOf({ thumbnail: "a.jpg" }).join(" "), /must be a list/)
+  })
+
   test("refuses cards it can't add", () => {
     const { errors } = parseYoutubeUploadInfo({
       ...base,

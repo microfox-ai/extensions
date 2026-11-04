@@ -255,7 +255,11 @@ Put it in the upload folder beside the video. Only `channel` and the title are r
   "monetization": true,
   "adSuitability": "none",
   "endScreen": { "importFrom": "Full Metal Heart - Edward Elric 「 AMZ 」( Lyric Video )", "playlist": "OST Tracks" },
-  "cards": [{ "channel": "@get-into-zone", "message": "Music on Get into Zone", "teaser": "Music on Get into Zone" }]
+  "cards": [{ "channel": "@get-into-zone", "message": "Music on Get into Zone", "teaser": "Music on Get into Zone" }],
+  "abTest": [
+    { "thumbnail": "thumbnails/goten-A.jpg", "title": "Goten Theme - Gregorian Chant" },
+    { "thumbnail": "thumbnails/goten-B.jpg", "title": "Goten Theme, as a Gregorian Chant" }
+  ]
 }
 ```
 
@@ -265,7 +269,7 @@ Put it in the upload folder beside the video. Only `channel` and the title are r
 | `video` | The video file. Default: the only video in the folder |
 | `title` / `titleFile` | The title (100 characters at most). Default: the first line of `title.txt` |
 | `description` / `descriptionFile` | The description (5000 bytes at most). Default: `description.txt` when it exists |
-| `thumbnail` | A JPG or PNG. Default: the only image in `thumbnails/`, or `thumbnail.jpg`/`.png`. Needs a phone-verified channel |
+| `thumbnail` | A JPG or PNG. Default: the only image in `thumbnails/` (unless `abTest` has thumbnails), or `thumbnail.jpg`/`.png`. Needs a phone-verified channel |
 | `playlists` | Playlist names to tick; they must exist on the channel |
 | `madeForKids` | Audience. Default `false` (No, it's not Made for Kids) |
 | `ageRestricted`, `paidPromotion` | `true` or `false` |
@@ -284,5 +288,6 @@ Put it in the upload folder beside the video. Only `channel` and the title are r
 | `adSuitability` | The Ad suitability step that follows: `none` ticks None of the above and clicks Submit rating; `skip` leaves it to you. Default `none` |
 | `endScreen` | Video elements → End screen → Import from video: that video's title, or `{ "importFrom": "<title>", "playlist": "<playlist>" }` to also point the imported playlist element at another playlist |
 | `cards` | Video elements → Cards: channel cards, each `{ "channel": "@handle or name", "message": "…", "teaser": "…" }` (30 characters each; the teaser defaults to the message) |
+| `abTest` | Details → A/B testing: 2 or 3 variants, each `{ "thumbnail": "<file>", "title": "…" }`. Thumbnails on every variant, titles on every variant, or both (Studio's Thumbnail only, Title only, or Title and thumbnail); it clicks Set test |
 
 Subtitles and the Checks step are left as they are.

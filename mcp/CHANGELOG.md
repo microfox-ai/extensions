@@ -7,6 +7,12 @@ last release; see `.github/workflows/release-browse-hack-mcp.yml`). They show
 on Browse Hack's page on MediaMake and in `get_status` / `update_browse_hack`
 after an update.
 
+## 0.12.0
+
+- `youtube_fill_uploads` sets up YouTube's A/B testing from info.json's `abTest`, with Browse Hack 0.14.0: 2 or 3 variants, each a thumbnail, a title or both (Thumbnail only, Title only, or Title and thumbnail). It uploads every thumbnail, types the titles and clicks Set test. A video that already has a test keeps it.
+- Thumbnails go up: Studio previewed the thumbnail Browse Hack gave it, then its upload failed ("Studio refused the thumbnail"). Browse Hack now hands the file over from Studio's own page, where it goes up, and says Studio's own reason when it still refuses one.
+- Ad suitability gets submitted: Browse Hack waits for Studio's rating ("Safe for ads") before pressing Submit rating, checks that Studio took it, and tries once more. Before, it pressed too soon and Studio stayed on Ad suitability.
+
 ## 0.11.0
 
 - `youtube_fill_uploads` gets past Details on channels in the Partner Programme, with Browse Hack 0.13.0: it turns monetisation On (or Off with `"monetization": false`), answers Ad suitability with None of the above and clicks Submit rating (`"adSuitability": "skip"` leaves it to you), then goes on through Video elements and Checks to Visibility and sets the schedule. Before, it stopped on Details with "Your video needs a monetisation setting".
