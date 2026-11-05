@@ -22,8 +22,21 @@ type PageState = {
   ok?: boolean
   ready?: boolean
   channelId?: string
+  /** Studio's ?c=: set on a channel shared with you (you're its manager, editor…). */
+  context?: string
   channelName?: string
   uploadReady?: boolean
+}
+
+/**
+ * A Studio page of the channel. A channel shared with you through its permissions only opens with
+ * Studio's ?c=<its id> (without it Studio shows "Oops"), so that is kept when Studio set it.
+ */
+function studioUrl(path: string, context = "", params: Record<string, string> = {}) {
+  const url = new URL(path, STUDIO)
+  for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value)
+  if (context) url.searchParams.set("c", context)
+  return url.toString()
 }
 
 type Session = { tabId: number; port: chrome.runtime.Port; info: YoutubeUploadInfo }
@@ -111,7 +124,7 @@ async function ensureChannel(tabId: number, wanted: string) {
   let state = await waitForStudio(tabId)
   const key = await channelWanted(wanted, state)
   if (key.kind === "id" && state.channelId === key.value) {
-    return { channelId: key.value, name: state.channelName || "", switched: false }
+    return { channelId: key.value, context: state.context || "", name: state.channelName || "", switched: false }
   }
   const target = key.kind === "id" ? await handleForChannelId(key.value) : wanted
   // The account menu only opens in a tab Chrome paints. Studio's reload on the new channel runs behind the user's tab.
@@ -139,6 +152,7 @@ async function ensureChannel(tabId: number, wanted: string) {
   }
   return {
     channelId: state.channelId || "",
+    context: state.context || "",
     name: channel.name,
     handle: channel.handle,
     switched: !reply.already
@@ -185,14 +199,14 @@ async function ask<T>(tabId: number, action: string, key: string): Promise<T> {
 }
 
 /** The channel's Shorts tab, every page of it. */
-export async function readShortsList(tabId: number, channelId: string): Promise<StudioShort[]> {
-  await goTo(tabId, `${STUDIO}channel/${channelId}/videos/short`)
+export async function readShortsList(tabId: number, channelId: string, context = ""): Promise<StudioShort[]> {
+  await goTo(tabId, studioUrl(`channel/${channelId}/videos/short`, context))
   return ask<StudioShort[]>(tabId, "giz-ytstudio-shorts", "shorts")
 }
 
 /** A video's details from its Studio page, as info.json fields. */
-export async function readVideoDetails(tabId: number, videoId: string): Promise<Record<string, unknown>> {
-  await goTo(tabId, `${STUDIO}video/${videoId}/edit`)
+export async function readVideoDetails(tabId: number, videoId: string, context = ""): Promise<Record<string, unknown>> {
+  await goTo(tabId, studioUrl(`video/${videoId}/edit`, context))
   return ask<Record<string, unknown>>(tabId, "giz-ytstudio-details", "fields")
 }
 
@@ -202,9 +216,10 @@ export async function fillDraft(
   channelId: string,
   draftId: string,
   info: YoutubeUploadInfo,
-  finish: boolean
+  finish: boolean,
+  context = ""
 ): Promise<YoutubeFillResult> {
-  await goTo(tabId, `${STUDIO}channel/${channelId}/videos/short`)
+  await goTo(tabId, studioUrl(`channel/${channelId}/videos/short`, context))
   // Studio's form only works in a tab Chrome paints: the tab is in front while it fills.
   const port = chrome.tabs.connect(tabId, { name: "giz-youtube-upload" })
   try {
@@ -262,7 +277,7 @@ export const youtubeStudioCommands: Record<string, (params: any) => Promise<unkn
     tomorrow.setDate(tomorrow.getDate() + 1)
     const tab = await openChannelTab(wanted)
     try {
-      const shorts = await readShortsList(tab.tabId, tab.channelId)
+      const shorts = await readShortsList(tab.tabId, tab.channelId, tab.context)
       const taken = [...new Set(shorts.filter((short) => !short.draft && short.date).map((short) => short.date as string))].sort()
       return {
         channel: { name: tab.name, handle: tab.handle },
@@ -290,7 +305,7 @@ export const youtubeStudioCommands: Record<string, (params: any) => Promise<unkn
     const tabId = tab.id
     try {
       const channel = await ensureChannel(tabId, parsed.info.channel)
-      await chrome.tabs.update(tabId, { url: `${STUDIO}channel/${channel.channelId}/videos/upload?d=ud` })
+      await chrome.tabs.update(tabId, { url: studioUrl(`channel/${channel.channelId}/videos/upload`, channel.context, { d: "ud" }) })
       await sleep(500)
       await waitForTabLoad(tabId, 30_000).catch(() => {})
       // The upload dialog only shows once the tab is painted; youtube.uploadCommit brings it forward and waits for it.

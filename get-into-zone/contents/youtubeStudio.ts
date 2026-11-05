@@ -8,6 +8,7 @@ import {
   type YoutubeFillResult,
   type YoutubeUploadInfo
 } from "../lib/youtubeUpload"
+import { timeLike, timeMinutes } from "../lib/youtubeSchedule"
 import { studioDay, type StudioShort } from "../lib/youtubeShorts"
 
 // YouTube Studio: lists the channels in the account menu, switches between
@@ -180,12 +181,30 @@ function base64ToBytes(value: string): Uint8Array {
   return bytes
 }
 
+/**
+ * The header's account button, which opens the menu with Switch account. Studio shows one of two:
+ * on a channel you own, ytd-topbar-menu-button-renderer with button#avatar-btn; on one you reach
+ * through its permissions (any role: manager, editor, viewer), ytcp-topbar-menu-button-renderer
+ * labelled "<channel> · You're a manager" (Studio's showNewAccountSwitcher, set by isDelegatedAccess).
+ */
+function accountButton(): HTMLElement | null {
+  return (
+    document.querySelector<HTMLElement>("#avatar-btn") ||
+    document.querySelector<HTMLElement>("#account-button") ||
+    document.querySelector<HTMLElement>("ytcp-header ytcp-topbar-menu-button-renderer, ytcp-bare-header ytcp-topbar-menu-button-renderer") ||
+    document.querySelector<HTMLElement>("ytcp-header ytd-topbar-menu-button-renderer, ytcp-bare-header ytd-topbar-menu-button-renderer")
+  )
+}
+
 function pageState() {
   const channelId = location.pathname.match(/\/channel\/(UC[\w-]{22})/)?.[1] || ""
   const channelName = text(document.querySelector("#entity-name"))
   return {
-    ready: !!document.querySelector("#avatar-btn") && !!channelName,
+    // Loaded once it names its channel; the account button is only needed to switch channels.
+    ready: !!channelName,
     channelId,
+    // A channel shared with you through its permissions opens with ?c=<its id>; without it Studio says Oops.
+    context: new URLSearchParams(location.search).get("c") || "",
     channelName,
     uploadReady: !!filePicker() || !!dialog()?.querySelector("#title-textarea #textbox")
   }
@@ -217,17 +236,22 @@ function readChannel(item: HTMLElement): YoutubeChannel {
 
 const accountMenuOpen = () => accountItems().length > 0 || !!firstShown("ytd-compact-link-renderer")
 
-/** The avatar button toggles the menu; wait out its closing animation. */
+/** The account button toggles the menu; wait out its closing animation. */
 async function closeAccountMenu() {
   if (!accountMenuOpen()) return
-  document.querySelector<HTMLElement>("#avatar-btn")?.click()
+  accountButton()?.click()
   await waitFor(() => !accountMenuOpen(), 3000)
 }
 
 async function openAccountList(): Promise<HTMLElement[]> {
   dismissWelcome()
-  const avatar = document.querySelector<HTMLElement>("#avatar-btn")
-  if (!avatar) throw new Error("YouTube Studio's account button isn't on this page. Is the profile signed in to YouTube?")
+  const avatar = await waitFor(accountButton, 5000)
+  if (!avatar) {
+    throw new Error(
+      "Couldn't find YouTube Studio's account button (top right, it opens Switch account), so the channel can't be switched. " +
+        "Switch to the channel in Studio by hand and try again."
+    )
+  }
   // Start from a closed menu so the click below opens it.
   await closeAccountMenu()
   avatar.click()
@@ -960,52 +984,114 @@ function formatLike(sample: string, date: Date): string {
   return /,/.test(sample) ? formatted : formatted.replace(/,/g, "")
 }
 
-async function setScheduleDate(date: string): Promise<boolean> {
-  const trigger = dialog()?.querySelector<HTMLElement>("#datepicker-trigger")
-  if (!trigger) return false
-  const [y, m, d] = date.split("-").map(Number)
-  const day = new Date(y, m - 1, d)
-  trigger.click()
-  const picker = await waitFor(() => firstShown<HTMLElement>("ytcp-date-picker"), 3000)
-  const input = picker && firstShown<HTMLInputElement>("input", picker)
-  const form = picker?.querySelector("form")
-  if (!picker || !input || !form) return false
-  // The picker writes the current date into its box as it opens; type after that.
-  await sleep(600)
-  const value = formatLike(input.value, day)
-  const matches = () => text(trigger).replace(/,/g, "") === value.replace(/,/g, "")
-  for (let attempt = 0; attempt < 2 && !matches(); attempt++) {
-    input.value = value
-    input.dispatchEvent(new Event("input", { bubbles: true }))
-    // Typing a date and pressing Enter submits this form.
-    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }))
-    await sleep(500)
+/**
+ * The date picker's box, once its dialog is open. The ytcp-date-picker element itself stays on the page
+ * (an inline element in <body>) whether it's open or not, so it always looks shown; its dialog's box
+ * is shown only while it's open.
+ */
+function openDatePickerBox(): HTMLInputElement | null {
+  for (const host of Array.from(document.querySelectorAll("ytcp-date-picker"))) {
+    const box = Array.from(host.querySelectorAll<HTMLInputElement>("input")).find(shown)
+    if (box) return box
   }
-  // The trigger toggles the picker; Escape would close the whole upload dialog.
-  if (shown(picker)) {
-    trigger.click()
-    await waitFor(() => !shown(picker), 2000)
-  }
-  return matches()
+  return null
 }
 
-async function setScheduleTime(time: string): Promise<boolean> {
-  const input = dialog()?.querySelector<HTMLInputElement>("#time-of-day-container input")
-  if (!input) return false
-  const [h, min] = time.split(":").map(Number)
-  const twelveHour = /\s?[ap]\.?\s?m\.?$/i.test(input.value)
-  let value = `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`
-  if (twelveHour) {
-    const upper = /[AP]M/.test(input.value)
-    const suffix = h < 12 ? "am" : "pm"
-    value = `${h % 12 || 12}:${String(min).padStart(2, "0")} ${upper ? suffix.toUpperCase() : suffix}`
+/** Closes the date picker if it's still open (its trigger toggles it; Escape would close the whole upload dialog). */
+async function closeDatePicker(trigger: HTMLElement) {
+  if (!openDatePickerBox()) return
+  trigger.click()
+  await waitFor(() => !openDatePickerBox(), 2000)
+}
+
+/** Clicks the day in the picker's calendar, a month at a time forward until its month is there. */
+async function clickCalendarDay(day: Date): Promise<boolean> {
+  const lang = document.documentElement.lang || navigator.language
+  const label = norm(new Intl.DateTimeFormat(lang, { month: "short", year: "numeric" }).format(day)).replace(/[.,]/g, "")
+  for (let step = 0; step < 24; step++) {
+    const host = openDatePickerBox()?.closest("ytcp-date-picker")
+    if (!host) return false
+    const month = Array.from(host.querySelectorAll<HTMLElement>("div.calendar-month")).find(
+      (item) => norm(item.getAttribute("aria-label") || "").replace(/[.,]/g, "") === label
+    )
+    const cell = month
+      ? Array.from(month.querySelectorAll<HTMLElement>("span.calendar-day")).find(
+          (item) => text(item) === String(day.getDate()) && !item.classList.contains("disabled")
+        )
+      : undefined
+    if (cell) {
+      cell.click()
+      return true
+    }
+    if (month) return false
+    // Studio labels them "Previous month" and "Next month"; the second is next in any language.
+    const buttons = shownIn<HTMLElement>("ytcp-icon-button", host)
+    const next = buttons.find((button) => /next/i.test(button.getAttribute("aria-label") || "")) || buttons[1]
+    if (!next) return false
+    press(next)
+    await sleep(300)
   }
-  input.value = value
-  input.dispatchEvent(new Event("input", { bubbles: true }))
-  // Studio reads the time when the field loses focus; this works without window focus.
-  input.dispatchEvent(new FocusEvent("focusout", { bubbles: true, composed: true }))
+  return false
+}
+
+/** Sets the schedule's day; null when it's set, else what went wrong. */
+async function setScheduleDate(date: string): Promise<string | null> {
+  const trigger = await waitFor(() => {
+    const found = dialog()?.querySelector<HTMLElement>("#datepicker-trigger")
+    return shown(found) ? found : null
+  }, 5000)
+  if (!trigger) return "the Schedule section didn't open"
+  const [y, m, d] = date.split("-").map(Number)
+  const day = new Date(y, m - 1, d)
+  const isSet = () => {
+    const showing = text(trigger)
+    return studioDay(showing) === date || norm(showing).replace(/,/g, "") === norm(formatLike(showing, day)).replace(/,/g, "")
+  }
+  if (isSet()) return null
+
+  // Type it into the picker's box and submit, as pressing Enter does.
+  trigger.click()
+  const box = await waitFor(openDatePickerBox, 5000)
+  if (!box) return "the date picker didn't open"
+  // The picker writes the current date into its box as it opens; type after that.
   await sleep(400)
-  return input.value === value
+  box.value = formatLike(box.value, day)
+  box.dispatchEvent(new Event("input", { bubbles: true }))
+  box.closest("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }))
+  if (await waitFor(isSet, 2500)) {
+    await closeDatePicker(trigger)
+    return null
+  }
+
+  // Else pick the day in its calendar.
+  if (!openDatePickerBox()) {
+    trigger.click()
+    await waitFor(openDatePickerBox, 3000)
+  }
+  const clicked = await clickCalendarDay(day)
+  const set = clicked && !!(await waitFor(isSet, 2500))
+  await closeDatePicker(trigger)
+  return set ? null : `Studio shows ${text(trigger) || "no date"}`
+}
+
+/** Sets the schedule's time; null when it's set, else what went wrong. */
+async function setScheduleTime(time: string): Promise<string | null> {
+  const box = await waitFor(() => {
+    const found = dialog()?.querySelector<HTMLInputElement>("#time-of-day-container input")
+    return shown(found) ? found : null
+  }, 5000)
+  if (!box) return "there's no time box"
+  const [h, min] = time.split(":").map(Number)
+  const want = h * 60 + min
+  if (timeMinutes(box.value) === want) return null
+  // Studio rewrites the time in its own form ("6:30 pm" with a narrow no-break space), so write it that
+  // way and compare the minutes.
+  box.value = timeLike(box.value, h, min)
+  box.dispatchEvent(new Event("input", { bubbles: true }))
+  // Studio reads the time when the field loses focus; this works without window focus.
+  box.dispatchEvent(new FocusEvent("focusout", { bubbles: true, composed: true }))
+  if (await waitFor(() => timeMinutes(box.value) === want, 2000)) return null
+  return `Studio shows ${box.value || "no time"}`
 }
 
 async function setVisibility(info: YoutubeUploadInfo, filled: string[], warnings: string[]) {
@@ -1027,16 +1113,18 @@ async function setVisibility(info: YoutubeUploadInfo, filled: string[], warnings
       dialog()?.querySelector<HTMLElement>("#second-container-expand-button") ||
       dialog()?.querySelector<HTMLElement>("ytcp-video-visibility-select #second-container")
     )?.click()
-    await waitFor(() => shown(dialog()?.querySelector("#datepicker-trigger")) || null, 3000)
+    // Its date and time fields are only put on the page once Schedule is open.
+    await waitFor(() => shown(dialog()?.querySelector("#datepicker-trigger")) || null, 5000)
   }
   if (!info.scheduleAt) return
-  const dateOk = await setScheduleDate(info.scheduleAt.date)
-  const timeOk = await setScheduleTime(info.scheduleAt.time)
-  if (dateOk && timeOk) filled.push(`Schedule: ${info.scheduleAt.date} ${info.scheduleAt.time} (Studio's time zone)`)
+  const dateProblem = await setScheduleDate(info.scheduleAt.date)
+  const timeProblem = await setScheduleTime(info.scheduleAt.time)
+  if (!dateProblem && !timeProblem) filled.push(`Schedule: ${info.scheduleAt.date} ${info.scheduleAt.time} (Studio's time zone)`)
   else {
+    const problems = [dateProblem && `date: ${dateProblem}`, timeProblem && `time: ${timeProblem}`].filter(Boolean)
     warnings.push(
-      `Couldn't set the schedule to ${info.scheduleAt.date} ${info.scheduleAt.time}` +
-        `${dateOk ? "" : " (date)"}${timeOk ? "" : " (time)"}; set it under Visibility → Schedule.`
+      `Couldn't set the schedule to ${info.scheduleAt.date} ${info.scheduleAt.time} (${problems.join("; ")}); ` +
+        "set it under Visibility → Schedule."
     )
   }
   if (info.premiere !== null) {

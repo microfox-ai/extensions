@@ -97,11 +97,16 @@ async function run(job: StudioJob, state: StudioJobState) {
 }
 
 /** Days with no short yet on the channel, from its Shorts tab. */
-async function freeDays(job: StudioJob, count: number, log: (line: string) => Promise<void>, tab?: { tabId: number; channelId: string }) {
+async function freeDays(
+  job: StudioJob,
+  count: number,
+  log: (line: string) => Promise<void>,
+  tab?: { tabId: number; channelId: string; context: string }
+) {
   const own = tab ?? (await openChannelTab(job.channel))
   try {
     await log(`Reading ${job.channel}'s Shorts to find days with no short…`)
-    const shorts = await readShortsList(own.tabId, own.channelId)
+    const shorts = await readShortsList(own.tabId, own.channelId, own.context)
     const taken = shorts.filter((short) => !short.draft && short.date).map((short) => short.date as string)
     return { shorts, days: emptyDays(taken, count, job.from || tomorrow()) }
   } finally {
@@ -200,7 +205,7 @@ async function autofillDrafts(job: StudioJob, state: StudioJobState, log: (line:
     try {
       if (!details.has(pick.short.videoId)) {
         await log(`Reading "${pick.short.title}" to copy its details…`)
-        details.set(pick.short.videoId, await readVideoDetails(tabId, pick.short.videoId))
+        details.set(pick.short.videoId, await readVideoDetails(tabId, pick.short.videoId, tab.context))
       }
       const { info, dropped } = fillable({
         ...details.get(pick.short.videoId),
@@ -210,7 +215,7 @@ async function autofillDrafts(job: StudioJob, state: StudioJobState, log: (line:
         scheduleAt: `${days[index]}T${job.time || "18:30"}`
       })
       await log(`Filling ${draft.title} like "${pick.short.title}"${pick.similar ? "" : " (the latest short; no title like it)"}…`)
-      const result = await fillDraft(tabId, tab.channelId, draft.videoId, info, job.finish)
+      const result = await fillDraft(tabId, tab.channelId, draft.videoId, info, job.finish, tab.context)
       if (dropped.length) result.warnings.push(`Not copied (Studio showed them in a form Browse Hack doesn't read): ${dropped.join(", ")}.`)
       state.results.push({ ...result, label, tabId })
       // A draft left open for its Schedule click keeps this tab; the next one gets its own.
