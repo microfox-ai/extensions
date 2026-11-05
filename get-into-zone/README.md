@@ -39,6 +39,7 @@ This is a [Plasmo extension](https://docs.plasmo.com/) project bootstrapped with
 | `contents/youtubeStudio.ts` | Content script on YouTube Studio: switches channels, fills the upload dialog from info.json (Details, Monetisation, Ad suitability, Video elements, Visibility), reads the Shorts list and a video's details, opens drafts |
 | `contents/youtubeStudioPage.ts` | Runs in Studio's own page: sets thumbnail files (from the isolated world their upload fails) and reads the thumbnail editor's error |
 | `lib/youtubeUploadBridge.ts` | YouTube Studio for the MCP server and the popup's jobs: channel switching, one Studio tab per upload, drafts |
+| `lib/studioFront.ts` | Brings a Studio tab to the front only while Browse Hack uses Studio's page (account menu, reading lists, filling the form; Studio draws none of them in a background tab), then puts the user's tab back |
 | `componenets/StudioTab.tsx` | Popup tab: Upload from a pack (info.json), Bulk Upload Shorts (shorts-pack.json), Autofill Shorts (drafts copy their most similar short and go on the next day with no short) |
 | `lib/studioJobs.ts`, `lib/studioFiles.ts` | The popup's Studio jobs, run by the service worker from files the popup saved in IndexedDB (the popup closes once Studio comes to the front) |
 | `lib/youtubePackFiles.ts`, `lib/youtubeShorts.ts` | Reading a picked pack folder (info.json or shorts-pack.json), empty-day scheduling, and which short a draft copies |

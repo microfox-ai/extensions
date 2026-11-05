@@ -4,9 +4,11 @@
 // to the channel info.json names, opens the upload dialog and hands the files
 // to the content script. Nothing is saved or published.
 
+import { closeStudioTab, inFront } from "./studioFront"
 import { openTab, waitForTabLoad } from "./tabs"
 import { emptyDays, isoDay, type StudioShort } from "./youtubeShorts"
 import {
+  channelIdFromPage,
   channelKey,
   parseYoutubeUploadInfo,
   type YoutubeChannel,
@@ -76,28 +78,47 @@ type SwitchReply = {
   channels?: YoutubeChannel[]
 }
 
-/** Puts the tab in front of its window and the window in front. Studio draws its account menu (and the
- *  channel list behind "Switch account") only in a tab Chrome is painting: in a background tab the
- *  menu stays empty and the switch fails with "Couldn't find Switch account". */
-async function bringForward(tabId: number) {
-  const tab = await chrome.tabs.update(tabId, { active: true }).catch(() => null)
-  if (tab?.windowId !== undefined) await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {})
-  await sleep(300)
+const handleIds = new Map<string, string>()
+
+/** The UC… id of an @handle, from its public channel page ("" when YouTube doesn't say). */
+async function channelIdForHandle(handle: string): Promise<string> {
+  const known = handleIds.get(handle)
+  if (known) return known
+  try {
+    const response = await fetch(`https://www.youtube.com/${encodeURI(handle)}`, {
+      credentials: "omit",
+      signal: AbortSignal.timeout(10_000)
+    })
+    const id = response.ok ? channelIdFromPage(await response.text()) : ""
+    if (id) handleIds.set(handle, id)
+    return id
+  } catch {
+    return ""
+  }
+}
+
+/** The channel to switch to. A handle Studio is already on counts as its id, so no switch (or trip to the front) is needed. */
+async function channelWanted(wanted: string, state: PageState) {
+  const key = channelKey(wanted)
+  if (key.kind === "handle" && state.channelId && (await channelIdForHandle(key.value)) === state.channelId) {
+    return { kind: "id" as const, value: state.channelId }
+  }
+  return key
 }
 
 /** Makes the tab's Studio (and the whole profile's YouTube) act as this channel. */
 async function ensureChannel(tabId: number, wanted: string) {
   let state = await waitForStudio(tabId)
-  const key = channelKey(wanted)
+  const key = await channelWanted(wanted, state)
   if (key.kind === "id" && state.channelId === key.value) {
     return { channelId: key.value, name: state.channelName || "", switched: false }
   }
   const target = key.kind === "id" ? await handleForChannelId(key.value) : wanted
-  await bringForward(tabId)
-  const reply = (await chrome.tabs.sendMessage(tabId, {
-    action: "giz-ytstudio-switch",
-    channel: target
-  })) as SwitchReply | undefined
+  // The account menu only opens in a tab Chrome paints. Studio's reload on the new channel runs behind the user's tab.
+  const reply = await inFront(
+    tabId,
+    async () => (await chrome.tabs.sendMessage(tabId, { action: "giz-ytstudio-switch", channel: target })) as SwitchReply | undefined
+  )
   if (!reply?.ok || !reply.channel) {
     const list = (reply?.channels || []).map((channel) => `${channel.name} (${channel.handle})`).join(", ")
     throw new Error(`${reply?.error || "Couldn't switch the YouTube channel."}${list ? ` Channels: ${list}.` : ""}`)
@@ -131,7 +152,7 @@ async function withStudioTab<T>(run: (tabId: number) => Promise<T>): Promise<T> 
   try {
     return await run(tab.id)
   } finally {
-    await chrome.tabs.remove(tab.id).catch(() => {})
+    await closeStudioTab(tab.id)
   }
 }
 
@@ -144,7 +165,7 @@ export async function openChannelTab(channel: string) {
   try {
     return { tabId: tab.id, ...(await ensureChannel(tab.id, channel)) }
   } catch (error) {
-    await chrome.tabs.remove(tab.id).catch(() => {})
+    await closeStudioTab(tab.id)
     throw error
   }
 }
@@ -156,8 +177,9 @@ async function goTo(tabId: number, url: string) {
   await waitForStudio(tabId)
 }
 
+/** Reads Studio's page; its lists and dialogs only show in a tab Chrome paints, so the tab comes forward meanwhile. */
 async function ask<T>(tabId: number, action: string, key: string): Promise<T> {
-  const reply = await chrome.tabs.sendMessage(tabId, { action })
+  const reply = await inFront(tabId, () => chrome.tabs.sendMessage(tabId, { action }))
   if (!reply?.ok) throw new Error(reply?.error || "YouTube Studio didn't answer.")
   return reply[key] as T
 }
@@ -183,10 +205,10 @@ export async function fillDraft(
   finish: boolean
 ): Promise<YoutubeFillResult> {
   await goTo(tabId, `${STUDIO}channel/${channelId}/videos/short`)
-  await chrome.tabs.update(tabId, { active: true }).catch(() => {})
+  // Studio's form only works in a tab Chrome paints: the tab is in front while it fills.
   const port = chrome.tabs.connect(tabId, { name: "giz-youtube-upload" })
   try {
-    return await new Promise<YoutubeFillResult>((resolve, reject) => {
+    return await inFront(tabId, () => new Promise<YoutubeFillResult>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("YouTube Studio took too long to fill the draft.")), 300_000)
       port.onMessage.addListener((msg: any) => {
         if (msg?.type !== "result" || !msg.result) return
@@ -198,7 +220,7 @@ export async function fillDraft(
         reject(new Error("Lost the YouTube Studio tab before the draft was filled."))
       })
       port.postMessage({ type: "fill-draft", info, draftId, finish })
-    })
+    }))
   } finally {
     port.disconnect()
   }
@@ -214,8 +236,7 @@ export const youtubeStudioCommands: Record<string, (params: any) => Promise<unkn
   "youtube.channels": async () =>
     withStudioTab(async (tabId) => {
       await waitForStudio(tabId)
-      await bringForward(tabId)
-      const reply = await chrome.tabs.sendMessage(tabId, { action: "giz-ytstudio-channels" })
+      const reply = await inFront(tabId, () => chrome.tabs.sendMessage(tabId, { action: "giz-ytstudio-channels" }))
       if (!reply?.ok) throw new Error(reply?.error || "Couldn't read YouTube Studio's channel list.")
       return { channels: reply.channels as YoutubeChannel[] }
     }),
@@ -250,7 +271,7 @@ export const youtubeStudioCommands: Record<string, (params: any) => Promise<unkn
         drafts: shorts.filter((short) => short.draft).length
       }
     } finally {
-      await chrome.tabs.remove(tab.tabId).catch(() => {})
+      await closeStudioTab(tab.tabId)
     }
   },
 
@@ -272,9 +293,8 @@ export const youtubeStudioCommands: Record<string, (params: any) => Promise<unkn
       await chrome.tabs.update(tabId, { url: `${STUDIO}channel/${channel.channelId}/videos/upload?d=ud` })
       await sleep(500)
       await waitForTabLoad(tabId, 30_000).catch(() => {})
-      await waitForStudio(tabId, (state) => !!state.uploadReady, 30_000).catch(() => {
-        throw new Error("YouTube Studio's upload dialog didn't open.")
-      })
+      // The upload dialog only shows once the tab is painted; youtube.uploadCommit brings it forward and waits for it.
+      await waitForStudio(tabId)
       const port = chrome.tabs.connect(tabId, { name: "giz-youtube-upload" })
       const sessionId = crypto.randomUUID()
       sessions.set(sessionId, { tabId, port, info: parsed.info })
@@ -308,10 +328,9 @@ export const youtubeStudioCommands: Record<string, (params: any) => Promise<unkn
 
   "youtube.uploadCommit": async ({ sessionId, videoId, thumbnailId, abThumbnailIds, finish: clickSchedule }) => {
     const session = takeSession(sessionId)
-    // Chrome slows timers in background tabs to one a second, and the user
-    // reviews this tab next anyway.
-    await chrome.tabs.update(session.tabId, { active: true }).catch(() => {})
-    const result = await new Promise<any>((resolve, reject) => {
+    // Studio's upload dialog, its dropdowns and pickers only work in a tab Chrome paints (and timers in a
+    // background tab run once a second), so the tab is in front while it fills, then the user's tab comes back.
+    const result = await inFront(session.tabId, () => new Promise<any>((resolve, reject) => {
       let settled = false
       const timer = setTimeout(
         () => finish(() => reject(new Error("YouTube Studio took too long to fill the upload form."))),
@@ -339,7 +358,7 @@ export const youtubeStudioCommands: Record<string, (params: any) => Promise<unkn
         abThumbnailIds: Array.isArray(abThumbnailIds) ? abThumbnailIds.map(String) : undefined,
         finish: clickSchedule === true
       })
-    })
+    }))
     sessions.delete(sessionId)
     return { tabId: session.tabId, ...result }
   },
