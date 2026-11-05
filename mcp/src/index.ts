@@ -484,7 +484,10 @@ const songFields = {
   model: z
     .string()
     .optional()
-    .describe(`Model as Suno's menu names it: "v6", "v6-wild" or "v6-mini" (suno_status lists them). Default: the form's current one`),
+    .describe(
+      `Model as Suno's menu names it: "v6", "v6-wild" or "v6-mini" (suno_status lists them). Browse Hack picks it, reads the form ` +
+        `back and clicks Create only when the form shows it; the finished songs are checked against it too. Default: the form's current one`
+    ),
   vocalGender: z.enum(["male", "female"]).optional(),
   weirdness: z.number().min(0).max(100).optional().describe("0-100; the form's default is 50"),
   styleInfluence: z.number().min(0).max(100).optional().describe("0-100; how closely to follow the styles"),
@@ -660,7 +663,8 @@ const sunoJob = z.object({
 localTool(
   "suno_batch_start",
   "Runs many Suno songs or covers in the background with one call: one Create at a time in Browse Hack's Suno tab, a few " +
-    "in Suno at once, each recorded in MediaMake cloud (and downloaded with download: \"all\"). Every job spends credits: " +
+    "in Suno at once, each recorded in MediaMake cloud (and downloaded with download: \"all\"). Each job's model is read " +
+    "back from the form before Create and from the songs after; a job made on another model fails. Every job spends credits: " +
     "agree the list with the user first. Pauses when Suno shows a captcha (the user clears it in the tab) or credits fall " +
     "under minCredits. Starting it again on the same folder resumes it and adds new jobs.",
   {

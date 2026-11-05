@@ -7,6 +7,12 @@ last release; see `.github/workflows/release-browse-hack-mcp.yml`). They show
 on Browse Hack's page on MediaMake and in `get_status` / `update_browse_hack`
 after an update.
 
+## 0.13.1
+
+- Suno makes every song on the model you asked for. With Browse Hack 0.16.4, `suno_create`, `suno_cover` and `suno_batch_start` pick the model in Suno's Create form, wait for the form to hold it (suno.com puts its last model back a moment after the form loads, which is how a batch that switched between v6 and v6-wild on 5 Nov got the previous model on 9 Creates), read it back again after the other fields, and click Create only when the form shows it; otherwise the Create page is loaded afresh and filled once more, then the job fails with the model the form shows, spending no credits.
+- After the songs are made, their model is checked against the one asked for: `suno_create` and `suno_cover` answer with `modelMismatch` and a warning, and a batch job whose songs came out on another model fails (its error names the songs) instead of counting as done, in `run.log` and `suno_batch_status`. `retryFailed` makes such a job again.
+- Creates from this server go to Browse Hack one at a time, whoever asks (a batch at any concurrency, two batches, `suno_create` beside a batch): the next form fill starts only once the previous Create is confirmed, so two jobs never share the form.
+
 ## 0.13.0
 
 - New tool `youtube_bulk_upload_shorts`: the popup's Bulk Upload Shorts from Claude. Give it a folder with `shorts-pack.json` (MediaMake's pack-youtube writes one for a production's shorts) and it uploads each short in its own YouTube Studio tab on the next day that has no short on the channel, at the pack's time, with Browse Hack 0.16.0. It stops on Visibility for you to click Schedule, or clicks Schedule itself with `clickSchedule` when you ask. A mistake in the pack (a missing video, a short with no title) stops it before anything goes up.

@@ -345,6 +345,32 @@ describe("downloads", () => {
   })
 })
 
+describe("the model asked for", () => {
+  test("suno_create warns when the songs came out on another model, and when the form showed another one", async () => {
+    writeConfig()
+    const bridge = fakeBridge({
+      "suno.generate": () => ({ clipIds: [A, B], model: "v6" }),
+      "suno.clips": ({ ids }) => ({ songs: ids.map((id) => song(id, { model: "v6" })) })
+    })
+    const result = await createSongs(bridge, { styles: "rock", model: "v6-wild" })
+    assert.equal(result.modelMismatch.asked, "v6-wild")
+    assert.deepEqual(result.modelMismatch.songs.map((s) => s.model), ["v6", "v6"])
+    assert.ok(result.warnings.some((w) => /made on v6, not v6-wild/.test(w)), result.warnings.join("; "))
+    assert.ok(result.warnings.some((w) => /form showed model v6, not v6-wild/.test(w)), result.warnings.join("; "))
+  })
+
+  test("the right model raises no warning, however it is spelled", async () => {
+    writeConfig()
+    const bridge = fakeBridge({
+      "suno.generate": () => ({ clipIds: [A, B], model: "v6-wild" }),
+      "suno.clips": ({ ids }) => ({ songs: ids.map((id) => song(id, { model: "v6-wild" })) })
+    })
+    const result = await createSongs(bridge, { styles: "rock", model: "V6 Wild" })
+    assert.equal(result.modelMismatch, undefined)
+    assert.equal(result.warnings, undefined)
+  })
+})
+
 describe("batches", () => {
   const waitFor = async (check, ms = 3000) => {
     const start = Date.now()
@@ -401,6 +427,61 @@ describe("batches", () => {
     const low = await sunoBatchStatus(poor, { folder: folder3, waitMs: 2000 })
     assert.match(low.waitingFor, /50 credits left/)
     assert.equal(poor.called("suno.generate").length, 0)
+  })
+
+  test("a job whose songs came out on another model fails, with their ids, and is made again on retryFailed", async () => {
+    const folder = join(home, "batch-model")
+    let n = 0
+    const bridge = fakeBridge({
+      "suno.generate": () => ({ clipIds: [`00000000-0000-4000-8000-00000000000${n}`, `00000000-0000-4000-8000-00000000001${n++}`], model: "v6-wild" }),
+      // Suno made them on v6 (major_model_version) although the job asked for v6-wild.
+      "suno.clips": ({ ids }) => ({ songs: ids.map((id) => song(id, { model: "v6" })) })
+    })
+    await startSunoBatch(bridge, {
+      folder,
+      concurrency: 2,
+      jobs: [
+        { name: "wild", styles: "rock", model: "v6-wild" },
+        { name: "plain", styles: "rock", model: "V6" }
+      ]
+    })
+    const status = await sunoBatchStatus(bridge, { folder, waitMs: 3000 })
+    assert.equal(status.state, "done")
+    assert.equal(status.done, 1, "the v6 job is done")
+    assert.equal(status.failed, 1, "the v6-wild job failed")
+    assert.match(status.failedJobs[0].error, /made on v6, not v6-wild \(00000000-0000-4000-8000-000000000000, 00000000-0000-4000-8000-000000000010\)/)
+    assert.equal(bridge.called("suno.record").length, 2, "both jobs' songs are recorded")
+    const log = readFileSync(join(folder, "run.log"), "utf8")
+    assert.match(log, /error wild: Suno made on v6, not v6-wild/)
+    assert.match(log, /done plain .* model V6 confirmed/)
+
+    // retryFailed makes the job again instead of polling the wrong songs.
+    await startSunoBatch(bridge, { folder, retryFailed: true })
+    await sunoBatchStatus(bridge, { folder, waitMs: 3000 })
+    assert.equal(bridge.called("suno.generate").length, 3)
+    assert.equal(bridge.called("suno.generate")[2].params.job.model, "v6-wild")
+  })
+
+  test("creates go to the extension one at a time, even from two callers", async () => {
+    writeConfig()
+    let inside = 0
+    let overlapped = false
+    const bridge = fakeBridge({
+      "suno.generate": async ({ job }) => {
+        inside++
+        if (inside > 1) overlapped = true
+        await new Promise((r) => setTimeout(r, 30))
+        inside--
+        return { clipIds: [A], model: job.model }
+      },
+      "suno.clips": ({ ids }) => ({ songs: ids.map((id) => song(id, { model: "v6-wild" })) })
+    })
+    const results = await Promise.all([
+      createSongs(bridge, { styles: "rock", model: "v6-wild", wait: false }),
+      createSongs(bridge, { styles: "rock", model: "v6-wild", wait: false })
+    ])
+    assert.equal(overlapped, false)
+    assert.equal(results[0].formModel, "v6-wild")
   })
 
   test("bad jobs are refused up front", async () => {

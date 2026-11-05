@@ -12,7 +12,7 @@ import { askedName } from "./downloads"
 import { downloadFinished, inFolder, saveSourceSidecar, type SourceFields } from "./libraryFiles"
 import { authorizedFetch, mediamakeEndpoint } from "./mediamakeAuth"
 import { clipIdOf, generationRecord, songFileBase, SUNO, type SunoClip } from "./suno/clip"
-import type { SunoFormJob } from "./suno/form"
+import { sameModel, type FillResult, type SunoFormJob } from "./suno/form"
 import {
   findChannel,
   loadSunoPrefs,
@@ -212,9 +212,28 @@ export function generate(p: GenerateParams) {
       await goTo(tabId, createUrl(p), true)
     }
 
-    const fill = await send<{ warnings: string[]; form: any }>(tabId, { action: "giz-suno-fill", job: p.job ?? {} }, 120_000)
-    let outcome: any = await send(tabId, { action: "giz-suno-submit", waitMs: 45_000 }, 75_000)
+    const job = p.job ?? {}
+    const fillOnce = () => send<FillResult>(tabId, { action: "giz-suno-fill", job }, 120_000)
+    let fill = await fillOnce()
+    if (job.model && fill.modelOk === false) {
+      // The form kept another model (the page restores its last one while the
+      // form fills): load the Create page afresh and fill it again, once. An
+      // upload's tab keeps its audio, so it is only filled again.
+      if (!upload) await goTo(tabId, createUrl(p), true)
+      fill = await fillOnce()
+      if (fill.modelOk === false) {
+        throw new Error(
+          `Suno's form shows model ${fill.form?.model ?? "none"}, not ${job.model}, after two tries: Create wasn't clicked (tab ${tabId}).`
+        )
+      }
+    }
+    let outcome: any = await send(tabId, { action: "giz-suno-submit", waitMs: 45_000, expectModel: job.model }, 75_000)
     const creditsBefore = outcome.creditsBefore
+    // The model the form showed as Create was clicked: the caller checks the songs against it too.
+    const modelAtCreate: string | undefined = outcome.model ?? fill.form?.model
+    if (job.model && modelAtCreate && !sameModel(modelAtCreate, job.model)) {
+      throw new Error(`Suno's form showed model ${modelAtCreate}, not ${job.model}, as Create was clicked (tab ${tabId}).`)
+    }
     if (outcome.captcha) {
       await focus(tabId)
       outcome = await send(
@@ -237,7 +256,7 @@ export function generate(p: GenerateParams) {
       clipIds: outcome.clipIds as string[],
       batchId: outcome.batchId as string | undefined,
       warnings: fill.warnings,
-      model: fill.form?.model,
+      model: modelAtCreate,
       workspace: fill.form?.workspace,
       creditsBefore
     }
