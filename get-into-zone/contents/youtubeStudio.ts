@@ -180,12 +180,30 @@ function base64ToBytes(value: string): Uint8Array {
   return bytes
 }
 
+/**
+ * The header's account button, which opens the menu with Switch account. Studio shows one of two:
+ * on a channel you own, ytd-topbar-menu-button-renderer with button#avatar-btn; on one you reach
+ * through its permissions (any role: manager, editor, viewer), ytcp-topbar-menu-button-renderer
+ * labelled "<channel> · You're a manager" (Studio's showNewAccountSwitcher, set by isDelegatedAccess).
+ */
+function accountButton(): HTMLElement | null {
+  return (
+    document.querySelector<HTMLElement>("#avatar-btn") ||
+    document.querySelector<HTMLElement>("#account-button") ||
+    document.querySelector<HTMLElement>("ytcp-header ytcp-topbar-menu-button-renderer, ytcp-bare-header ytcp-topbar-menu-button-renderer") ||
+    document.querySelector<HTMLElement>("ytcp-header ytd-topbar-menu-button-renderer, ytcp-bare-header ytd-topbar-menu-button-renderer")
+  )
+}
+
 function pageState() {
   const channelId = location.pathname.match(/\/channel\/(UC[\w-]{22})/)?.[1] || ""
   const channelName = text(document.querySelector("#entity-name"))
   return {
-    ready: !!document.querySelector("#avatar-btn") && !!channelName,
+    // Loaded once it names its channel; the account button is only needed to switch channels.
+    ready: !!channelName,
     channelId,
+    // A channel shared with you through its permissions opens with ?c=<its id>; without it Studio says Oops.
+    context: new URLSearchParams(location.search).get("c") || "",
     channelName,
     uploadReady: !!filePicker() || !!dialog()?.querySelector("#title-textarea #textbox")
   }
@@ -217,17 +235,22 @@ function readChannel(item: HTMLElement): YoutubeChannel {
 
 const accountMenuOpen = () => accountItems().length > 0 || !!firstShown("ytd-compact-link-renderer")
 
-/** The avatar button toggles the menu; wait out its closing animation. */
+/** The account button toggles the menu; wait out its closing animation. */
 async function closeAccountMenu() {
   if (!accountMenuOpen()) return
-  document.querySelector<HTMLElement>("#avatar-btn")?.click()
+  accountButton()?.click()
   await waitFor(() => !accountMenuOpen(), 3000)
 }
 
 async function openAccountList(): Promise<HTMLElement[]> {
   dismissWelcome()
-  const avatar = document.querySelector<HTMLElement>("#avatar-btn")
-  if (!avatar) throw new Error("YouTube Studio's account button isn't on this page. Is the profile signed in to YouTube?")
+  const avatar = await waitFor(accountButton, 5000)
+  if (!avatar) {
+    throw new Error(
+      "Couldn't find YouTube Studio's account button (top right, it opens Switch account), so the channel can't be switched. " +
+        "Switch to the channel in Studio by hand and try again."
+    )
+  }
   // Start from a closed menu so the click below opens it.
   await closeAccountMenu()
   avatar.click()
