@@ -34,6 +34,7 @@ export interface SunoFormJob {
 export interface SunoFormState {
   ready: boolean
   advanced: boolean
+  /** The model button's text, as the menu names it (v6-wild). */
   model?: string
   credits?: number
   workspace?: string
@@ -274,6 +275,54 @@ function modelButton(panel: HTMLElement) {
   return within<HTMLButtonElement>(panel, "button").find((b) => /^v\d[\w.+-]*$/i.test(firstLine(b)))
 }
 
+/** Model names as the menu, the API and a request spell them, made comparable: "V6 Wild" = v6-wild. */
+export const sameModel = (a: string | undefined, b: string | undefined) =>
+  !!a && !!b && norm(a).replace(/[\s_]+/g, "-") === norm(b).replace(/[\s_]+/g, "-")
+
+/** The model the form shows now, read from its button. */
+export function readModel(panel = createPanel()) {
+  const button = panel && modelButton(panel)
+  return button ? firstLine(button) : undefined
+}
+
+/**
+ * The model once the form has settled on it: the page restores the model it
+ * last used a moment after the form is on the page, so a read taken too soon
+ * (or a pick made too soon) can be undone by that restore. Resolves with the
+ * text the button has kept for `holdMs`, or whatever it shows at `timeoutMs`.
+ */
+export async function settledModel(panel: HTMLElement, holdMs = 700, timeoutMs = 5000) {
+  const start = Date.now()
+  let last = readModel(panel)
+  let since = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    await sleep(100)
+    const now = readModel(panel)
+    if (now !== last) {
+      last = now
+      since = Date.now()
+    } else if (Date.now() - since >= holdMs) break
+  }
+  return last
+}
+
+/**
+ * Picks `model` in the model menu and reads the button back, up to `attempts`
+ * times: a pick counts only once the button shows the model and keeps it.
+ * Resolves with the model the form shows at the end.
+ */
+export async function setModel(panel: HTMLElement, model: string, attempts = 2) {
+  let shown = await settledModel(panel)
+  for (let attempt = 0; attempt < attempts && !sameModel(shown, model); attempt++) {
+    const button = modelButton(panel)
+    if (!button) return shown
+    if (!(await pickFromMenu(button, model))) return shown
+    await waitFor(() => sameModel(readModel(panel), model), 3000)
+    shown = await settledModel(panel)
+  }
+  return shown
+}
+
 /** The workspace button: beside the form's "Save to..." label; it opens the workspace picker. */
 function workspaceButton(panel: HTMLElement) {
   return within<HTMLButtonElement>(panel, 'button[aria-haspopup="dialog"]').find((b) =>
@@ -390,21 +439,30 @@ async function setExtendFrom(panel: HTMLElement, seconds: number) {
   return true
 }
 
+export interface FillResult {
+  warnings: string[]
+  form: SunoFormState
+  /** With job.model: whether the form shows that model now (never click Create when it doesn't). */
+  modelOk?: boolean
+}
+
 /**
  * Fills the Create form from a job. Leaves out what the job doesn't set, so a
  * cover keeps the lyrics and styles suno.com loaded from the source song.
- * Returns what couldn't be set.
+ * Returns what couldn't be set, and whether the model the job asked for is
+ * the one the form shows: picked from the menu, read back, and checked again
+ * at the end, after the other fields (the page may restore its last model
+ * while the form fills).
  */
-export async function fillForm(job: SunoFormJob) {
+export async function fillForm(job: SunoFormJob): Promise<FillResult> {
   const warnings: string[] = []
   const panel = (await waitFor(createPanel, 15_000)) as HTMLElement | null
   if (!panel) throw new Error("Suno's Create form isn't on the page.")
   await ensureAdvanced(panel)
 
   if (job.model) {
-    const button = modelButton(panel)
-    const ok = button && (norm(firstLine(button)) === norm(job.model) || (await pickFromMenu(button, job.model)))
-    if (!ok) warnings.push(`model ${job.model} isn't in the model menu`)
+    if (!modelButton(panel)) warnings.push("the model menu isn't on the form")
+    else if (!sameModel(await setModel(panel, job.model), job.model)) warnings.push(`model ${job.model} isn't in the model menu`)
   }
   if (job.condition && !(await setCondition(job.condition))) warnings.push(`couldn't switch the audio to ${job.condition}`)
   if (job.extendFrom !== undefined && !(await setExtendFrom(panel, job.extendFrom))) {
@@ -465,7 +523,24 @@ export async function fillForm(job: SunoFormJob) {
     if (!ok) warnings.push(`couldn't pick the workspace "${job.workspaceName}"`)
   }
   await sleep(200)
-  return { warnings, form: readForm() }
+  let modelOk: boolean | undefined
+  if (job.model) {
+    // Read back once everything else is set: a late restore or a re-render can undo the pick.
+    let shown = await settledModel(panel)
+    if (!sameModel(shown, job.model) && modelButton(panel)) shown = await setModel(panel, job.model, 1)
+    modelOk = sameModel(shown, job.model)
+    if (!modelOk) warnings.push(`the form shows model ${shown ?? "none"}, not ${job.model}`)
+  }
+  return { warnings, form: readForm(), modelOk }
+}
+
+/** Throws when the form's model isn't `model`: the last check before Create is clicked. */
+export function assertModel(model: string | undefined) {
+  if (!model) return
+  const shown = readModel()
+  if (!sameModel(shown, model)) {
+    throw new Error(`Suno's form shows model ${shown ?? "none"}, not ${model}: Create wasn't clicked.`)
+  }
 }
 
 /** Clicks Create. Throws with the reason when the button can't be pressed. */

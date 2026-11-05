@@ -9,6 +9,7 @@ import {
   type SunoWorkspace
 } from "../lib/suno/clip"
 import {
+  assertModel,
   captchaVisible,
   clickCreate,
   clickDownload,
@@ -186,12 +187,14 @@ async function awaitOutcome(since: number, waitMs: number, reportCaptcha = true)
   return { timeout: true, since }
 }
 
-async function submit(waitMs = 45_000) {
+/** Clicks Create, once the form shows `expectModel` (when given): a Create on another model spends credits for nothing. */
+async function submit(waitMs = 45_000, expectModel?: string) {
+  assertModel(expectModel)
   const before = readForm()
   const since = Date.now()
   clickCreate()
   const outcome = await awaitOutcome(since, waitMs)
-  return { ...outcome, creditsBefore: before.credits }
+  return { ...outcome, creditsBefore: before.credits, model: before.model }
 }
 
 // --- Messages from the background worker -------------------------------------
@@ -238,7 +241,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     case "giz-suno-fill":
       return reply(fillForm((msg.job ?? {}) as SunoFormJob))
     case "giz-suno-submit":
-      return reply(submit(Number(msg.waitMs) || 45_000))
+      return reply(submit(Number(msg.waitMs) || 45_000, typeof msg.expectModel === "string" ? msg.expectModel : undefined))
     case "giz-suno-await":
       return reply(awaitOutcome(Number(msg.since) || 0, Number(msg.waitMs) || 60_000, msg.reportCaptcha !== false))
     case "giz-suno-download":

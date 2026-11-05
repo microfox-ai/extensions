@@ -5,7 +5,11 @@
 // into the library inbox. State goes to <folder>/state.json and run.log, so
 // starting it again on the same folder resumes it. It pauses (without
 // counting an attempt) when Suno asks for a captcha in the tab or the credits
-// run low, and says so in waitingFor.
+// run low, and says so in waitingFor. `concurrency` is how many Creates may be
+// in Suno at once; the form is still filled and Create clicked for one job at
+// a time (the next fill starts once the previous Create is confirmed), as the
+// Create page is one shared form. A job whose songs come back on another model
+// than it asked for fails, with the songs' ids, rather than counting as done.
 
 import { spawn, type ChildProcess } from "node:child_process"
 import fs from "node:fs"
@@ -19,6 +23,8 @@ import {
   coverSong,
   createSongs,
   downloadSongs,
+  wrongModel,
+  wrongModelText,
   type CoverKind,
   type SongParams,
   type SunoSong
@@ -154,9 +160,13 @@ class SunoBatch {
     if (retryFailed) {
       for (const job of Object.values(this.state.jobs)) {
         if (job.status !== "failed") continue
-        job.status = job.clipIds?.length ? "submitted" : "todo"
+        // A job whose songs came out on the wrong model is made again; one still in Suno is polled again.
+        const wrongModel = /^Suno made on /.test(job.error ?? "")
+        job.status = job.clipIds?.length && !wrongModel ? "submitted" : "todo"
+        if (wrongModel) delete job.clipIds
         job.attempts = 0
         delete job.error
+        delete job.recorded
       }
     }
     const given = Object.fromEntries(Object.entries(options).filter(([, v]) => v !== undefined))
@@ -270,9 +280,18 @@ class SunoBatch {
     for (const job of jobs) {
       const mine = songs.filter((s) => job.clipIds!.includes(s.id))
       if (mine.length < job.clipIds!.length || !mine.every((s) => s.status === "complete" || s.status === "error")) continue
-      job.status = "done"
-      job.doneAt = now()
-      this.log("done", job.name, job.clipIds!.join(" "))
+      const wrong = wrongModel(mine, job.model)
+      if (wrong.length) {
+        // The songs exist and cost credits: record them, but the job isn't what was asked for.
+        job.status = "failed"
+        job.error = `Suno ${wrongModelText(wrong, job.model!)}`
+        job.doneAt = now()
+        this.noteError(`${job.name}: ${job.error}`)
+      } else {
+        job.status = "done"
+        job.doneAt = now()
+        this.log("done", job.name, job.clipIds!.join(" "), job.model ? `model ${job.model} confirmed` : "")
+      }
       const channel = job.channel ?? this.state.options.channel
       if (!job.recorded) {
         await this.bridge
@@ -280,7 +299,7 @@ class SunoBatch {
           .then(() => (job.recorded = true))
           .catch((error) => this.noteError(`record ${job.name}: ${message(error)}`))
       }
-      if (this.state.options.download === "all") {
+      if (this.state.options.download === "all" && job.status === "done") {
         const complete = mine.filter((s) => s.status === "complete").map((s) => s.id)
         try {
           const result = (await downloadSongs(this.bridge, { ids: complete, channel, set: job.set })) as { saved: { path: string }[] }
@@ -324,12 +343,13 @@ class SunoBatch {
         const made = (job.mode ?? "create") === "create"
           ? await createSongs(this.bridge, params)
           : await coverSong(this.bridge, { ...params, from: job.from!, kind: job.mode as CoverKind })
-        const ids = (made as { clipIds?: string[] }).clipIds ?? []
+        const { clipIds: ids = [], formModel, warnings = [] } = made as { clipIds?: string[]; formModel?: string; warnings?: string[] }
         Object.assign(job, { status: "submitted", clipIds: ids, submittedAt: now() })
         delete job.error
         this.waitingFor = undefined
         this.save()
-        this.log("submitted", job.name, ids.join(" "))
+        this.log("submitted", job.name, ids.join(" "), job.model ? `form model ${formModel ?? "unknown"}` : "")
+        for (const warning of warnings) if (/model/i.test(warning)) this.noteError(`${job.name}: ${warning}`)
         room--
       } catch (error) {
         const text = message(error)
@@ -382,7 +402,9 @@ export async function startSunoBatch(
   return {
     ...batch.summary(),
     note:
-      "Runs in the background in this Claude session's MCP server, one Create at a time in Browse Hack's Suno tab. " +
+      "Runs in the background in this Claude session's MCP server, one Create at a time in Browse Hack's Suno tab " +
+      "(the form is filled and read back for the next job only once the previous Create is confirmed; a job whose " +
+      "songs come out on another model than asked fails with their ids). " +
       "Check it with suno_batch_status (waitMs waits). If this session ends, start it again on the same folder to resume."
   }
 }

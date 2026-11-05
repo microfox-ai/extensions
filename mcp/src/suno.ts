@@ -83,6 +83,20 @@ export const songSet = (title: string) =>
 
 const isFinished = (song: Pick<SunoSong, "status">) => song.status === "complete" || song.status === "error"
 
+/** Model names as Suno's menu, its API and a request spell them, made comparable: "V6 Wild" = v6-wild. */
+const modelKey = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase().replace(/[\s_]+/g, "-")
+export const sameModel = (a: string | undefined, b: string | undefined) => !!a && !!b && modelKey(a) === modelKey(b)
+
+/** The finished songs that weren't made on `model`: Suno's Create went out on another one. */
+export function wrongModel(songs: SunoSong[], model: string | undefined) {
+  if (!model) return []
+  return songs.filter((s) => s.status === "complete" && s.model && !sameModel(s.model, model))
+}
+
+/** One line for a log or an error: which songs came out on which model instead. */
+export const wrongModelText = (songs: SunoSong[], model: string) =>
+  `made on ${[...new Set(songs.map((s) => s.model))].join(", ")}, not ${model} (${songs.map((s) => s.id).join(", ")})`
+
 // --- Requests -------------------------------------------------------------------------
 
 export interface SongParams {
@@ -359,22 +373,51 @@ export async function downloadSongs(bridge: Bridge, params: DownloadParams) {
 
 // --- Making songs ------------------------------------------------------------------------------
 
-async function finish(
-  bridge: Bridge,
-  made: { clipIds: string[]; warnings?: string[]; creditsBefore?: number },
-  params: SongParams,
-  ctx: Context,
-  extra: { kind: string; sourceItem?: string }
-) {
+export interface Made {
+  clipIds: string[]
+  warnings?: string[]
+  creditsBefore?: number
+  /** The model the Create form showed as Create was clicked. */
+  model?: string
+}
+
+// Suno's Create form is one shared page in Browse Hack's Suno tab: a fill
+// started while another Create is still being confirmed would race it for the
+// model, the lyrics and the workspace. Every Create from this server goes
+// through this chain, one at a time, whoever asks (suno_create, a batch, two
+// batches), on top of the extension's own queue.
+let createChain: Promise<unknown> = Promise.resolve()
+function oneCreateAtATime<T>(work: () => Promise<T>): Promise<T> {
+  const run = createChain.then(work, work)
+  createChain = run.catch(() => {})
+  return run
+}
+
+/** Hands a Create (or cover) to the extension and checks the model it reports back against the one asked for. */
+async function generate(bridge: Bridge, params: Record<string, unknown>, timeoutMs: number, model: string | undefined) {
+  return oneCreateAtATime(async () => {
+    const made = (await bridge.call("suno.generate", params, timeoutMs)) as Made
+    if (model && made.model && !sameModel(made.model, model)) {
+      // An older Browse Hack clicked Create regardless; the songs exist, so say so rather than lose their ids.
+      made.warnings = [...(made.warnings ?? []), `Browse Hack's form showed model ${made.model}, not ${model}, as Create was clicked`]
+    }
+    return made
+  })
+}
+
+async function finish(bridge: Bridge, made: Made, params: SongParams, ctx: Context, extra: { kind: string; sourceItem?: string }) {
   const warnings = [...ctx.warnings, ...(made.warnings ?? [])]
   if (params.wait === false) {
     return {
       clipIds: made.clipIds,
+      formModel: made.model,
       warnings: warnings.length ? warnings : undefined,
       note: "Suno is making them. Check with suno_get_songs; record and download them when they're done."
     }
   }
   const { songs, finished } = await waitForSongs(bridge, made.clipIds, params.timeoutMs ?? 360_000)
+  const wrong = wrongModel(songs, params.model)
+  if (wrong.length) warnings.push(`Suno ${wrongModelText(wrong, params.model!)}; the Create spent credits on the wrong model`)
   const recorded = (await bridge
     .call("suno.record", { clips: songs, channel: ctx.channel, kind: extra.kind, sourceItem: extra.sourceItem }, 60_000)
     .catch((error) => ({ recorded: 0, note: error instanceof Error ? error.message : String(error) }))) as {
@@ -394,6 +437,7 @@ async function finish(
     creditsBefore: made.creditsBefore,
     channel: ctx.channel,
     recorded: recorded.recorded,
+    ...(wrong.length ? { modelMismatch: { asked: params.model, songs: wrong.map((s) => ({ id: s.id, model: s.model })) } } : {}),
     ...(recorded.note ? { recordNote: recorded.note } : {}),
     ...(downloads ? { downloads } : {}),
     warnings: warnings.length ? warnings : undefined,
@@ -409,11 +453,12 @@ export async function createSongs(bridge: Bridge, params: SongParams) {
   const errors = checkSong(params, true)
   if (errors.length) throw new Error(errors.join("\n"))
   const ctx = await context(bridge, params)
-  const made = (await bridge.call(
-    "suno.generate",
+  const made = await generate(
+    bridge,
     { mode: "create", workspaceId: ctx.workspaceId, job: formJob(params, ctx.workspaceName), waitForUserMs: params.waitForUserMs },
-    (params.waitForUserMs ?? 300_000) + 5 * 60_000
-  )) as { clipIds: string[]; warnings?: string[]; creditsBefore?: number }
+    (params.waitForUserMs ?? 300_000) + 5 * 60_000,
+    params.model
+  )
   return finish(bridge, made, params, ctx, { kind: "create" })
 }
 
@@ -510,11 +555,12 @@ export async function coverSong(bridge: Bridge, params: CoverParams) {
   const source = await coverSource(params.from, params.rightsConfirmed === true, ctx.lib)
   const job = formJob(params, ctx.workspaceName)
   const uploadSessionId = source.file ? await uploadFile(bridge, source.file, ctx.workspaceId) : undefined
-  const made = (await bridge.call(
-    "suno.generate",
+  const made = await generate(
+    bridge,
     { mode: kind, songId: source.songId, uploadSessionId, workspaceId: ctx.workspaceId, job, waitForUserMs: params.waitForUserMs },
-    (params.waitForUserMs ?? 300_000) + 10 * 60_000
-  )) as { clipIds: string[]; warnings?: string[]; creditsBefore?: number }
+    (params.waitForUserMs ?? 300_000) + 10 * 60_000,
+    params.model
+  )
   return finish(bridge, made, params, ctx, { kind: source.file ? "upload" : kind, sourceItem: source.sourceItem })
 }
 

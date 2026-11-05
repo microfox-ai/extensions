@@ -69,7 +69,13 @@ Premier account. When Suno changes, fix `selectors.ts` (the page) or `clip.ts`
   them from the address once read. (`auto_generate` exists; never used.)
 - Tabs Songs / Speech / Sounds; modes Simple / Advanced (Advanced holds every
   field). Model button (text `v6-wild`) opens a menu: v6, v6-wild, v6-mini,
-  Create Custom Model.
+  Create Custom Model. The page keeps the model it last used and puts it back
+  on the form a moment after the form is on the page: on 2026-11-05 a batch
+  that switched models between Creates got the previous model on 9 Creates
+  (the pick, or a read taken too soon, was undone). `form.ts` now waits for
+  the button to hold still, picks, reads it back, checks again after the other
+  fields, and `contents/suno.ts` refuses to click Create unless the form shows
+  the model asked for; the MCP checks the songs' `major_model_version` after.
 - `+ Audio` (`aria-label` "Add audio - Browse, upload, or record audio") opens
   Browse / Upload / Record; an empty Audio card has its own Upload
   (`aria-label` "Upload audio file", which sets the audio up as a Cover). In
