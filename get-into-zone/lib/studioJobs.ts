@@ -7,6 +7,7 @@
 // - autofill: the drafts on a channel's Shorts tab, each filled from its most similar
 //   filled-in short (title included) and scheduled on the next day with no short.
 
+import { closeStudioTab } from "./studioFront"
 import { clearJobFiles, getJobFile } from "./studioFiles"
 import { fillDraft, openChannelTab, readShortsList, readVideoDetails, youtubeStudioCommands } from "./youtubeUploadBridge"
 import { emptyDays, isoDay, pickReference } from "./youtubeShorts"
@@ -109,7 +110,7 @@ async function freeDays(
     const taken = shorts.filter((short) => !short.draft && short.date).map((short) => short.date as string)
     return { shorts, days: emptyDays(taken, count, job.from || tomorrow()) }
   } finally {
-    if (!tab) await chrome.tabs.remove(own.tabId).catch(() => {})
+    if (!tab) await closeStudioTab(own.tabId)
   }
 }
 
@@ -188,7 +189,7 @@ async function autofillDrafts(job: StudioJob, state: StudioJobState, log: (line:
   const filled = shorts.filter((short) => !short.draft)
   if (!drafts.length) {
     await log(`${tab.name || job.channel} has no Shorts drafts.`)
-    await chrome.tabs.remove(tab.tabId).catch(() => {})
+    await closeStudioTab(tab.tabId)
     return
   }
   if (!filled.length) throw new Error(`${tab.name || job.channel} has no filled-in short to copy the details from.`)

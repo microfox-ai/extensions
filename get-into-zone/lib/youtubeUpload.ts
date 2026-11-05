@@ -175,6 +175,15 @@ export function channelMatches(channel: YoutubeChannel, wanted: string): boolean
   return false
 }
 
+/** The UC… id of the channel a youtube.com/@handle page is for: its canonical link, else its externalId. */
+export function channelIdFromPage(html: string): string {
+  return (
+    html.match(/<link rel="canonical" href="https:\/\/www\.youtube\.com\/channel\/(UC[\w-]{22})"/)?.[1] ||
+    html.match(/"externalId":"(UC[\w-]{22})"/)?.[1] ||
+    ""
+  )
+}
+
 /** YouTube counts a tag with a space as if it were quoted, plus a comma between tags. */
 export function tagsLength(tags: string[]): number {
   return tags.reduce((sum, tag) => sum + tag.length + (/\s/.test(tag) ? 2 : 0), 0) +

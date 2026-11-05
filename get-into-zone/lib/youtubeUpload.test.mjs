@@ -4,7 +4,19 @@
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
 
-import { parseYoutubeUploadInfo } from "./youtubeUpload.ts"
+import { channelIdFromPage, parseYoutubeUploadInfo } from "./youtubeUpload.ts"
+
+describe("an @handle's channel page", () => {
+  test("gives the channel id from its canonical link", () => {
+    const html = '<link rel="canonical" href="https://www.youtube.com/channel/UCjOdAjCW4YLnIl8pLUVlzkw"><script>{"externalId":"UCxxxxxxxxxxxxxxxxxxxxxx"}</script>'
+    assert.equal(channelIdFromPage(html), "UCjOdAjCW4YLnIl8pLUVlzkw")
+  })
+
+  test("falls back to externalId, and says nothing for a page that isn't a channel", () => {
+    assert.equal(channelIdFromPage('{"metadata":{"channelMetadataRenderer":{"externalId":"UCjOdAjCW4YLnIl8pLUVlzkw"}}}'), "UCjOdAjCW4YLnIl8pLUVlzkw")
+    assert.equal(channelIdFromPage("<html>404 Not Found</html>"), "")
+  })
+})
 
 const base = { channel: "@anime-music-zone", title: "The Honoured One", madeForKids: false }
 
