@@ -11,6 +11,7 @@ This is a [Plasmo extension](https://docs.plasmo.com/) project bootstrapped with
 | `content.ts` | Content script: Save / AI overlays on images, the Pinterest bulk-download collector |
 | `background.ts` | Service worker: API calls, Midjourney queue, Suno transcription upload |
 | `lib/midjourneyApi.ts` | Midjourney image jobs: Editor outcrop and repaint, Create-page generate, and vary, upscale, pan and zoom on a result |
+| `lib/midjourneyExplore.ts` | Midjourney's Explore for the MCP server: feeds, search and the Styles tab, read in a midjourney.com tab |
 | `lib/midjourneyEdit.ts` | Repaint sessions: opens the brush tab and submits once the user erases a region |
 | `tabs/midjourney-edit.tsx` | Brush page where the user marks the parts of an image Midjourney should repaint |
 | `lib/mediamake.ts` | Mediamake sparkboard-index upload, shared by the Save overlay and bulk download |

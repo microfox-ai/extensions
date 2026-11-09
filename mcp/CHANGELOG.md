@@ -7,6 +7,13 @@ last release; see `.github/workflows/release-browse-hack-mcp.yml`). They show
 on Browse Hack's page on MediaMake and in `get_status` / `update_browse_hack`
 after an update.
 
+## 0.14.0
+
+- Search Midjourney's Explore from Claude, with Browse Hack 0.17.0. `midjourney_explore` searches like Explore's search box (`query`) or reads a feed (`top_month`, `top`, `hot`, `new`, `random`, `videos`, …), and gives each image or video its prompt rebuilt as a command you can reuse (`--ar`, `--sref`, `--p`, `--v` …), its style codes, maker, full-size and preview links, its page on midjourney.com and a ref (`mj:<jobId>#<index>`) that `midjourney_generate` takes in `imagePrompts` or `styleReferences`.
+- `midjourney_explore_styles` finds style codes (`--sref`) in Explore's Styles tab, by words, by a code (styles like it) or from a feed, with preview pictures.
+- `midjourney_explore_download` saves picks (PNGs, and videos as MP4) into the library inbox under `midjourney/references/<date>-<search>`, so MediaMake files them as references, with a `.source.json` holding the prompt, maker, model and the search they came from. What the library already has comes back as `alreadyHave`.
+- The requests run in a midjourney.com tab like the other Midjourney tools. The search, the Styles tab and every feed but Top month need that tab signed in; signed out, Midjourney answers Top month whatever feed is asked for, and the result says so.
+
 ## 0.13.1
 
 - Suno makes every song on the model you asked for. With Browse Hack 0.16.4, `suno_create`, `suno_cover` and `suno_batch_start` pick the model in Suno's Create form, wait for the form to hold it (suno.com puts its last model back a moment after the form loads, which is how a batch that switched between v6 and v6-wild on 5 Nov got the previous model on 9 Creates), read it back again after the other fields, and click Create only when the form shows it; otherwise the Create page is loaded afresh and filled once more, then the job fails with the model the form shows, spending no credits.

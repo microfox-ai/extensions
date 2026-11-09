@@ -14,6 +14,7 @@ import { bulkUploadShorts, fillYoutubeUploads } from "./youtubeUpload.js"
 import { downloadMidjourneyImages, instagramDownload, startPinterestBulk, youtubeDownload } from "./downloads.js"
 import { saveGoogleAiAnswers } from "./googleAiAnswers.js"
 import { batchStatus, pauseBatch, startBatch } from "./midjourneyBatch.js"
+import { downloadExplore, exploreMidjourney, exploreMidjourneyStyles } from "./midjourneyExplore.js"
 import { toSource } from "./sources.js"
 import { clipIdOf, coverSong, createSongs, downloadSongs, listSongs, rateSongs, sunoStatus } from "./suno.js"
 import { pauseSunoBatch, startSunoBatch, sunoBatchStatus } from "./sunoBatch.js"
@@ -51,6 +52,9 @@ const server = new McpServer(
       "Every tool needs the extension signed in to Mediamake; if a tool says it isn't, call sign_in_to_mediamake and tell the " +
       "user to sign in and click Allow in the window that opens. For more than a few Midjourney prompts, use midjourney_batch_start. " +
       "midjourney_repaint opens a brush tab so the user can erase part of an image by hand; tell them to paint and click Repaint, then call midjourney_repaint_status. " +
+      "midjourney_explore searches and browses Midjourney's Explore (what the community publishes) with each image's prompt and style codes; " +
+      "its refs work as imagePrompts or styleReferences in midjourney_generate, midjourney_explore_styles finds --sref codes, and " +
+      "midjourney_explore_download saves picks into the library inbox as references. " +
       "Tools act on the user's real browser tabs; most take an optional tabId (see list_tabs) and default to the active tab. " +
       "Downloads land in the browser's Downloads folder. When MediaMake's media library is set up (~/.mediamake/config.json), " +
       "YouTube, Instagram, Pinterest and Midjourney downloads go to its inbox with a <file>.source.json beside each, and " +
@@ -1115,6 +1119,80 @@ localTool(
       )
   },
   ({ folders, clickSchedule }) => bulkUploadShorts(bridge, folders, { clickSchedule })
+)
+
+// --- Midjourney Explore ---
+
+const explorePaging = {
+  page: z.number().int().min(1).optional().describe("Page to start from (1 = first; each has up to 50). Use nextPage for more"),
+  pages: z.number().int().min(1).max(5).optional().describe("How many pages to read (default 1)"),
+  limit: z.number().int().min(1).max(250).optional().describe("Most results to return (default 30)")
+}
+localTool(
+  "midjourney_explore",
+  "Searches or browses Midjourney's Explore: images and videos the community published, each with its prompt rebuilt as a " +
+    "command you can reuse (--ar, --sref, --p, --v …), its style codes, maker, a full-size link (url), a small preview, its page " +
+    "on midjourney.com and a ref (mj:<jobId>#<index>) that midjourney_generate takes in imagePrompts or styleReferences and " +
+    "midjourney_explore_download saves. With query it searches like Explore's search box; without one it reads a feed. Runs in " +
+    "a midjourney.com tab: search and every feed but top_month need that tab signed in.",
+  {
+    query: z.string().optional().describe('What to look for, in words ("kinetic typography poster")'),
+    feed: z
+      .enum([
+        "top_month",
+        "top_week",
+        "top",
+        "hot",
+        "new",
+        "random",
+        "for_you",
+        "videos",
+        "video_top",
+        "video_top_week",
+        "video_top_month",
+        "video_hot",
+        "for_you_video"
+      ])
+      .optional()
+      .describe("Without query: which feed (default top_month)"),
+    ...explorePaging
+  },
+  (params) => exploreMidjourney(bridge, params),
+  true
+)
+localTool(
+  "midjourney_explore_styles",
+  "Finds Midjourney style codes (--sref) in Explore's Styles tab: by words (\"risograph print\"), by a code (styles like it), " +
+    "or from a feed. Returns each code with its --sref flag, its page on midjourney.com and preview pictures in the style. " +
+    "Needs the midjourney.com tab signed in.",
+  {
+    query: z.string().optional().describe('Words, or an sref code ("3808026652") to find styles like it'),
+    feed: z
+      .enum(["styles_top", "styles_top_week", "styles_top_month", "styles_hot", "styles_random"])
+      .optional()
+      .describe("Without query: which feed (default styles_top)"),
+    ...explorePaging
+  },
+  (params) => exploreMidjourneyStyles(bridge, params),
+  true
+)
+localTool(
+  "midjourney_explore_download",
+  "Saves images (PNG) and videos (MP4) from Midjourney's Explore. With MediaMake's media library set up, they go to its inbox " +
+    "under midjourney/references/<set> (so they're filed as references, someone else's work) with a <file>.source.json holding " +
+    "the prompt, maker, model and the search they came from; ones the library already has come back as alreadyHave. Pass refs " +
+    "from midjourney_explore.",
+  {
+    items: z
+      .array(z.string())
+      .min(1)
+      .max(100)
+      .describe('Refs from midjourney_explore ("mj:<jobId>#<index>"), job page links, or job ids'),
+    set: z.string().optional().describe("Their folder's name in the inbox. Default: <YYYY-MM-DD>-<the search or feed>"),
+    folder: downloadFolder('the library inbox\'s midjourney/references/<set>, else "midjourney-explore/<set>"'),
+    force
+  },
+  (params) => downloadExplore(bridge, params as any)
 )
 
 localTool(

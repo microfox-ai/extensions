@@ -93,6 +93,8 @@ export function frameSize(aspectRatio: string) {
 // --- Images ----------------------------------------------------------------
 
 const resultUrl = (jobId: string, index: number) => `${CDN}/${jobId}/0_${index}.png`
+// A video job's clips, as the site links them (Explore's Videos tab).
+const videoUrl = (jobId: string, index: number) => `${CDN}/video/${jobId}/${index}.mp4`
 
 // A job's PNGs reach the CDN a few seconds after the job completes, and
 // Cloudflare caches the 404 from a request made before then for minutes. A
@@ -100,22 +102,26 @@ const resultUrl = (jobId: string, index: number) => `${CDN}/${jobId}/0_${index}.
 const READY_WAIT_MS = 40_000
 const freshUrl = (url: string) => `${url}${url.includes("?") ? "&" : "?"}t=${Date.now()}`
 
-async function isImage(url: string) {
+async function isMedia(url: string, type: "image" | "video") {
   try {
     const resp = await fetch(url, { method: "HEAD", cache: "no-store" })
-    return resp.ok && Boolean(resp.headers.get("content-type")?.startsWith("image/"))
+    return resp.ok && Boolean(resp.headers.get("content-type")?.startsWith(`${type}/`))
   } catch {
     return false
   }
 }
 
+const isImage = (url: string) => isMedia(url, "image")
+
 /** A URL that serves the job's image, once Midjourney has it on the CDN. */
-async function readyResultUrl(jobId: string, index: number, deadline = Date.now() + READY_WAIT_MS) {
+async function readyResultUrl(jobId: string, index: number, deadline = Date.now() + READY_WAIT_MS, video = false) {
   for (;;) {
-    const url = freshUrl(resultUrl(jobId, index))
-    if (await isImage(url)) return url
+    const url = freshUrl(video ? videoUrl(jobId, index) : resultUrl(jobId, index))
+    if (await isMedia(url, video ? "video" : "image")) return url
     if (Date.now() > deadline) {
-      throw new Error(`Image ${index} of job ${jobId} isn't on Midjourney's CDN yet; try again in a minute.`)
+      throw new Error(
+        `${video ? "Video" : "Image"} ${index} of job ${jobId} isn't on Midjourney's CDN yet; try again in a minute.`
+      )
     }
     await sleep(2000)
   }
@@ -274,7 +280,7 @@ async function midjourneyTab() {
   return tab ?? (await openTab(`${MJ_ORIGIN}/imagine`, false))
 }
 
-async function runInPage<A extends any[], R>(func: (...args: A) => Promise<R>, args: A): Promise<R> {
+export async function runInPage<A extends any[], R>(func: (...args: A) => Promise<R>, args: A): Promise<R> {
   const tab = await midjourneyTab()
   const [injection] = await chrome.scripting.executeScript({
     target: { tabId: tab.id! },
@@ -851,7 +857,9 @@ const hasMidjourneyTab = async () =>
  * serves it, and one at a time: starting a download right after one that
  * failed has stopped the extension's service worker. withPrompt also returns
  * the job's prompt (for the media library's sidecars), read from an open
- * midjourney.com tab; none is opened just for that.
+ * midjourney.com tab; none is opened just for that. video saves a video job's
+ * clips instead, as .mp4 (Explore's videos: the MCP server knows which jobs
+ * are videos and their prompts, so it passes indexes and no withPrompt).
  */
 export async function downloadImages(params: {
   jobId: string
@@ -859,6 +867,7 @@ export async function downloadImages(params: {
   folder?: string
   name?: string
   withPrompt?: boolean
+  video?: boolean
 }) {
   let indexes = params.indexes ?? []
   const readJob = async () => (await runInPage(jobStatusInPage, [[params.jobId]]))?.[0]
@@ -874,10 +883,11 @@ export async function downloadImages(params: {
   const name = params.name?.replace(/[\\/:*?"<>|]+/g, "-").trim()
   const deadline = Date.now() + READY_WAIT_MS
   const files = []
+  const ext = params.video ? "mp4" : "png"
   for (const index of indexes) {
     const downloadId = await downloadFile({
-      url: await readyResultUrl(params.jobId, index, deadline),
-      filename: name ? `${folder}/${name}-${index}.png` : `${folder}/${params.jobId}_${index}.png`,
+      url: await readyResultUrl(params.jobId, index, deadline, Boolean(params.video)),
+      filename: name ? `${folder}/${name}-${index}.${ext}` : `${folder}/${params.jobId}_${index}.${ext}`,
       conflictAction: name ? "overwrite" : "uniquify",
       saveAs: false
     })
