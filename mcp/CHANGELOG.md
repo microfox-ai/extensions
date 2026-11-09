@@ -7,6 +7,10 @@ last release; see `.github/workflows/release-browse-hack-mcp.yml`). They show
 on Browse Hack's page on MediaMake and in `get_status` / `update_browse_hack`
 after an update.
 
+## 0.15.1
+
+- After Suno downloads, the hint to file them says `mm media ingest`: MediaMake's studio is `apps/studio` now (it was `apps/lyrics_videos`), with its own `mm` command. The old `npm run media -w lyrics_videos -- ingest` keeps working until 2027-01-15.
+
 ## 0.15.0
 
 - Pinterest bulk sessions no longer fill Chrome's storage. With Browse Hack 0.18.0, `pinterest_bulk_stop` waits for the downloads still running, writes `_session.json`, then drops the session's list of the library's pins (about 6,700 refs) and its page and pin lists, keeping only its counts, which it now returns (saved, videos, failed, pages visited, skipped). Before, a stopped session kept all of it until its tab closed: on 9 Nov 18 finished research tabs left open filled the 10 MB, and every `pinterest_bulk_start` failed with "Session storage quota bytes exceeded".

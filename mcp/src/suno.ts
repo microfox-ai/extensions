@@ -297,7 +297,7 @@ export function sourceFields(song: SunoSong, channel?: string, sourceItem?: stri
 }
 
 const INGEST =
-  "File them with MediaMake's media library: npm run media -w lyrics_videos -- ingest (in the mediamake repo), " +
+  "File them with MediaMake's media library: mm media ingest (MediaMake's command; in the mediamake repo, npm run mm -- media ingest), " +
   "or let its watcher do it."
 
 export interface DownloadParams {
