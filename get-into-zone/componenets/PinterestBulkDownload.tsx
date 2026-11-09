@@ -4,6 +4,7 @@ import { useEffect, useState, type CSSProperties } from "react"
 import {
   BULK_PREFS_KEY,
   bulkSessionKey,
+  pagesVisited,
   parseTags,
   sanitizeFolder,
   type BulkDestination,
@@ -169,7 +170,7 @@ export function PinterestBulkDownload() {
   }
 
   const running = Boolean(session?.active)
-  const pageCount = session ? Object.keys(session.pages).length : 0
+  const pageCount = session ? pagesVisited(session) : 0
 
   const renderRunning = (s: BulkSession) => {
     const current = s.currentPage

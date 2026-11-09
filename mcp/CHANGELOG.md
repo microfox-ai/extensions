@@ -7,6 +7,12 @@ last release; see `.github/workflows/release-browse-hack-mcp.yml`). They show
 on Browse Hack's page on MediaMake and in `get_status` / `update_browse_hack`
 after an update.
 
+## 0.15.0
+
+- Pinterest bulk sessions no longer fill Chrome's storage. With Browse Hack 0.18.0, `pinterest_bulk_stop` waits for the downloads still running, writes `_session.json`, then drops the session's list of the library's pins (about 6,700 refs) and its page and pin lists, keeping only its counts, which it now returns (saved, videos, failed, pages visited, skipped). Before, a stopped session kept all of it until its tab closed: on 9 Nov 18 finished research tabs left open filled the 10 MB, and every `pinterest_bulk_start` failed with "Session storage quota bytes exceeded".
+- When the storage is full anyway, `pinterest_bulk_start` clears the stopped sessions of other tabs (and sessions whose tab is gone) and tries again; if sessions still running fill it, it says which tabs they are in.
+- New tool `close_tabs`, and `closeTab` on `pinterest_bulk_stop`: close the tabs `open_tab` opened once you're done with them. The user's own tabs and the tabs Browse Hack keeps for Suno, YouTube Studio, DistroKid and Midjourney are never closed.
+
 ## 0.14.0
 
 - Search Midjourney's Explore from Claude, with Browse Hack 0.17.0. `midjourney_explore` searches like Explore's search box (`query`) or reads a feed (`top_month`, `top`, `hot`, `new`, `random`, `videos`, …), and gives each image or video its prompt rebuilt as a command you can reuse (`--ar`, `--sref`, `--p`, `--v` …), its style codes, maker, full-size and preview links, its page on midjourney.com and a ref (`mj:<jobId>#<index>`) that `midjourney_generate` takes in `imagePrompts` or `styleReferences`.

@@ -49,6 +49,7 @@ import {
 import { repaintStatus, startRepaint } from "./midjourneyEdit"
 import { explore, exploreStyles } from "./midjourneyExplore"
 import {
+  pagesVisited,
   parseTags,
   sanitizeFolder,
   sessionFolderName,
@@ -77,7 +78,7 @@ import { distrokidCommands } from "./distrokidBridge"
 import { sunoCommands } from "./sunoBridge"
 import { youtubeStudioCommands } from "./youtubeUploadBridge"
 import { googleAiAnswer } from "./googleAiAnswer"
-import { openTab } from "./tabs"
+import { closeOpenedTabs, forgetOpenedTab, openTab, openTabForClaude } from "./tabs"
 import { buildOptions, parseVideoId, type YtMode, type YtVideo } from "./youtube"
 import {
   cancelJob,
@@ -186,19 +187,17 @@ async function pinterestTab(tabId?: number) {
   return tab.id
 }
 
-const sessionSummary = ({
-  seen,
-  pending,
-  pages,
-  saves,
-  skipped,
-  ...session
-}: BulkSession) => ({
-  ...session,
-  pagesVisited: Object.keys(pages).length,
-  queued: pending.length,
-  ...(skipped ? { skippedInLibrary: skipped.length } : {})
-})
+// A stopped session has dropped its lists (see retireSession) and keeps their counts.
+const sessionSummary = (session: BulkSession) => {
+  const { seen, pending, pages, saves, skipped, ...rest } = session
+  const skippedInLibrary = skipped?.length ?? rest.skippedInLibrary
+  return {
+    ...rest,
+    pagesVisited: pagesVisited(session),
+    queued: pending.length,
+    ...(skippedInLibrary !== undefined ? { skippedInLibrary } : {})
+  }
+}
 
 // A session in the media library's inbox gets a folder of its own, named after
 // the tab's search: <inbox>/<YYYY-MM-DD>-<search>, then -2, -3 when taken (on
@@ -455,7 +454,19 @@ const commands: Record<string, (params: any) => Promise<unknown>> = {
       tabSummary
     ),
   "tabs.open": async ({ url, active, waitForLoad }) =>
-    tabSummary(await openTab(url, active !== false, waitForLoad !== false)),
+    tabSummary(await openTabForClaude(url, active !== false, waitForLoad !== false)),
+  // Only tabs opened with tabs.open; a Pinterest session running in one is
+  // stopped first, so its _session.json is written.
+  "tabs.close": async ({ tabIds }) => {
+    const ids = (Array.isArray(tabIds) ? tabIds : [tabIds]).map(Number).filter(Number.isInteger)
+    if (!ids.length) throw new Error("Pass tabIds: the ids of tabs opened with open_tab (see list_tabs).")
+    const stopped: { tabId: number; manifest?: string }[] = []
+    const result = await closeOpenedTabs(ids, async (tabId) => {
+      const { manifest } = await stopBulkSession(tabId)
+      if (manifest) stopped.push({ tabId, manifest })
+    })
+    return { ...result, ...(stopped.length ? { pinterestSessionsStopped: stopped } : {}) }
+  },
 
   "auth.status": async () => authState(),
   "auth.signIn": async ({ force }) => {
@@ -559,10 +570,18 @@ const commands: Record<string, (params: any) => Promise<unknown>> = {
       ...(skipPins?.length ? { pinsTheLibraryHas: skipPins.length } : {})
     }
   },
-  "pinterest.bulkStop": async ({ tabId }) => {
+  "pinterest.bulkStop": async ({ tabId, closeTab }) => {
     const id = await pinterestTab(tabId)
     const { success, ...result } = await stopBulkSession(id)
-    return { tabId: id, stopped: true, ...result }
+    if (!closeTab) return { tabId: id, stopped: true, ...result }
+    const { closed, notClosed } = await closeOpenedTabs([id])
+    return {
+      tabId: id,
+      stopped: true,
+      ...result,
+      tabClosed: closed.includes(id),
+      ...(notClosed?.length ? { tabKeptOpen: notClosed[0].reason } : {})
+    }
   },
   "pinterest.bulkStatus": async ({ tabId }) =>
     (await listBulkSessions())
@@ -870,6 +889,10 @@ export function initMcpBridge(handler: MessageHandler) {
   })
   chrome.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name === RECONNECT_ALARM) connect()
+  })
+
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    forgetOpenedTab(tabId)
   })
 
   chrome.storage.onChanged.addListener((changes, namespace) => {

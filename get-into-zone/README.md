@@ -16,7 +16,7 @@ This is a [Plasmo extension](https://docs.plasmo.com/) project bootstrapped with
 | `tabs/midjourney-edit.tsx` | Brush page where the user marks the parts of an image Midjourney should repaint |
 | `lib/mediamake.ts` | Mediamake sparkboard-index upload, shared by the Save overlay and bulk download |
 | `lib/pinterestBulk.ts` | Pinterest bulk download: session types, pin image and video URL parsing, page keys |
-| `lib/pinterestBulkBackground.ts` | Pinterest bulk download sessions (one per tab): per-page limits, skipping revisited pages, the download / upload queue |
+| `lib/pinterestBulkBackground.ts` | Pinterest bulk download sessions (one per tab): per-page limits, skipping revisited pages, the download / upload queue. A stopped session keeps only its counts in `chrome.storage.session` (10 MB for the whole extension); when it is full, stopped sessions of other tabs are cleared |
 | `lib/pinterestVideoBackground.ts` | Saves one Pinterest video: finds its MP4, or falls back to HLS through `tabs/offscreen.tsx`. Shares the single offscreen-document slot with the YouTube downloader |
 | `contents/pinterest.ts` | Content script on Pinterest: Download button on video pins, progress cards |
 | `lib/pinterestVideoDownload.ts` | One-click Pinterest video downloads from that button: jobs, progress, cancel |

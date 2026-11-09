@@ -73,7 +73,7 @@ To tell profiles apart, give each one a name in the popup's **Settings → Profi
 | --- | --- |
 | Status, profiles and sign-in | `get_status`, `list_profiles`, `use_profile`, `sign_in_to_mediamake` |
 | Updates | `update_browse_hack` |
-| Tabs | `list_tabs`, `open_tab` |
+| Tabs | `list_tabs`, `open_tab`, `close_tabs` (only tabs `open_tab` opened) |
 | Settings | `get_settings`, `update_settings`, `list_projects` |
 | Mediamake | `save_media_to_mediamake` |
 | Pinterest | `pinterest_bulk_start`, `pinterest_bulk_stop`, `pinterest_bulk_status`, `pinterest_analyze_image`, `pinterest_save_analysis`, `pinterest_list_analyses` |
