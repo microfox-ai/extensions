@@ -219,13 +219,24 @@ tool(
 )
 tool(
   "open_tab",
-  "Opens a URL in a new browser tab and waits for it to load. Returns the tab, including its id.",
+  "Opens a URL in a new browser tab and waits for it to load. Returns the tab, including its id. " +
+    "Close it with close_tabs when you're done with it (e.g. a research tab once its Pinterest session is stopped).",
   {
     url: z.string().url(),
     active: z.boolean().optional().describe("Focus the new tab (default true)."),
     waitForLoad: z.boolean().optional().describe("Wait until the page has loaded (default true).")
   },
   "tabs.open"
+)
+tool(
+  "close_tabs",
+  "Closes browser tabs that open_tab opened, e.g. research tabs you're done with. Only those: the user's own tabs and " +
+    "the tabs Browse Hack keeps for its own work (Suno, YouTube Studio, DistroKid, Midjourney) are never closed, and come " +
+    "back under notClosed with the reason. A Pinterest bulk session running in a tab is stopped first (its _session.json " +
+    "is written). Needs Browse Hack 0.18.0.",
+  { tabIds: z.array(z.number().int()).min(1).describe("Ids of tabs opened with open_tab (see list_tabs)") },
+  "tabs.close",
+  { destructive: true, timeoutMs: 180_000 }
 )
 tool(
   "sign_in_to_mediamake",
@@ -302,9 +313,19 @@ localTool(
 )
 tool(
   "pinterest_bulk_stop",
-  "Stops the bulk download session in a Pinterest tab. With MediaMake's media library set up, returns the path of the " +
-    "session's _session.json.",
-  { tabId },
+  "Stops the bulk download session in a Pinterest tab, once its downloads still running are done, and returns what it " +
+    "saved. With MediaMake's media library set up, also the path of the session's _session.json. Stop every session " +
+    "you're done with: a stopped session keeps only its counts, while one left running holds its list of the library's " +
+    "pins in Chrome's storage, and too many of those stop new sessions from starting.",
+  {
+    tabId,
+    closeTab: z
+      .boolean()
+      .optional()
+      .describe(
+        "Also close the tab once stopped, if open_tab opened it (the user's own tabs stay open). Needs Browse Hack 0.18.0."
+      )
+  },
   "pinterest.bulkStop",
   { timeoutMs: 120_000 }
 )

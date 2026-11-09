@@ -10,10 +10,14 @@ import {
   bulkItemKey,
   bulkSessionKey,
   bulkSkipKey,
+  isQuotaError,
+  pagesVisited,
   pinHashIn,
   pinImageUrls,
   pinRef,
   pinterestQuery,
+  prunableKeys,
+  retireSession,
   sanitizeFolder,
   videoPinId,
   type BulkDestination,
@@ -80,8 +84,61 @@ const getSession = async (tabId?: number) => {
   return sessions.get(tabId)
 }
 
+// chrome.storage.session holds 10 MB for the whole extension. When it is full,
+// the stopped sessions of other tabs (and skip lists no running session uses)
+// are dropped (see prunableKeys). Returns how many keys went.
+async function makeRoom(keepTabId: number) {
+  await loadSessions()
+  const [stored, tabs] = await Promise.all([
+    chrome.storage.session.get(null),
+    chrome.tabs.query({})
+  ])
+  const busyTabs = new Set(
+    [...sessions.values()]
+      .filter((session) => !session.active && saving.get(session)?.size)
+      .map((session) => session.tabId)
+  )
+  const { keys, tabs: forgotten } = prunableKeys(stored, {
+    keepTabId,
+    openTabs: new Set(tabs.map((tab) => tab.id!)),
+    busyTabs
+  })
+  forgotten.forEach((tabId) => {
+    sessions.delete(tabId)
+    skipSets.delete(tabId)
+  })
+  if (keys.length) await chrome.storage.session.remove(keys)
+  return keys.length
+}
+
+// Writes to chrome.storage.session for a session in `tabId`; when it is full,
+// makes room and tries once more.
+async function store(tabId: number, items: Record<string, unknown>) {
+  try {
+    await chrome.storage.session.set(items)
+  } catch (error) {
+    if (!isQuotaError(error) || !(await makeRoom(tabId))) throw error
+    await chrome.storage.session.set(items)
+  }
+}
+
 const persist = (session: BulkSession) =>
-  chrome.storage.session.set({ [bulkSessionKey(session.tabId)]: session })
+  store(session.tabId, { [bulkSessionKey(session.tabId)]: session })
+
+// Said when storage is still full after making room: only running sessions are left.
+async function fullMessage(tabId: number) {
+  const running = [...sessions.values()].filter(
+    (session) => session.active && session.tabId !== tabId
+  )
+  const tabs = running.map((session) => session.tabId).join(", ")
+  return (
+    "Chrome's storage for Pinterest bulk sessions is full (10 MB), even after clearing the stopped ones. " +
+    (running.length
+      ? `${running.length} session${running.length === 1 ? " is" : "s are"} still running, in tab${running.length === 1 ? "" : "s"} ${tabs}. ` +
+        "Stop the ones that are done (pinterest_bulk_stop; closeTab closes a tab Browse Hack opened), then start again."
+      : "Close some Pinterest tabs, then start again.")
+  )
+}
 
 const seenSet = (session: BulkSession) => {
   let set = seenSets.get(session)
@@ -130,7 +187,7 @@ async function storeSkipList(tabId: number, pins: string[], videos?: string[]) {
   if (pins.length) {
     const stored: StoredSkipList = { pins, ...(videos ? { videos } : {}) }
     skipSets.set(tabId, Promise.resolve(skipList(stored)))
-    await chrome.storage.session.set({ [bulkSkipKey(tabId)]: stored })
+    await store(tabId, { [bulkSkipKey(tabId)]: stored })
   } else {
     skipSets.delete(tabId)
     await chrome.storage.session.remove(bulkSkipKey(tabId))
@@ -269,7 +326,8 @@ function pump(session: BulkSession) {
         tracked.delete(work)
         session.pending = session.pending.filter((p) => bulkItemKey(p) !== key)
         if (sessions.get(session.tabId) !== session) return
-        persist(session)
+        // Storage still full after making room: the counts live on in memory.
+        persist(session).catch(() => undefined)
         pump(session)
       })
     tracked.add(work)
@@ -300,18 +358,45 @@ async function savedFile(save: BulkSave, folder: string) {
   return relativeTo(folder, `${dir}/${name}`)
 }
 
+// Waits for the saves still running, for up to `waitMs`.
+async function savesDone(session: BulkSession, waitMs: number) {
+  const running = [...(saving.get(session) ?? [])]
+  if (!running.length) return
+  let timer: ReturnType<typeof setTimeout> | undefined
+  await Promise.race([
+    Promise.allSettled(running),
+    new Promise((resolve) => (timer = setTimeout(resolve, waitMs)))
+  ])
+  clearTimeout(timer)
+}
+
+// A stopped session, once its saves are done, keeps only its counts (see
+// retireSession) and its skip list goes, unless a new session has started in
+// its tab meanwhile (the list is the new one's then).
+async function retire(session: BulkSession) {
+  if (session.active || sessions.get(session.tabId) !== session) return
+  retireSession(session)
+  skipSets.delete(session.tabId)
+  await chrome.storage.session.remove(bulkSkipKey(session.tabId))
+  await persist(session).catch(() => undefined)
+}
+
+const finalCounts = (session: BulkSession) => ({
+  saved: session.saved,
+  savedVideos: session.savedVideos,
+  failed: session.failed,
+  pagesVisited: pagesVisited(session),
+  ...(session.skippedInLibrary !== undefined || session.skipped
+    ? { skippedInLibrary: session.skipped?.length ?? session.skippedInLibrary }
+    : {})
+})
+
 // Writes <folder>/_session.json for MediaMake's media library: every page the
 // session visited, with its search, and every pin saved or skipped (the
 // library has it), with the page and search it came from. A file of that name
 // already in the folder (from an earlier session) is kept: Chrome adds " (1)".
 async function writeManifest(session: BulkSession, waitMs: number) {
-  const running = [...(saving.get(session) ?? [])]
-  if (running.length) {
-    await Promise.race([
-      Promise.allSettled(running),
-      new Promise((resolve) => setTimeout(resolve, waitMs))
-    ])
-  }
+  await savesDone(session, waitMs)
   const iso = (at?: number) => new Date(at ?? Date.now()).toISOString()
   const pages = Object.values(session.pages)
     .filter((page) => page.url)
@@ -397,9 +482,20 @@ export async function startBulkSession(request: any) {
     previous.active = false
     await writeManifest(previous, RESTART_WAIT_MS)
   }
-  await storeSkipList(tabId, skipPins, skipVideos)
-  sessions.set(tabId, session)
-  await persist(session)
+  try {
+    await storeSkipList(tabId, skipPins, skipVideos)
+    sessions.set(tabId, session)
+    await persist(session)
+  } catch (error) {
+    if (!isQuotaError(error)) throw error
+    // Storage is still full after making room: the tab is left with no session.
+    sessions.delete(tabId)
+    skipSets.delete(tabId)
+    await chrome.storage.session
+      .remove([bulkSessionKey(tabId), bulkSkipKey(tabId)])
+      .catch(() => undefined)
+    return { success: false, message: await fullMessage(tabId) }
+  }
 
   if (await notifyTab(tabId)) return { success: true }
   // The content script isn't running in tabs opened before the extension was
@@ -411,20 +507,32 @@ export async function startBulkSession(request: any) {
   }
 }
 
+// Stops the tab's session and, once its saves are done (and _session.json is
+// written), retires it: its skip list and pin lists leave storage, its counts
+// stay for the popup and pinterest_bulk_status. Stopping a stopped session
+// again just retires it.
 export async function stopBulkSession(tabId: number): Promise<{
   success: boolean
   manifest?: string
   manifestError?: string
+  saved?: number
+  savedVideos?: number
+  failed?: number
+  pagesVisited?: number
+  skippedInLibrary?: number
 }> {
   const session = await getSession(tabId)
   if (!session) return { success: true }
   const wasActive = session.active
   session.active = false
   session.pending = []
-  await persist(session)
+  await persist(session).catch(() => undefined)
   await notifyTab(tabId)
-  if (!wasActive || !session.manifest) return { success: true }
-  return { success: true, ...(await writeManifest(session, STOP_WAIT_MS)) }
+  let manifest = {}
+  if (wasActive && session.manifest) manifest = await writeManifest(session, STOP_WAIT_MS)
+  else await savesDone(session, STOP_WAIT_MS)
+  await retire(session)
+  return { success: true, ...manifest, ...finalCounts(session) }
 }
 
 export async function listBulkSessions() {

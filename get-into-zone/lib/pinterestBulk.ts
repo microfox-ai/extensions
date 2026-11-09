@@ -1,6 +1,7 @@
 // Pinterest bulk download: types and helpers shared by the popup, the content
 // script and the background worker. A session belongs to one tab and lives in
 // chrome.storage.session, so it ends when the tab closes or the browser quits.
+// Once stopped, it keeps only its counts there (retireSession).
 
 export type BulkDestination = "browser" | "mediamake"
 export type BulkItemKind = "image" | "video"
@@ -82,7 +83,42 @@ export interface BulkSession {
   saves?: BulkSave[]
   skipped?: BulkSkip[]
   skipping?: number
+  // Set once a stopped session is retired (see retireSession): its lists are
+  // dropped from storage and these counts are what the popup and
+  // pinterest_bulk_status show instead.
+  stoppedAt?: number
+  pagesVisited?: number
+  skippedInLibrary?: number
 }
+
+// What a stopped session keeps once its saves are done: its settings and
+// counts, not the pages, pins and pin refs it went through. chrome.storage.session
+// holds 10 MB for the whole extension, and a session that ran with MediaMake's
+// media library carries thousands of refs (on 9 Nov 2026, 18 finished
+// sessions left in open tabs filled it, and no new session could start).
+export function retireSession(session: BulkSession, now = Date.now()) {
+  session.pagesVisited = Object.keys(session.pages).length || session.pagesVisited || 0
+  if (session.skipped) session.skippedInLibrary = session.skipped.length
+  session.active = false
+  session.pages = {}
+  session.currentPage = null
+  session.currentPageRevisited = false
+  session.seen = []
+  session.pending = []
+  delete session.saves
+  delete session.skipped
+  delete session.skipping
+  session.stoppedAt ??= now
+  return session
+}
+
+export const pagesVisited = (session: BulkSession) =>
+  Object.keys(session.pages).length || session.pagesVisited || 0
+
+// Chrome's error when a storage area is full: "Session storage quota bytes
+// exceeded. Values were not stored."
+export const isQuotaError = (error: unknown) =>
+  /quota/i.test(error instanceof Error ? error.message : String(error))
 
 export interface BulkPrefs {
   destination: BulkDestination
@@ -99,8 +135,46 @@ export const bulkItemKey = (item: { kind: BulkItemKind; id: string }) =>
 export const BULK_SESSION_PREFIX = "pinterestBulk:"
 export const BULK_PREFS_KEY = "pinterestBulkPrefs"
 
+export const BULK_SKIP_PREFIX = "pinterestBulkSkip:"
+
 export const bulkSessionKey = (tabId: number) => `${BULK_SESSION_PREFIX}${tabId}`
-export const bulkSkipKey = (tabId: number) => `pinterestBulkSkip:${tabId}`
+export const bulkSkipKey = (tabId: number) => `${BULK_SKIP_PREFIX}${tabId}`
+
+// What to drop from chrome.storage.session (`stored`, all of it) when it is
+// full: the sessions stopped in other tabs, the sessions whose tab is gone, and
+// skip lists no running session uses. `keepTabId` is the tab a session is being
+// stored for; `busyTabs` are tabs whose stopped session still has saves running
+// (its _session.json isn't written yet). Returns the keys and the tabs whose
+// sessions they held.
+export function prunableKeys(
+  stored: Record<string, any>,
+  {
+    keepTabId,
+    openTabs,
+    busyTabs = new Set()
+  }: { keepTabId?: number; openTabs: Set<number>; busyTabs?: Set<number> }
+) {
+  const running = new Set<number>()
+  const keys: string[] = []
+  const tabs = new Set<number>()
+  const kept = (tabId: number) => tabId === keepTabId || busyTabs.has(tabId)
+
+  for (const [key, value] of Object.entries(stored)) {
+    if (!key.startsWith(BULK_SESSION_PREFIX) || typeof value?.tabId !== "number") continue
+    const tabId: number = value.tabId
+    if (value.active && openTabs.has(tabId)) running.add(tabId)
+    else if (!kept(tabId)) {
+      keys.push(key)
+      tabs.add(tabId)
+    }
+  }
+  for (const key of Object.keys(stored)) {
+    if (!key.startsWith(BULK_SKIP_PREFIX)) continue
+    const tabId = Number(key.slice(BULK_SKIP_PREFIX.length))
+    if (!running.has(tabId) && !kept(tabId)) keys.push(key)
+  }
+  return { keys, tabs: [...tabs] }
+}
 
 // A pin's ref in MediaMake's media library: the hash its files are named
 // after ("ab/cd/ef/<hash>.jpg" for an image, "ab/cd/ef/<hash>" for a video).
