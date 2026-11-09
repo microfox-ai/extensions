@@ -39,7 +39,7 @@ Browse Hack drives Suno in the user's own Chrome: it fills Suno's Create form an
 
 1. Give the user the song links and ask which to keep.
 2. Rate the takes with `suno_rate`: `keeper`, `maybe` or `reject`, with a `note` on what was wrong. With `download: true`, keepers are saved too.
-3. Or download with `suno_download`. Files go to `_INBOX/suno/<channel>/<set>/<Title> [<id>].mp3`, with a `.source.json` holding the styles, lyrics, model, settings and parent. Then file them in the mediamake repo with `npm run media -w lyrics_videos -- ingest`; they land in `music/<channel>/<song>/`.
+3. Or download with `suno_download`. Files go to `_INBOX/suno/<channel>/<set>/<Title> [<id>].mp3`, with a `.source.json` holding the styles, lyrics, model, settings and parent. Then file them in the mediamake repo with `mm media ingest`; they land in `music/<channel>/<song>/`.
 4. Save a style the user liked with `suno_save_preset`, for the channel's team and the Variations button on suno.com.
 
 ## On suno.com
