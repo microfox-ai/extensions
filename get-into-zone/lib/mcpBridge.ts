@@ -47,6 +47,7 @@ import {
   zoomOut
 } from "./midjourneyApi"
 import { repaintStatus, startRepaint } from "./midjourneyEdit"
+import { explore, exploreStyles } from "./midjourneyExplore"
 import {
   parseTags,
   sanitizeFolder,
@@ -710,6 +711,8 @@ const commands: Record<string, (params: any) => Promise<unknown>> = {
     waitForJob(String(jobId), 4, wait ? timeoutMs : 0),
   "midjourney.jobStatuses": jobStatuses,
   "midjourney.downloadImages": downloadImages,
+  "midjourney.explore": explore,
+  "midjourney.exploreStyles": exploreStyles,
   "midjourney.frameSize": async ({ aspectRatio }) => frameSize(String(aspectRatio)),
 
   "google.aiAnswer": googleAiAnswer,

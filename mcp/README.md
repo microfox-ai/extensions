@@ -87,6 +87,7 @@ To tell profiles apart, give each one a name in the popup's **Settings → Profi
 | Midjourney (prompt automation) | `midjourney_submit_prompts`, `midjourney_scrape`, `midjourney_queue_size`, `midjourney_list_queue`, `midjourney_run_queue`, `midjourney_load_prompts` |
 | Midjourney (images) | `midjourney_outcrop`, `midjourney_repaint`, `midjourney_repaint_status`, `midjourney_generate`, `midjourney_vary`, `midjourney_upscale`, `midjourney_pan`, `midjourney_zoom_out`, `midjourney_job_status`, `midjourney_download_images` |
 | Midjourney (batches) | `midjourney_batch_start`, `midjourney_batch_status`, `midjourney_batch_pause` |
+| Midjourney (Explore) | `midjourney_explore`, `midjourney_explore_styles`, `midjourney_explore_download` |
 
 Tools behave like the matching buttons in the popup; see the [main README](../README.md#use-browse-hack) for what each feature does.
 
@@ -120,6 +121,10 @@ These call midjourney.com's own API from a midjourney.com tab (one opens in the 
 | `midjourney_download_images` | Saves a job's images to Downloads | Download |
 
 Images can be an `https://` URL, an absolute local file path (read by the MCP server), or `mj:<jobId>#<index>` for an earlier result. Jobs wait up to 4 minutes by default and return the four image URLs (`https://cdn.midjourney.com/<jobId>/0_<index>.png`). Longer relaxed jobs return their status; poll them with `midjourney_job_status`.
+
+### Midjourney Explore
+
+`midjourney_explore` reads Midjourney's Explore, what the community publishes, from a midjourney.com tab: a search with `query` (as in Explore's search box), else a feed (`top_month` by default; also `top`, `top_week`, `hot`, `new`, `random`, `for_you`, `videos`, `video_top`, `video_hot`, …), 50 jobs a page (`page`, `pages`, `limit`). Each result has the prompt rebuilt as a command (`--ar`, `--sref`, `--p`, `--v` …), its `srefs` and `personalize` codes, the maker, `url` (the full-size PNG, or a video's MP4), a 384 px `preview`, its `page` on midjourney.com and a `ref` (`mj:<jobId>#<index>`) that `midjourney_generate` takes in `imagePrompts` or `styleReferences`. `midjourney_explore_styles` finds style codes in the Styles tab, by words, by a code or from a feed (`styles_top` by default), with preview pictures. `midjourney_explore_download` saves results: with the media library, into `_INBOX/midjourney/references/<date>-<search>` (so `media ingest` files them as references) with a sidecar holding the prompt, maker, model and search; what the library has comes back as `alreadyHave` (`force: true` saves it anyway). Search, styles and every feed but Top month need the tab signed in to midjourney.com; signed out, Midjourney answers Top month whatever feed is asked for, and the result has a `note` saying so.
 
 ### Midjourney batches
 

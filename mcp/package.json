@@ -1,6 +1,6 @@
 {
   "name": "browse-hack-mcp",
-  "version": "0.13.1",
+  "version": "0.14.0",
   "description": "MCP server that lets Claude use the Browse Hack browser extension",
   "type": "module",
   "bin": {
