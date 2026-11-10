@@ -18,6 +18,7 @@ import { downloadExplore, exploreMidjourney, exploreMidjourneyStyles } from "./m
 import { toSource } from "./sources.js"
 import { clipIdOf, coverSong, createSongs, downloadSongs, listSongs, rateSongs, sunoStatus } from "./suno.js"
 import { pauseSunoBatch, startSunoBatch, sunoBatchStatus } from "./sunoBatch.js"
+import { SEARCH_SORTS, THREAD_SORTS, TIMES, redditSearch, redditThread } from "./reddit.js"
 import { Updater, serverVersion } from "./updates.js"
 
 // GET_INTO_ZONE_* are the names from before the rename to Browse Hack.
@@ -55,6 +56,8 @@ const server = new McpServer(
       "midjourney_explore searches and browses Midjourney's Explore (what the community publishes) with each image's prompt and style codes; " +
       "its refs work as imagePrompts or styleReferences in midjourney_generate, midjourney_explore_styles finds --sref codes, and " +
       "midjourney_explore_download saves picks into the library inbox as references. " +
+      "reddit_search and reddit_thread read Reddit's posts and comment threads as JSON from a reddit.com tab in the user's Chrome " +
+      "(Reddit blocks plain curl), one request at a time; they never return usernames, so quote comments short and anonymous. " +
       "Tools act on the user's real browser tabs; most take an optional tabId (see list_tabs) and default to the active tab. " +
       "Downloads land in the browser's Downloads folder. When MediaMake's media library is set up (~/.mediamake/config.json), " +
       "YouTube, Instagram, Pinterest and Midjourney downloads go to its inbox with a <file>.source.json beside each, and " +
@@ -1318,6 +1321,85 @@ localTool(
     timeoutMs: z.number().int().min(10_000).max(300_000).optional().describe("Longest wait for one answer (default 120000)")
   },
   (params) => saveGoogleAiAnswers(bridge, params as any)
+)
+
+// --- Reddit ---
+
+const saveTo = z
+  .string()
+  .optional()
+  .describe(
+    "Absolute folder (or ~/…) to also save Reddit's raw JSON in, with the request URL, the time and this result, for citing " +
+      "later (e.g. a project's research/reddit). The raw JSON is Reddit's answer as it came, usernames included; the result never has them"
+  )
+
+localTool(
+  "reddit_search",
+  "Searches Reddit posts from the user's Chrome, through Reddit's own JSON (search.json) fetched inside a reddit.com tab with " +
+    "the user's Reddit session, since plain curl and other browsers get Reddit's bot wall. Returns each post's id, title, " +
+    "subreddit, score, upvote ratio, comment count, created date, permalink, link (url, domain) and its text trimmed " +
+    "(selftextChars), never the author. Search everything or only some subreddits; sort and time window as on Reddit. " +
+    "Read a post's comments with reddit_thread (its id or permalink). Reddit blocks search.json on some networks even " +
+    "signed in; then the posts come from old.reddit.com's search page in an old.reddit.com tab, the same fields but no " +
+    "upvote ratio (source says which). Requests go one at a time with a pause between them; " +
+    "when Reddit answers a block or login page instead of JSON, the error says what the user should clear in Chrome. " +
+    "Uses an open reddit.com tab, else opens one in the background (close_tabs closes it). Runs in this session's Chrome " +
+    "profile (use_profile). Needs Browse Hack 0.19.0.",
+  {
+    query: z.string().min(1).describe('What to search for, as in Reddit\'s search box ("jensen huang affair")'),
+    subreddits: z
+      .array(z.string())
+      .optional()
+      .describe('Only these subreddits, e.g. ["nvidia", "technology"] (with or without r/). Default: all of Reddit'),
+    sort: z.enum(SEARCH_SORTS).optional().describe("relevance (default), top, new, comments (most commented) or hot"),
+    time: z.enum(TIMES).optional().describe("Time window: hour, day, week, month, year or all (default)"),
+    limit: z.number().int().min(1).max(250).optional().describe("Most posts to return (default 25; over 100 reads several pages)"),
+    after: z.string().optional().describe("Continue from an earlier search's after (its next page)"),
+    includeNsfw: z.boolean().optional().describe("Include posts marked NSFW (default: Reddit's setting for the account)"),
+    selftextChars: z
+      .number()
+      .int()
+      .min(0)
+      .max(10_000)
+      .optional()
+      .describe("Longest post text to return, in characters (default 300; 0 for none)"),
+    saveTo
+  },
+  (params) => redditSearch(bridge, params as any)
+)
+localTool(
+  "reddit_thread",
+  "Reads a Reddit post and its comments from the user's Chrome (the thread's .json, fetched inside a reddit.com tab with the " +
+    "user's Reddit session). Returns the post (as reddit_search does, with more of its text) and its top comments in the " +
+    "sort asked for, each with its top replies: body (trimmed to bodyChars), score, depth, created date, permalink, how many " +
+    "direct replies it has, and op when the post's author wrote it. Usernames are never returned: author is a label like " +
+    "user-3fa2c1, the same for one person all through the thread and meaningless outside it; quote comments short and " +
+    "anonymous. Trimmed to fit: limit top-level comments, replies replies under each, depth levels deep; moderators' pinned " +
+    "notes and removed comments with no replies are left out (skipped counts them). A comment's permalink reads that " +
+    "comment and its replies. Same politeness, errors, tab and profile as reddit_search. Needs Browse Hack 0.19.0.",
+  {
+    post: z
+      .string()
+      .min(1)
+      .describe(
+        "The post: its permalink (reddit.com/r/<sub>/comments/<id>/…, old.reddit.com too), a comment's permalink, a share link " +
+          "(reddit.com/r/<sub>/s/<code>), redd.it/<id>, or its id (\"1abc2de\", \"t3_1abc2de\") from reddit_search"
+      ),
+    sort: z.enum(THREAD_SORTS).optional().describe("Comment order: top (default), best, controversial, new, old or qa"),
+    limit: z.number().int().min(1).max(100).optional().describe("Top-level comments to return (default 25)"),
+    replies: z.number().int().min(0).max(20).optional().describe("Replies to return under each comment (default 2; 0 for none)"),
+    depth: z
+      .number()
+      .int()
+      .min(0)
+      .max(8)
+      .optional()
+      .describe("Levels of replies under the top-level comments (default 1: their direct replies; 0 for none)"),
+    bodyChars: z.number().int().min(0).max(10_000).optional().describe("Longest comment text, in characters (default 400)"),
+    selftextChars: z.number().int().min(0).max(20_000).optional().describe("Longest post text, in characters (default 1500)"),
+    saveTo
+  },
+  (params) => redditThread(bridge, params as any)
 )
 
 await server.connect(new StdioServerTransport())

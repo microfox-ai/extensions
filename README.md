@@ -173,6 +173,10 @@ Ask Claude to upload a folder that holds the video and an `info.json` (MediaMake
 
 The `info.json` fields are listed in [`mcp/README.md`](mcp/README.md#infojson-for-youtube-uploads).
 
+### Read Reddit (Claude only)
+
+Ask Claude to search Reddit or read a thread ("top posts about X this week", "the comments on this post"). Browse Hack reads Reddit's own JSON from a reddit.com tab in this Chrome profile, with your Reddit session, one request at a time, and hands Claude the posts and comments without usernames. If Reddit shows a check, a consent banner or a sign-in instead, Claude asks you to clear it in that tab. See [`mcp/README.md`](mcp/README.md#reddit).
+
 ### Make songs on Suno (Suno tab and suno.com)
 
 Sign in to suno.com in the same Chrome profile. Browse Hack keeps every song you make for a channel in MediaMake: each take is recorded under the channel's MediaMake project (the team sees the prompts, lyrics and ratings), and the songs you keep are saved into MediaMake's media library.

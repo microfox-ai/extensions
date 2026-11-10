@@ -7,6 +7,14 @@ last release; see `.github/workflows/release-browse-hack-mcp.yml`). They show
 on Browse Hack's page on MediaMake and in `get_status` / `update_browse_hack`
 after an update.
 
+## 0.16.0
+
+- Read Reddit from Claude, with Browse Hack 0.19.0. `reddit_search` searches posts (all of Reddit or some `subreddits`, `sort` relevance, top, new, comments or hot, `time` hour to all, up to 250 posts) and returns each one's title, subreddit, score, upvote ratio, comment count, date, permalink, link and trimmed text. `reddit_thread` reads a post and its comments from a permalink, a comment's permalink, a share link, a redd.it link or an id: the top comments in the sort asked for (top, best, controversial, new, old, qa), each with its top replies, trimmed so a big thread fits (`limit`, `replies`, `depth`, `bodyChars`).
+- No usernames: posts carry no author, and each comment's author is a label like `user-3fa2c1`, the same for one person all through a thread (`op` marks the post's author) and meaningless outside it. Moderators' pinned notes and removed comments with no replies are left out.
+- The requests are Reddit's own `.json` pages, fetched inside a reddit.com tab of the user's Chrome with their Reddit session, since Reddit answers plain curl with its bot wall. One request at a time per Chrome profile, 1.5 s apart, waiting for Reddit's rate-limit window when it runs low. When Reddit answers a block page, a login wall or a 429 instead of JSON, the error says which and what the user should clear in Chrome.
+- On networks where Reddit blocks `search.json` even for a signed-in browser ("You've been blocked by network security", while threads still answer), `reddit_search` reads old.reddit.com's own search page instead, in an old.reddit.com tab, and says so (`source: "search page"`): the same post fields but no upvote ratio. It goes straight there for 30 minutes after a block.
+- `saveTo` also writes Reddit's raw answer, with the request URLs, the time and the result, to a folder (e.g. a project's `research/reddit/`), for citing later; an existing file is never overwritten.
+
 ## 0.15.1
 
 - After Suno downloads, the hint to file them says `mm media ingest`: MediaMake's studio is `apps/studio` now (it was `apps/lyrics_videos`), with its own `mm` command. The old `npm run media -w lyrics_videos -- ingest` keeps working until 2027-01-15.
