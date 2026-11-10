@@ -47,7 +47,7 @@ import {
   zoomOut
 } from "./midjourneyApi"
 import { repaintStatus, startRepaint } from "./midjourneyEdit"
-import { redditJson, redditResolve } from "./reddit"
+import { redditJson, redditResolve, redditSearchPage } from "./reddit"
 import { explore, exploreStyles } from "./midjourneyExplore"
 import {
   pagesVisited,
@@ -739,6 +739,7 @@ const commands: Record<string, (params: any) => Promise<unknown>> = {
 
   "reddit.json": redditJson,
   "reddit.resolve": redditResolve,
+  "reddit.searchPage": redditSearchPage,
 
   ...distrokidCommands,
   ...youtubeStudioCommands,

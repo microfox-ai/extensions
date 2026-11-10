@@ -9,6 +9,12 @@
 // instead of JSON (its block page, a login wall, "whoa there, pardner"), the
 // error says which, so Claude can tell the user what to clear in Chrome.
 //
+// Reddit blocks its search-type JSON (search.json, by_id, subreddits/search)
+// for some networks even when signed in ("You've been blocked by network
+// security", seen 11 Nov 2026), while threads and listings still answer. For
+// search there is also old.reddit.com's own search page, read here with the
+// browser's HTML parser: the results a person sees, in Reddit's order.
+//
 // The MCP server (mcp/src/reddit.ts) builds the requests and shapes what comes
 // back: posts, comment trees without usernames, saved raw JSON.
 
@@ -113,6 +119,104 @@ async function resolveInPage(href: string): Promise<{ url?: string; error?: stri
   }
 }
 
+export interface PagePost {
+  id: string
+  title: string
+  permalink: string
+  subreddit?: string
+  score?: number
+  numComments?: number
+  createdAt?: string
+  url?: string
+  selftext?: string
+  flair?: string
+  nsfw?: boolean
+}
+
+export type SearchPageAnswer =
+  | { ok: true; status: number; url: string; posts: PagePost[]; after?: string; noResults: boolean; html?: string }
+  | Extract<RedditAnswer, { ok: false }>
+
+// Runs in an old.reddit.com tab: one page of old Reddit's search results.
+async function searchPageInPage(
+  path: string,
+  query: Record<string, string>,
+  keepHtml: boolean
+): Promise<SearchPageAnswer> {
+  const url = new URL(path, location.origin)
+  for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value)
+  let resp: Response
+  try {
+    resp = await fetch(url.href, { credentials: "include" })
+  } catch (error) {
+    return { ok: false, status: 0, url: url.href, reason: "network", message: String(error), rateLimit: {} }
+  }
+  const text = await resp.text()
+  const finalUrl = resp.url || url.href
+  const doc = new DOMParser().parseFromString(text, "text/html")
+  const words = (doc.body?.textContent || "").replace(/\s+/g, " ").trim()
+  const rows = Array.from(doc.querySelectorAll(".search-result-link[data-fullname]"))
+  // The page's subreddit box says "there doesn't seem to be anything here" too, beside real results.
+  const noResults =
+    !rows.length && (!!doc.querySelector("#noresults") || /there doesn't seem to be anything here/i.test(words))
+  if (!resp.ok || (!rows.length && !noResults)) {
+    const login = /\/(?:account\/)?login\b/i.test(new URL(finalUrl).pathname)
+    return {
+      ok: false,
+      status: resp.status,
+      url: finalUrl,
+      reason: resp.status === 429 || /whoa there/i.test(words) ? "rate-limited" : login ? "login" : "blocked",
+      title: doc.title?.trim() || undefined,
+      message: resp.ok ? `no search results on the page: ${words.slice(0, 160)}` : words.slice(0, 200),
+      retryAfter: Number(resp.headers.get("retry-after")) || undefined,
+      rateLimit: {}
+    }
+  }
+  const count = (el: Element | null) => {
+    const digits = (el?.textContent || "").replace(/[^\d-]/g, "")
+    return el ? (digits ? Number(digits) : 0) : undefined
+  }
+  const pathOf = (href: string | null | undefined) => {
+    try {
+      return href ? new URL(href, location.origin).pathname : undefined
+    } catch {
+      return undefined
+    }
+  }
+  const posts: PagePost[] = []
+  for (const row of rows) {
+    const id = (row.getAttribute("data-fullname") || "").replace(/^t3_/, "")
+    const title = row.querySelector("a.search-title")
+    const permalink = pathOf(title?.getAttribute("href")) || pathOf(row.querySelector("a.search-comments")?.getAttribute("href"))
+    if (!id || !permalink) continue
+    const link = row.querySelector("a.search-link")?.getAttribute("href") || undefined
+    posts.push({
+      id,
+      title: (title?.textContent || "").trim(),
+      permalink,
+      subreddit: row.querySelector("a.search-subreddit-link")?.textContent?.trim().replace(/^\/?r\//i, "") || undefined,
+      score: count(row.querySelector(".search-score")),
+      numComments: count(row.querySelector("a.search-comments")),
+      createdAt: row.querySelector(".search-time time")?.getAttribute("datetime") || undefined,
+      url: link,
+      selftext: row.querySelector(".search-result-body .md")?.textContent?.trim() || undefined,
+      flair: row.querySelector(".linkflairlabel")?.textContent?.trim() || undefined,
+      nsfw: !!row.querySelector(".nsfw-stamp") || undefined
+    })
+  }
+  // The posts' next page: the page can also hold a subreddit group with its own (t5_) cursor.
+  let after: string | undefined
+  for (const next of Array.from(doc.querySelectorAll(".nav-buttons a[rel~='next']"))) {
+    try {
+      const cursor = new URL(next.getAttribute("href") || "", location.origin).searchParams.get("after") || ""
+      if (cursor.startsWith("t3_")) after = cursor
+    } catch {
+      // Not a link.
+    }
+  }
+  return { ok: true, status: resp.status, url: finalUrl, posts, after, noResults, ...(keepHtml ? { html: text } : {}) }
+}
+
 const isRedditTab = (tab?: chrome.tabs.Tab) => {
   try {
     return !!tab?.url && HOSTS.includes(new URL(tab.url).hostname)
@@ -123,23 +227,29 @@ const isRedditTab = (tab?: chrome.tabs.Tab) => {
 
 // The tab the requests run in: the one asked for, else an open reddit.com tab
 // (www first), else a new one opened in the background, which close_tabs can
-// close later.
-async function redditTab(tabId?: number): Promise<{ tab: chrome.tabs.Tab; opened: boolean }> {
+// close later. `only` limits it to one host (old.reddit.com for its search page).
+async function redditTab(tabId?: number, only?: string): Promise<{ tab: chrome.tabs.Tab; opened: boolean }> {
+  const hosts = only ? [only] : HOSTS
   if (typeof tabId === "number") {
     const tab = await chrome.tabs.get(tabId).catch(() => undefined)
-    if (isRedditTab(tab)) return { tab: tab!, opened: false }
-    throw new Error(`Tab ${tabId} isn't on www.reddit.com or old.reddit.com.`)
+    if (isRedditTab(tab) && hosts.includes(new URL(tab!.url!).hostname)) return { tab: tab!, opened: false }
+    throw new Error(`Tab ${tabId} isn't on ${hosts.join(" or ")}.`)
   }
   const tabs = (
-    await chrome.tabs.query({ url: HOSTS.map((host) => `https://${host}/*`), discarded: false })
+    await chrome.tabs.query({ url: hosts.map((host) => `https://${host}/*`), discarded: false })
   ).filter((tab) => tab.status === "complete")
-  const open = tabs.find((tab) => new URL(tab.url!).hostname === HOSTS[0]) ?? tabs[0]
+  const open = tabs.find((tab) => new URL(tab.url!).hostname === hosts[0]) ?? tabs[0]
   if (open) return { tab: open, opened: false }
-  return { tab: await openTabForClaude(HOME, false), opened: true }
+  return { tab: await openTabForClaude(only ? `https://${only}/` : HOME, false), opened: true }
 }
 
-async function inTab<A extends any[], R>(tabId: number | undefined, func: (...args: A) => Promise<R>, args: A) {
-  const { tab, opened } = await redditTab(tabId)
+async function inTab<A extends any[], R>(
+  tabId: number | undefined,
+  func: (...args: A) => Promise<R>,
+  args: A,
+  only?: string
+) {
+  const { tab, opened } = await redditTab(tabId, only)
   let injection: { result?: unknown } | undefined
   try {
     ;[injection] = await chrome.scripting.executeScript({ target: { tabId: tab.id! }, func: func as any, args })
@@ -234,6 +344,38 @@ export async function redditJson(params: { path?: string; query?: Record<string,
     noteRateLimit(result)
     if (!result.ok) throw failure(result)
     return { url: result.url, status: result.status, data: result.data, rateLimit: result.rateLimit, tabId, openedTab }
+  })
+}
+
+const SEARCH_PATH = /^(?:\/r\/[\w+]+)?\/search\/?$/
+
+/** One page of old.reddit.com's search results (path /search or /r/<a+b>/search), read in an old.reddit.com tab. */
+export async function redditSearchPage(params: {
+  path?: string
+  query?: Record<string, unknown>
+  tabId?: number
+  keepHtml?: boolean
+}) {
+  const path = String(params.path ?? "")
+  if (!SEARCH_PATH.test(path)) throw new Error(`"${path}" isn't a Reddit search page (/search or /r/<subreddits>/search).`)
+  const query = Object.fromEntries(
+    Object.entries(params.query ?? {})
+      .filter(([, value]) => value !== undefined && value !== null && value !== "")
+      .map(([key, value]) => [key, String(value)])
+  )
+  return politely(async () => {
+    const { result, tabId, openedTab } = await inTab(
+      params.tabId,
+      searchPageInPage,
+      [path, query, Boolean(params.keepHtml)],
+      "old.reddit.com"
+    )
+    if (!result.ok) {
+      noteRateLimit(result)
+      throw failure(result)
+    }
+    const { ok, ...page } = result
+    return { ...page, tabId, openedTab }
   })
 }
 

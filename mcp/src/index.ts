@@ -1339,7 +1339,9 @@ localTool(
     "the user's Reddit session, since plain curl and other browsers get Reddit's bot wall. Returns each post's id, title, " +
     "subreddit, score, upvote ratio, comment count, created date, permalink, link (url, domain) and its text trimmed " +
     "(selftextChars), never the author. Search everything or only some subreddits; sort and time window as on Reddit. " +
-    "Read a post's comments with reddit_thread (its id or permalink). Requests go one at a time with a pause between them; " +
+    "Read a post's comments with reddit_thread (its id or permalink). Reddit blocks search.json on some networks even " +
+    "signed in; then the posts come from old.reddit.com's search page in an old.reddit.com tab, the same fields but no " +
+    "upvote ratio (source says which). Requests go one at a time with a pause between them; " +
     "when Reddit answers a block or login page instead of JSON, the error says what the user should clear in Chrome. " +
     "Uses an open reddit.com tab, else opens one in the background (close_tabs closes it). Runs in this session's Chrome " +
     "profile (use_profile). Needs Browse Hack 0.19.0.",

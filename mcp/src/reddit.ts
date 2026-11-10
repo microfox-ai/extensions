@@ -247,7 +247,7 @@ export function threadOf(raw: any, options: Omit<TreeOptions, "threadId"> & { se
  */
 export function parsePostRef(value: string): { postId: string; commentId?: string } | { share: string } | undefined {
   const input = value.trim()
-  const bare = /^(?:t3_)?([a-z0-9]{4,10})$/i.exec(input)
+  const bare = /^(?:t3_)?([a-z0-9]{4,16})$/i.exec(input)
   if (bare) return { postId: bare[1].toLowerCase() }
   let url: URL
   try {
@@ -257,12 +257,13 @@ export function parsePostRef(value: string): { postId: string; commentId?: strin
   }
   const host = url.hostname.toLowerCase()
   if (host === "redd.it" || host.endsWith(".redd.it")) {
-    const id = /^\/([a-z0-9]{4,10})\/?$/i.exec(url.pathname)?.[1]
+    const id = /^\/([a-z0-9]{4,16})\/?$/i.exec(url.pathname)?.[1]
     return id ? { postId: id.toLowerCase() } : undefined
   }
   if (!(host === "reddit.com" || host.endsWith(".reddit.com"))) return undefined
   if (/^\/r\/[^/]+\/s\/[^/]+\/?$/i.test(url.pathname)) return { share: `${SITE}${url.pathname}` }
-  const match = /\/comments\/([a-z0-9]{4,10})(?:\/[^/]*(?:\/([a-z0-9]{4,10}))?)?/i.exec(url.pathname)
+  // Comment ids are 13 characters since 2026 ("19sd12haxditf"), post ids 7.
+  const match = /\/comments\/([a-z0-9]{4,16})(?:\/[^/]*(?:\/([a-z0-9]{4,16}))?)?/i.exec(url.pathname)
   if (!match) return undefined
   return { postId: match[1].toLowerCase(), ...(match[2] ? { commentId: match[2].toLowerCase() } : {}) }
 }
@@ -294,14 +295,21 @@ export function resolveFolder(folder: string, home = homedir()) {
   throw new Error(`saveTo needs an absolute folder (or one starting with ~/), not "${folder}".`)
 }
 
-/** Writes the raw answer and the result into `folder`/<name>.json; an existing file is kept and the new one gets -2, -3 … */
-async function save(folder: string, name: string, record: Record<string, unknown>) {
+/**
+ * Writes the raw answer and the result into `folder`/<name>.json, and any pages
+ * (HTML) beside it as <name>.html (<name>.p2.html …). An existing file is kept:
+ * the new one gets -2, -3 …
+ */
+async function save(folder: string, name: string, record: Record<string, unknown>, pages: string[] = []) {
   const dir = resolveFolder(folder)
   await mkdir(dir, { recursive: true })
-  let file = join(dir, `${name}.json`)
-  for (let n = 2; existsSync(file); n++) file = join(dir, `${name}-${n}.json`)
-  await writeFile(file, `${JSON.stringify({ schema: SCHEMA, ...record }, null, 2)}\n`)
-  return file
+  let base = join(dir, name)
+  for (let n = 2; existsSync(`${base}.json`); n++) base = join(dir, `${name}-${n}`)
+  const htmlFiles = pages.map((_, i) => `${base}${i ? `.p${i + 1}` : ""}.html`)
+  await Promise.all(pages.map((html, i) => writeFile(htmlFiles[i], html)))
+  const extra = htmlFiles.length ? { htmlFiles } : {}
+  await writeFile(`${base}.json`, `${JSON.stringify({ schema: SCHEMA, ...record, ...extra }, null, 2)}\n`)
+  return `${base}.json`
 }
 
 const clamp = (value: unknown, min: number, max: number, fallback: number) => {
@@ -323,7 +331,67 @@ export interface SearchParams {
   saveTo?: string
 }
 
+/** A post as old.reddit.com's search page shows it (get-into-zone/lib/reddit.ts reads it). */
+export interface PagePost {
+  id: string
+  title: string
+  permalink: string
+  subreddit?: string
+  score?: number
+  numComments?: number
+  createdAt?: string
+  url?: string
+  selftext?: string
+  flair?: string
+  nsfw?: boolean
+}
+
+type SearchPage = { url: string; status: number; posts: PagePost[]; after?: string; noResults?: boolean; html?: string; tabId?: number; openedTab?: boolean }
+
 const PAGE = 100
+
+// Reddit answers search.json with "blocked by network security" on some
+// networks even when signed in, while its search page still works. Once seen,
+// this server goes straight to the page for a while.
+const JSON_BLOCKED_MS = 30 * 60_000
+let jsonSearchBlockedUntil = 0
+const isJsonBlock = (error: unknown) =>
+  /answered a page instead of JSON \(403/.test(error instanceof Error ? error.message : String(error))
+
+/** Forgets that search.json was blocked (for tests). */
+export const forgetSearchBlock = () => {
+  jsonSearchBlockedUntil = 0
+}
+
+const domainOf = (url?: string) => {
+  try {
+    return url ? new URL(url).hostname.replace(/^www\./, "") : undefined
+  } catch {
+    return undefined
+  }
+}
+
+export function pagePostOf(post: PagePost, selftextChars: number): RedditPost | undefined {
+  const id = str(post?.id)
+  if (!id) return undefined
+  const selftext = trimText(post.selftext, selftextChars)
+  const url = post.url ? full(post.url) : undefined
+  const created = post.createdAt ? Date.parse(post.createdAt) : NaN
+  return {
+    id,
+    title: str(post.title),
+    subreddit: str(post.subreddit),
+    score: num(post.score),
+    numComments: num(post.numComments),
+    createdAt: Number.isFinite(created) ? new Date(created).toISOString() : undefined,
+    permalink: full(post.permalink),
+    url,
+    domain: domainOf(url),
+    ...(selftext.text ? { selftext: selftext.text, ...(selftext.cut ? { selftextCut: true } : {}) } : {}),
+    flair: str(post.flair) || undefined,
+    ...(post.nsfw ? { nsfw: true } : {})
+  }
+}
 
 export async function redditSearch(bridge: Bridge, params: SearchParams) {
   const query = str(params.query).trim()
@@ -332,63 +400,103 @@ export async function redditSearch(bridge: Bridge, params: SearchParams) {
   const time = params.time ?? "all"
   const limit = clamp(params.limit, 1, 250, 25)
   const selftextChars = clamp(params.selftextChars, 0, 10_000, 300)
-  const path = `${subredditPath(params.subreddits)}/search.json`
-  const restricted = path !== "/search.json"
+  const subs = subredditPath(params.subreddits)
+  const keepHtml = Boolean(params.saveTo)
+  const ask = (after: string | undefined, json: boolean) => ({
+    q: query,
+    sort,
+    t: time,
+    limit: Math.min(PAGE, limit - posts.length),
+    // Posts only: old Reddit's page otherwise also lists subreddits, out of the same limit.
+    type: "link",
+    ...(json ? { raw_json: 1 } : {}),
+    ...(subs ? { restrict_sr: "on" } : {}),
+    ...(params.includeNsfw ? { include_over_18: "on" } : {}),
+    ...(after ? { after } : {})
+  })
 
   const posts: RedditPost[] = []
   const seen = new Set<string>()
-  const pages: Fetched[] = []
-  let after = params.after || undefined
-  do {
-    const page = await call<Fetched>(bridge, "reddit.json", {
-      path,
-      query: {
-        q: query,
-        sort,
-        t: time,
-        limit: Math.min(PAGE, limit - posts.length),
-        type: "link",
-        raw_json: 1,
-        ...(restricted ? { restrict_sr: "on" } : {}),
-        ...(params.includeNsfw ? { include_over_18: "on" } : {}),
-        ...(after ? { after } : {})
-      }
-    })
-    pages.push(page)
-    const children = childrenOf(page.data)
-    for (const child of children) {
-      if (child?.kind !== "t3") continue
-      const post = postOf(child.data, selftextChars)
-      if (post && !seen.has(post.id)) {
-        seen.add(post.id)
-        posts.push(post)
-      }
+  const add = (post?: RedditPost) => {
+    if (post && !seen.has(post.id)) {
+      seen.add(post.id)
+      posts.push(post)
     }
-    after = str(page.data?.data?.after) || undefined
-    if (!children.length) after = undefined
-  } while (after && posts.length < limit)
+  }
+  const requests: string[] = []
+  const raw: unknown[] = []
+  const html: string[] = []
+  let source: "search.json" | "search page" = Date.now() < jsonSearchBlockedUntil ? "search page" : "search.json"
+  let after = params.after || undefined
+  let last: { tabId?: number; openedTab?: boolean } = {}
+  for (;;) {
+    let count = 0
+    const had = posts.length
+    const cursor = after
+    if (source === "search.json") {
+      try {
+        const page = await call<Fetched>(bridge, "reddit.json", { path: `${subs}/search.json`, query: ask(after, true) })
+        requests.push(page.url)
+        raw.push(page.data)
+        last = page
+        const children = childrenOf(page.data)
+        for (const child of children) if (child?.kind === "t3") add(postOf(child.data, selftextChars))
+        count = children.length
+        after = str(page.data?.data?.after) || undefined
+      } catch (error) {
+        if (!isJsonBlock(error)) throw error
+        jsonSearchBlockedUntil = Date.now() + JSON_BLOCKED_MS
+        source = "search page"
+        continue
+      }
+    } else {
+      const page = await call<SearchPage>(bridge, "reddit.searchPage", { path: `${subs}/search`, query: ask(after, false), keepHtml })
+      requests.push(page.url)
+      if (page.html) html.push(page.html)
+      raw.push({ url: page.url, posts: page.posts, after: page.after })
+      last = page
+      for (const post of page.posts ?? []) add(pagePostOf(post, selftextChars))
+      count = page.posts?.length ?? 0
+      after = page.after || undefined
+    }
+    // An empty page, one with nothing new or the same cursor again is the end.
+    if (!count || posts.length === had || after === cursor) after = undefined
+    if (!after || posts.length >= limit) break
+  }
 
-  const last = pages[pages.length - 1]
   const result = {
     query,
-    ...(restricted ? { subreddits: path.slice(3, -"/search.json".length).split("+") } : {}),
+    ...(subs ? { subreddits: subs.slice(3).split("+") } : {}),
     sort,
     time,
+    source,
     found: posts.length,
     // Pass as `after` for the next page.
     ...(after ? { after } : {}),
     posts: posts.slice(0, limit),
-    ...(last?.openedTab ? { note: `Opened a reddit.com tab in the background (tab ${last.tabId}); close_tabs closes it.` } : {})
+    ...(source === "search page"
+      ? {
+          sourceNote:
+            "Reddit blocks search.json on this network, so these come from old.reddit.com's search page, in its order " +
+            "(no upvote ratio, and text only for posts the page shows it for)."
+        }
+      : {}),
+    ...(last.openedTab ? { note: `Opened a reddit.com tab in the background (tab ${last.tabId}); close_tabs closes it.` } : {})
   }
   if (!params.saveTo) return result
-  const saved = await save(params.saveTo, `reddit-search-${slug(query)}-${sort}-${time}-${localDate()}`, {
-    tool: "reddit_search",
-    fetchedAt: new Date().toISOString(),
-    requests: pages.map((page) => page.url),
-    params: { ...params, saveTo: undefined },
-    result,
-    raw: pages.length === 1 ? pages[0].data : pages.map((page) => page.data)
-  })
+  const saved = await save(
+    params.saveTo,
+    `reddit-search-${slug(query)}-${sort}-${time}-${localDate()}`,
+    {
+      tool: "reddit_search",
+      fetchedAt: new Date().toISOString(),
+      requests,
+      params: { ...params, saveTo: undefined },
+      result,
+      raw: raw.length === 1 ? raw[0] : raw
+    },
+    html
+  )
   return { ...result, saved }
 }
 
@@ -420,13 +528,15 @@ export async function redditThread(bridge: Bridge, params: ThreadParams) {
   const depth = clamp(params.depth, 0, 8, 1)
   const bodyChars = clamp(params.bodyChars, 0, 10_000, 400)
   const selftextChars = clamp(params.selftextChars, 0, 20_000, 1500)
-  // Enough comments to pick the top ones from (Reddit sends up to 500).
-  const fetchLimit = Math.min(500, Math.max(100, limit * (1 + replies) * (depth + 1)))
+  // Enough comments to pick the top ones from (Reddit sends up to 500), and
+  // one level more than shown, so the deepest comments shown have true reply
+  // counts (Reddit sends nothing below the depth asked for).
+  const fetchLimit = Math.min(500, Math.max(100, limit * (1 + replies) * (depth + 2)))
   const path = ref.commentId ? `/comments/${ref.postId}/_/${ref.commentId}.json` : `/comments/${ref.postId}.json`
 
   const page = await call<Fetched>(bridge, "reddit.json", {
     path,
-    query: { sort: REDDIT_SORT[sort] ?? sort, limit: fetchLimit, depth: depth + 1, raw_json: 1 }
+    query: { sort: REDDIT_SORT[sort] ?? sort, limit: fetchLimit, depth: depth + 2, raw_json: 1 }
   })
   const thread = threadOf(page.data, { limit, replies, depth, bodyChars, selftextChars })
   const result = {

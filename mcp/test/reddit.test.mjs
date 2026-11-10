@@ -10,6 +10,8 @@ import { afterEach, beforeEach, describe, test } from "node:test"
 
 import {
   anonymous,
+  forgetSearchBlock,
+  pagePostOf,
   parsePostRef,
   redditSearch,
   redditThread,
@@ -88,6 +90,18 @@ const thread = () => [
   ])
 ]
 
+const pagePostRow = (overrides = {}) => ({
+  id: "1abc2de",
+  title: "Chip maker CEO caught in a tabloid storm",
+  permalink: "/r/technology/comments/1abc2de/chip_maker_ceo_caught_in_a_tabloid_storm/",
+  subreddit: "technology",
+  score: 17020,
+  numComments: 1071,
+  createdAt: "2026-11-10T00:43:25+00:00",
+  url: "https://www.example.com/story",
+  ...overrides
+})
+
 const NAMES = /alice_real|bob_real|carol_real|dave_real|SomeRealPerson|AutoModerator/
 
 describe("links and names", () => {
@@ -101,6 +115,10 @@ describe("links and names", () => {
     assert.deepEqual(parsePostRef("https://www.reddit.com/r/nvidia/comments/1abc2de/comment/mx9k2zq/"), {
       postId: "1abc2de",
       commentId: "mx9k2zq"
+    })
+    assert.deepEqual(parsePostRef("https://www.reddit.com/r/SipsTea/comments/1xrjfv0/a_title/19sd12haxditf/"), {
+      postId: "1xrjfv0",
+      commentId: "19sd12haxditf"
     })
     assert.deepEqual(parsePostRef("https://redd.it/1abc2de"), { postId: "1abc2de" })
     assert.deepEqual(parsePostRef("t3_1abc2de"), { postId: "1abc2de" })
@@ -135,6 +153,14 @@ describe("links and names", () => {
     assert.notEqual(anonymous("1abc2de", "bob_real"), a)
     assert.equal(anonymous("1abc2de", "[deleted]"), "[deleted]")
     assert.equal(anonymous("1abc2de", undefined), "[deleted]")
+  })
+
+  test("search page posts take the same shape as search.json's", () => {
+    const post = pagePostOf(pagePostRow({ selftext: "word ".repeat(100), nsfw: true }), 20)
+    assert.equal(post.permalink, "https://www.reddit.com/r/technology/comments/1abc2de/chip_maker_ceo_caught_in_a_tabloid_storm/")
+    assert.equal(post.selftextCut, true)
+    assert.equal(post.nsfw, true)
+    assert.equal(pagePostOf({ title: "no id" }, 0), undefined)
   })
 
   test("saveTo must be absolute or start with ~/", () => {
@@ -197,6 +223,7 @@ describe("reddit_search and reddit_thread", () => {
   let dir
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "reddit-test-"))
+    forgetSearchBlock()
   })
   afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
@@ -268,6 +295,50 @@ describe("reddit_search and reddit_thread", () => {
     assert.equal(file.params.saveTo, undefined)
   })
 
+
+  test("when Reddit blocks search.json, the search page answers, and later searches go straight there", async () => {
+    const blocked = () => {
+      throw new Error("Reddit answered a page instead of JSON (403) for https://www.reddit.com/search.json?q=x: You've been blocked by network security.")
+    }
+    const page = (params) => ({
+      url: `https://old.reddit.com${params.path}?q=x`,
+      status: 200,
+      posts: [pagePostRow(), pagePostRow({ id: "2xyz3ab", title: "Second" })],
+      after: "t3_2xyz3ab",
+      html: params.keepHtml ? "<html>results</html>" : undefined
+    })
+    const bridge = fakeBridge({ "reddit.json": blocked, "reddit.searchPage": page })
+    const answer = await redditSearch(bridge, { query: "x", subreddits: ["nvidia"], sort: "top", time: "week", limit: 2, saveTo: dir })
+    assert.deepEqual(bridge.calls.map((c) => c.method), ["reddit.json", "reddit.searchPage"])
+    assert.deepEqual(bridge.calls[1].params, {
+      path: "/r/nvidia/search",
+      query: { q: "x", sort: "top", t: "week", limit: 2, type: "link", restrict_sr: "on" },
+      keepHtml: true
+    })
+    assert.equal(answer.source, "search page")
+    assert.match(answer.sourceNote, /blocks search\.json/)
+    assert.deepEqual(answer.posts.map((p) => p.id), ["1abc2de", "2xyz3ab"])
+    assert.equal(answer.posts[0].domain, "example.com")
+    assert.equal(answer.posts[0].createdAt, "2026-11-10T00:43:25.000Z")
+    const file = JSON.parse(readFileSync(answer.saved, "utf8"))
+    assert.deepEqual(file.htmlFiles, [answer.saved.replace(/\.json$/, ".html")])
+    assert.equal(readFileSync(file.htmlFiles[0], "utf8"), "<html>results</html>")
+
+    // Straight to the page; its second page repeats the first, which ends the search.
+    await redditSearch(bridge, { query: "y" })
+    assert.deepEqual(bridge.calls.slice(2).map((c) => c.method), ["reddit.searchPage", "reddit.searchPage"])
+    assert.equal(bridge.calls[3].params.query.after, "t3_2xyz3ab")
+  })
+
+  test("other search.json errors aren't hidden by the fallback", async () => {
+    const bridge = fakeBridge({
+      "reddit.json": () => {
+        throw new Error("Reddit is rate-limiting this browser (429). Wait 60 s and try again.")
+      }
+    })
+    await assert.rejects(redditSearch(bridge, { query: "x" }), /rate-limiting/)
+  })
+
   test("a thread asks comments/<id>.json in the sort asked for", async () => {
     const bridge = fakeBridge({ "reddit.json": () => ({ url: "u", status: 200, data: thread() }) })
     const answer = await redditThread(bridge, {
@@ -278,7 +349,7 @@ describe("reddit_search and reddit_thread", () => {
     })
     assert.deepEqual(bridge.calls[0].params, {
       path: "/comments/1abc2de.json",
-      query: { sort: "confidence", limit: 100, depth: 2, raw_json: 1 }
+      query: { sort: "confidence", limit: 100, depth: 3, raw_json: 1 }
     })
     assert.equal(answer.sort, "best")
     assert.deepEqual(answer.comments.map((c) => c.id), ["c1", "c3", "c4"])
