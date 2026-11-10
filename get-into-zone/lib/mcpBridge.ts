@@ -47,6 +47,7 @@ import {
   zoomOut
 } from "./midjourneyApi"
 import { repaintStatus, startRepaint } from "./midjourneyEdit"
+import { redditJson, redditResolve } from "./reddit"
 import { explore, exploreStyles } from "./midjourneyExplore"
 import {
   pagesVisited,
@@ -735,6 +736,9 @@ const commands: Record<string, (params: any) => Promise<unknown>> = {
   "midjourney.frameSize": async ({ aspectRatio }) => frameSize(String(aspectRatio)),
 
   "google.aiAnswer": googleAiAnswer,
+
+  "reddit.json": redditJson,
+  "reddit.resolve": redditResolve,
 
   ...distrokidCommands,
   ...youtubeStudioCommands,
