@@ -104,16 +104,24 @@ function buttonByText(root: ParentNode, label: string) {
 
 /** The buttons of a More Options row ("Vocal Gender": Male / Female). */
 function rowButtons(panel: HTMLElement, label: string) {
-  const leaf = within<HTMLElement>(panel, "div, span, label, p").find(
-    (el) => el.children.length === 0 && text(el) === label
-  )
-  let box: HTMLElement | null = leaf ?? null
-  for (let i = 0; box && i < 5; i++) {
-    const buttons = within<HTMLButtonElement>(box, "button")
-    if (buttons.length >= 2) return buttons
-    box = box.parentElement
+  // The page also keeps a hidden copy of each row (no size, its buttons carry no
+  // data-selected): the live row is the one whose buttons say whether they're on.
+  const rows: HTMLButtonElement[][] = []
+  for (const leaf of within<HTMLElement>(panel, "div, span, label, p")) {
+    if (leaf.children.length !== 0 || text(leaf) !== label) continue
+    let box: HTMLElement | null = leaf
+    for (let i = 0; box && i < 5; i++) {
+      const buttons = within<HTMLButtonElement>(box, "button")
+      if (buttons.length >= 2) {
+        rows.push(buttons)
+        break
+      }
+      box = box.parentElement
+    }
   }
-  return []
+  const live = (buttons: HTMLButtonElement[]) =>
+    buttons.some((b) => b.hasAttribute("data-selected") || b.hasAttribute("aria-pressed") || b.hasAttribute("aria-checked"))
+  return rows.find(live) ?? rows.find((buttons) => buttons.some(visible)) ?? rows[0] ?? []
 }
 
 /** Whether a toggle-style button is the selected one. */
@@ -402,14 +410,40 @@ async function ensureMoreOptions(panel: HTMLElement) {
   await waitFor(() => panel.querySelector(SEL.excludeStyles), 3000)
 }
 
-async function clickRow(panel: HTMLElement, row: string, option: string) {
-  const button = rowButtons(panel, row).find((b) => firstLine(b) === option)
-  if (!button) return false
-  if (!isOn(button)) {
+/** Turns on `option` in a More Options row and reads it back: true only once the row shows it on. */
+async function clickRow(panel: HTMLElement, row: string, option: string, attempts = 3) {
+  const find = () => rowButtons(panel, row).find((b) => firstLine(b) === option)
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const button = find()
+    if (!button) return false
+    if (isOn(button)) return true
     button.click()
-    await sleep(200)
+    if (await waitFor(() => (find() ? isOn(find()!) : false), 1500)) return true
   }
-  return true
+  return false
+}
+
+const genderOption = (gender: "male" | "female") => (gender === "male" ? ROW.vocalGender.male : ROW.vocalGender.female)
+
+/** Whether the form's Vocal Gender row shows `gender` on. */
+export function vocalGenderOn(gender: "male" | "female", panel = createPanel()) {
+  const button = panel && rowButtons(panel, ROW.vocalGender.label).find((b) => firstLine(b) === genderOption(gender))
+  return !!button && isOn(button)
+}
+
+/**
+ * The last check before Create is clicked: the Vocal Gender row shows `gender`
+ * (turned on once more if a later step cleared it), or it throws.
+ */
+export async function assertVocalGender(gender: "male" | "female" | undefined) {
+  if (!gender) return
+  const panel = createPanel()
+  if (!panel) throw new Error("Suno's Create form isn't on the page.")
+  if (vocalGenderOn(gender, panel)) return
+  await ensureMoreOptions(panel)
+  if (!(await clickRow(panel, ROW.vocalGender.label, genderOption(gender))) || !vocalGenderOn(gender, panel)) {
+    throw new Error(`Suno's form doesn't show Vocal Gender: ${genderOption(gender)}: Create wasn't clicked.`)
+  }
 }
 
 /** Sets the audio condition (Cover, Extend…) when audio is attached. */
@@ -491,9 +525,8 @@ export async function fillForm(job: SunoFormJob): Promise<FillResult> {
     if (input) setValue(input, job.excludeStyles)
     else warnings.push("no Exclude styles box (Pro and Premier only)")
   }
-  if (job.vocalGender) {
-    const option = job.vocalGender === "male" ? ROW.vocalGender.male : ROW.vocalGender.female
-    if (!(await clickRow(panel, ROW.vocalGender.label, option))) warnings.push("couldn't set Vocal Gender")
+  if (job.vocalGender && !(await clickRow(panel, ROW.vocalGender.label, genderOption(job.vocalGender)))) {
+    warnings.push("couldn't set Vocal Gender")
   }
   if (job.maxMode !== undefined && !(await clickRow(panel, ROW.maxMode.label, job.maxMode ? ROW.maxMode.on : ROW.maxMode.off))) {
     warnings.push("couldn't set Max Mode")
@@ -530,6 +563,11 @@ export async function fillForm(job: SunoFormJob): Promise<FillResult> {
     if (!sameModel(shown, job.model) && modelButton(panel)) shown = await setModel(panel, job.model, 1)
     modelOk = sameModel(shown, job.model)
     if (!modelOk) warnings.push(`the form shows model ${shown ?? "none"}, not ${job.model}`)
+  }
+  // The model and workspace picks re-render the form: set the voice again if they cleared it.
+  if (job.vocalGender && !vocalGenderOn(job.vocalGender, panel)) {
+    await ensureMoreOptions(panel)
+    await clickRow(panel, ROW.vocalGender.label, genderOption(job.vocalGender))
   }
   return { warnings, form: readForm(), modelOk }
 }

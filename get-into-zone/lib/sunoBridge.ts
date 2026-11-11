@@ -22,6 +22,7 @@ import {
   type SunoChannel,
   type SunoPrefs
 } from "./sunoPrefs"
+import { vocalGenderWarning } from "./sunoRequest"
 import { openTab, waitForTabLoad } from "./tabs"
 
 const WORKER_KEY = "sunoWorkerTab"
@@ -227,7 +228,11 @@ export function generate(p: GenerateParams) {
         )
       }
     }
-    let outcome: any = await send(tabId, { action: "giz-suno-submit", waitMs: 45_000, expectModel: job.model }, 75_000)
+    let outcome: any = await send(
+      tabId,
+      { action: "giz-suno-submit", waitMs: 45_000, expectModel: job.model, expectVocalGender: job.vocalGender },
+      75_000
+    )
     const creditsBefore = outcome.creditsBefore
     // The model the form showed as Create was clicked: the caller checks the songs against it too.
     const modelAtCreate: string | undefined = outcome.model ?? fill.form?.model
@@ -252,11 +257,15 @@ export function generate(p: GenerateParams) {
       upload.port.disconnect()
       await chrome.tabs.remove(upload.tabId).catch(() => {})
     }
+    // What Suno's own Create request asked for (read in the page): the proof the takes got the voice.
+    const genderWarning = vocalGenderWarning(job.vocalGender, outcome.sentVocalGender)
     return {
       clipIds: outcome.clipIds as string[],
       batchId: outcome.batchId as string | undefined,
-      warnings: fill.warnings,
+      warnings: genderWarning ? [...fill.warnings, genderWarning] : fill.warnings,
       model: modelAtCreate,
+      vocalGender: outcome.sentVocalGender as string | undefined,
+      requestModelKey: outcome.sentModelKey as string | undefined,
       workspace: fill.form?.workspace,
       creditsBefore
     }

@@ -7,6 +7,11 @@ last release; see `.github/workflows/release-browse-hack-mcp.yml`). They show
 on Browse Hack's page on MediaMake and in `get_status` / `update_browse_hack`
 after an update.
 
+## 0.16.1
+
+- `vocalGender` is checked on the request Suno actually sends. With Browse Hack 0.19.1, Create is clicked only once the form's More Options row shows the voice asked for (Female or Male, read back after every step that re-renders the form), and the page reads `metadata.vocal_gender` from suno.com's own Create request. `suno_create` and `suno_cover` answer with `vocalGender` (what the request asked for), and warn when it wasn't the one asked for or couldn't be read; a batch notes that warning in `run.log` and logs each job's vocal gender. Suno doesn't keep the vocal gender on the finished songs, so the request is the only place to check it.
+- Vocal Gender is a hint to Suno, not a rule: a v6 take sent with Female can still sing male. Adding `excludeStyles: "male vocals, male voice"` fixed it in the INVERTED Devils run of 11 Nov 2026 (180 Creates, all female).
+
 ## 0.16.0
 
 - Read Reddit from Claude, with Browse Hack 0.19.0. `reddit_search` searches posts (all of Reddit or some `subreddits`, `sort` relevance, top, new, comments or hot, `time` hour to all, up to 250 posts) and returns each one's title, subreddit, score, upvote ratio, comment count, date, permalink, link and trimmed text. `reddit_thread` reads a post and its comments from a permalink, a comment's permalink, a share link, a redd.it link or an id: the top comments in the sort asked for (top, best, controversial, new, old, qa), each with its top replies, trimmed so a big thread fits (`limit`, `replies`, `depth`, `bodyChars`).
