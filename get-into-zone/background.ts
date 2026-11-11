@@ -5,6 +5,7 @@ import {
 } from "./workflows/midjourney"
 import { initSaverBackground } from "./lib/saverBackground"
 import { initPinterestBulkBackground } from "./lib/pinterestBulkBackground"
+import { initGoogleImagesBackground } from "./lib/googleImagesBackground"
 import { initYouTubeBackground } from "./lib/youtubeBackground"
 import { initPinterestVideoDownloads } from "./lib/pinterestVideoDownload"
 import { initInstagramBackground } from "./lib/instagramBackground"
@@ -22,6 +23,7 @@ import { startStudioJob } from "./lib/studioJobs"
 initMediamakeAuth()
 initSaverBackground()
 initPinterestBulkBackground()
+initGoogleImagesBackground()
 initYouTubeBackground()
 initPinterestVideoDownloads()
 initInstagramBackground()

@@ -15,6 +15,7 @@ import {
   covers,
   instagramDownload,
   parseVideoId,
+  startGoogleImagesBulk,
   startPinterestBulk,
   youtubeDownload
 } from "../dist/downloads.js"
@@ -26,6 +27,7 @@ import {
   inInbox,
   inboxFolder,
   knownPins,
+  knownRefs,
   lookup,
   modelFromPrompt,
   pngHeight,
@@ -457,5 +459,52 @@ describe("Pinterest", () => {
     assert.equal(plain.folder, "pins")
     assert.equal(plain.manifest, undefined)
     assert.equal(plain.skipPins, undefined)
+  })
+})
+
+describe("Google Images", () => {
+  const PIC = "https://www.micechat.com/uploads/ghibli-park.jpg"
+  const FILED = "https://i.pinimg.com/736x/6c/48/d9/6c48.jpg"
+
+  test("a session in the inbox writes sidecars and skips the images the library has, filed or waiting", async () => {
+    writeConfig()
+    makeCatalog([
+      { id: "i1", path: "images/ghibli.jpg", tool: "google-images", ref: FILED },
+      { id: "i2", path: "images/old.jpg", tool: "google-images", ref: "https://x.com/offline.jpg", status: "offline" },
+      { id: "i3", path: "images/pin.jpg", tool: "pinterest", ref: "aa11" }
+    ])
+    const folder = join(inbox, "google-images", "2026-11-11-ghibli")
+    writeSidecar(touch(join(folder, "ghibli-park.jpg")), { tool: "google-images", ref: PIC, query: "ghibli" })
+    touch(join(folder, "gone.jpg.source.json"), JSON.stringify({ tool: "google-images", ref: "https://x.com/gone.jpg" }))
+    const bridge = fakeBridge({ "googleImages.bulkStart": (params) => params })
+    await startGoogleImagesBulk(bridge, { query: "studio ghibli forest", count: 20, minWidth: 800 })
+    const params = bridge.calls[0].params
+    assert.equal(params.query, "studio ghibli forest")
+    assert.equal(params.count, 20)
+    assert.equal(params.minWidth, 800)
+    assert.equal(params.inboxFolder, "_INBOX/google-images")
+    assert.deepEqual(params.takenFolders, ["2026-11-11-ghibli"])
+    assert.equal(params.sidecars, true)
+    assert.equal(params.folder, undefined)
+    assert.deepEqual([...params.skipRefs].sort(), [FILED, PIC].sort())
+    assert.deepEqual((await knownRefs("google-images", readLibrary(home))).sort(), [FILED, PIC].sort())
+  })
+
+  test("force, Mediamake uploads and no library: no skip list, no sidecars", async () => {
+    writeConfig()
+    makeCatalog([{ id: "i1", path: "images/ghibli.jpg", tool: "google-images", ref: FILED }])
+    const bridge = fakeBridge({ "googleImages.bulkStart": () => ({}) })
+    await startGoogleImagesBulk(bridge, { query: "q", force: true })
+    await startGoogleImagesBulk(bridge, { query: "q", destination: "mediamake" })
+    rmSync(join(home, ".mediamake"), { recursive: true })
+    await startGoogleImagesBulk(bridge, { query: "q", folder: "~/Downloads/refs" })
+    const [forced, mediamake, plain] = bridge.calls.map((c) => c.params)
+    assert.equal(forced.skipRefs, undefined)
+    assert.equal(forced.sidecars, true)
+    assert.equal(mediamake.sidecars, false)
+    assert.equal(mediamake.inboxFolder, undefined)
+    assert.equal(plain.folder, "refs")
+    assert.equal(plain.sidecars, false)
+    assert.equal(plain.skipRefs, undefined)
   })
 })

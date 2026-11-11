@@ -4,7 +4,12 @@
 // So every download that names its file starts here, and that listener hands
 // the name back (askedName).
 
-type Asked = chrome.downloads.DownloadFilenameSuggestion
+import { withMimeExtension } from "./googleImages"
+
+type Asked = chrome.downloads.DownloadFilenameSuggestion & {
+  // Give the file the extension its type calls for (known once the server answers).
+  extensionFromMime?: boolean
+}
 
 // URL -> the names its downloads asked for, oldest first.
 const asked = new Map<string, Asked[]>()
@@ -24,10 +29,17 @@ function forget(key: string, entry: Asked) {
   else asked.delete(key)
 }
 
-export async function downloadFile(options: chrome.downloads.DownloadOptions) {
+export async function downloadFile(
+  options: chrome.downloads.DownloadOptions,
+  { extensionFromMime = false }: { extensionFromMime?: boolean } = {}
+) {
   if (!options.filename) return chrome.downloads.download(options)
   const key = urlKey(options.url)
-  const entry: Asked = { filename: options.filename, conflictAction: options.conflictAction }
+  const entry: Asked = {
+    filename: options.filename,
+    conflictAction: options.conflictAction,
+    ...(extensionFromMime ? { extensionFromMime } : {})
+  }
   asked.set(key, [...(asked.get(key) ?? []), entry])
   try {
     return await chrome.downloads.download(options)
@@ -38,10 +50,16 @@ export async function downloadFile(options: chrome.downloads.DownloadOptions) {
 }
 
 // The name one of our downloads asked for, if this is one.
-export function askedName(item: chrome.downloads.DownloadItem): Asked | undefined {
+export function askedName(
+  item: chrome.downloads.DownloadItem
+): chrome.downloads.DownloadFilenameSuggestion | undefined {
   if (item.byExtensionId !== chrome.runtime.id) return undefined
   const key = urlKey(item.url)
   const entry = asked.get(key)?.[0]
-  if (entry) forget(key, entry)
-  return entry
+  if (!entry) return undefined
+  forget(key, entry)
+  const { extensionFromMime, ...suggestion } = entry
+  return extensionFromMime
+    ? { ...suggestion, filename: withMimeExtension(suggestion.filename, item.mime) }
+    : suggestion
 }

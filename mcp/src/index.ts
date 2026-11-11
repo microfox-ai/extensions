@@ -11,7 +11,7 @@ import { z } from "zod"
 import { Bridge } from "./bridge.js"
 import { fillDistrokidReleases } from "./distrokid.js"
 import { bulkUploadShorts, fillYoutubeUploads } from "./youtubeUpload.js"
-import { downloadMidjourneyImages, instagramDownload, startPinterestBulk, youtubeDownload } from "./downloads.js"
+import { downloadMidjourneyImages, instagramDownload, startGoogleImagesBulk, startPinterestBulk, youtubeDownload } from "./downloads.js"
 import { saveGoogleAiAnswers } from "./googleAiAnswers.js"
 import { batchStatus, pauseBatch, startBatch } from "./midjourneyBatch.js"
 import { downloadExplore, exploreMidjourney, exploreMidjourneyStyles } from "./midjourneyExplore.js"
@@ -39,7 +39,7 @@ const server = new McpServer(
   { name: "browse-hack", version: VERSION },
   {
     instructions:
-      "Tools for the Browse Hack browser extension running in the user's Chrome: bulk-download Pinterest pins, " +
+      "Tools for the Browse Hack browser extension running in the user's Chrome: bulk-download Pinterest pins and Google Images searches (the original full-size images), " +
       "download YouTube videos and Instagram posts, reels and stories, save media to Mediamake, toggle on-page saver overlays, upload Suno tracks, automate Midjourney, " +
       "and fill DistroKid's new-release form from local folders (one tab per release; the user clicks Continue, " +
       "then info.json's useMyOriginals and addLyrics let the extension fill in the Mixea and lyrics pages, which the user submits), " +
@@ -60,7 +60,7 @@ const server = new McpServer(
       "(Reddit blocks plain curl), one request at a time; they never return usernames, so quote comments short and anonymous. " +
       "Tools act on the user's real browser tabs; most take an optional tabId (see list_tabs) and default to the active tab. " +
       "Downloads land in the browser's Downloads folder. When MediaMake's media library is set up (~/.mediamake/config.json), " +
-      "YouTube, Instagram, Pinterest and Midjourney downloads go to its inbox with a <file>.source.json beside each, and " +
+      "YouTube, Instagram, Pinterest, Google Images and Midjourney downloads go to its inbox with a <file>.source.json beside each, and " +
       "YouTube and Instagram media the library already has comes back as alreadyHave instead of downloading again (force skips that check). " +
       "Call get_status first if a tool says the extension isn't connected. " +
       "The extension may be installed in several Chrome profiles (accounts). When two or more are connected, ask the user which " +
@@ -339,6 +339,63 @@ tool(
   "pinterest.bulkStatus",
   { readOnly: true }
 )
+
+// --- Google Images ---
+
+localTool(
+  "google_images_bulk_start",
+  "Bulk-downloads the full-size original images behind a Google Images search (not Google's thumbnails), in the order " +
+    "Google shows them. Pass a query to open the search in a new background tab, or use a Google Images tab that's open " +
+    "(google.com/search?...&udm=2). The session runs in that tab on its own: it reads each result's original image " +
+    "address and size from Google's own data, clicks Google's More results when it needs more, skips results smaller " +
+    "than minWidth x minHeight, duplicates and images that fail to download (a page instead of an image, a timeout), " +
+    "and stops once count images are saved or Google has no more. Follow it with google_images_bulk_status. " +
+    "With MediaMake's media library set up, images go to the library inbox's google-images/<YYYY-MM-DD>-<search>, each " +
+    "with a <file>.source.json (the image address as ref, the page it is on, its title and the search), and images the " +
+    "library already has are skipped. If Google shows its unusual-traffic check, the session stops: the user clears it " +
+    "in the tab; never try to solve it.",
+  {
+    query: z.string().optional().describe("What to search Google Images for. Opens a new background tab (close it with close_tabs or closeTab when done)."),
+    tabId: tabId.describe(
+      "A Google Images tab to use instead (with query: searched again in that tab). Defaults to the active tab if it's a Google Images search, else the first one open."
+    ),
+    count: z.number().int().min(1).max(1000).optional().describe("How many images to save (default 50)"),
+    minWidth: z.number().int().min(0).optional().describe("Skip results narrower than this, in pixels (Google's own size for the original)"),
+    minHeight: z.number().int().min(0).optional().describe("Skip results shorter than this, in pixels"),
+    largeOnly: z.boolean().optional().describe("With query: use Google's Size: Large filter"),
+    active: z.boolean().optional().describe("With query: open the tab in front (default false: a background tab)"),
+    destination: z.enum(["browser", "mediamake"]).default("browser").describe("Browser downloads folder or Mediamake upload"),
+    folder: downloadFolder(
+      'the library inbox\'s google-images/<YYYY-MM-DD>-<search> (e.g. "_INBOX/google-images/2026-11-11-studio-ghibli-forest"), else "google-images/<YYYY-MM-DD>-<search>"'
+    ),
+    tags,
+    force: z.boolean().optional().describe("Download images even when MediaMake's media library already has them")
+  },
+  (params) => startGoogleImagesBulk(bridge, params)
+)
+tool(
+  "google_images_bulk_status",
+  "Shows Google Images bulk sessions: the search, folder, count asked for, saved, queued, failed (with the last error), " +
+    "too small, duplicates, skipped because the library has them, results read, and endReason once it has ended.",
+  { tabId: z.number().int().optional().describe("Only this tab's session") },
+  "googleImages.bulkStatus",
+  { readOnly: true }
+)
+tool(
+  "google_images_bulk_stop",
+  "Stops the Google Images bulk session in a tab, once its downloads still running are done, and returns what it saved. " +
+    "A session also stops on its own when it has saved count images or Google has no more results.",
+  {
+    tabId,
+    closeTab: z
+      .boolean()
+      .optional()
+      .describe("Also close the tab once stopped, if open_tab or google_images_bulk_start's query opened it (the user's own tabs stay open)")
+  },
+  "googleImages.bulkStop",
+  { timeoutMs: 120_000 }
+)
+
 tool(
   "pinterest_analyze_image",
   "Runs Mediamake AI analysis on an image (description, keywords, art style) without saving it.",

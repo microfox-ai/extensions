@@ -50,6 +50,13 @@ import { repaintStatus, startRepaint } from "./midjourneyEdit"
 import { redditJson, redditResolve, redditSearchPage } from "./reddit"
 import { explore, exploreStyles } from "./midjourneyExplore"
 import {
+  GI_DEFAULT_COUNT,
+  giSummary,
+  googleImagesSearchUrl,
+  isGoogleImagesUrl
+} from "./googleImages"
+import { listGiSessions, startGiSession, stopGiSession } from "./googleImagesBackground"
+import {
   pagesVisited,
   parseTags,
   sanitizeFolder,
@@ -79,7 +86,7 @@ import { distrokidCommands } from "./distrokidBridge"
 import { sunoCommands } from "./sunoBridge"
 import { youtubeStudioCommands } from "./youtubeUploadBridge"
 import { googleAiAnswer } from "./googleAiAnswer"
-import { closeOpenedTabs, forgetOpenedTab, openTab, openTabForClaude } from "./tabs"
+import { closeOpenedTabs, forgetOpenedTab, openTab, openTabForClaude, waitForTabLoad } from "./tabs"
 import { buildOptions, parseVideoId, type YtMode, type YtVideo } from "./youtube"
 import {
   cancelJob,
@@ -208,6 +215,28 @@ async function inboxSessionFolder(tabId: number, inbox: string, taken: unknown) 
   const inUse = (await listBulkSessions()).map((s) => s.folder.split("/").pop()!)
   const onDisk = Array.isArray(taken) ? taken.map(String) : []
   return `${inbox}/${sessionFolderName(tab.url ?? "", localDate(), [...onDisk, ...inUse])}`
+}
+
+// --- Google Images ---
+
+async function googleImagesTab(tabId?: number) {
+  if (typeof tabId === "number") return tabId
+  const active = await activeTab().catch(() => undefined)
+  if (active && isGoogleImagesUrl(active.url)) return active.id!
+  const tab = (await chrome.tabs.query({})).find((t) => isGoogleImagesUrl(t.url))
+  if (!tab?.id) {
+    throw new Error("No Google Images search is open. Pass a query, or open one (google.com/search?q=...&udm=2) first.")
+  }
+  return tab.id
+}
+
+// The session's folder, named after the tab's search: <parent>/<YYYY-MM-DD>-<search>,
+// then -2, -3 when taken (on disk, as the MCP server lists them, or by another session).
+async function googleImagesFolder(tabId: number, parent: string, taken: unknown) {
+  const tab = await chrome.tabs.get(tabId)
+  const inUse = (await listGiSessions()).map((s) => s.folder.split("/").pop()!)
+  const onDisk = Array.isArray(taken) ? taken.map(String) : []
+  return `${parent}/${sessionFolderName(tab.url ?? "", localDate(), [...onDisk, ...inUse])}`
 }
 
 // --- YouTube ---
@@ -427,6 +456,8 @@ async function busyWork() {
   if (youtube) busy.push(`${youtube} YouTube download${youtube === 1 ? "" : "s"}`)
   const pinterest = (await listBulkSessions()).filter((session) => session.active).length
   if (pinterest) busy.push(`${pinterest} Pinterest bulk download${pinterest === 1 ? "" : "s"}`)
+  const google = (await listGiSessions()).filter((session) => session.active).length
+  if (google) busy.push(`${google} Google Images bulk download${google === 1 ? "" : "s"}`)
   // The extension.status call asking is one of them.
   const calls = inFlight - 1
   if (calls > 0) busy.push(`${calls} Claude tool call${calls === 1 ? "" : "s"} running`)
@@ -457,12 +488,14 @@ const commands: Record<string, (params: any) => Promise<unknown>> = {
   "tabs.open": async ({ url, active, waitForLoad }) =>
     tabSummary(await openTabForClaude(url, active !== false, waitForLoad !== false)),
   // Only tabs opened with tabs.open; a Pinterest session running in one is
-  // stopped first, so its _session.json is written.
+  // stopped first, so its _session.json is written, and a Google Images one
+  // once its downloads still running are done.
   "tabs.close": async ({ tabIds }) => {
     const ids = (Array.isArray(tabIds) ? tabIds : [tabIds]).map(Number).filter(Number.isInteger)
     if (!ids.length) throw new Error("Pass tabIds: the ids of tabs opened with open_tab (see list_tabs).")
     const stopped: { tabId: number; manifest?: string }[] = []
     const result = await closeOpenedTabs(ids, async (tabId) => {
+      await stopGiSession(tabId).catch(() => undefined)
       const { manifest } = await stopBulkSession(tabId)
       if (manifest) stopped.push({ tabId, manifest })
     })
@@ -588,6 +621,68 @@ const commands: Record<string, (params: any) => Promise<unknown>> = {
     (await listBulkSessions())
       .filter((s) => typeof tabId !== "number" || s.tabId === tabId)
       .map(sessionSummary),
+  "googleImages.bulkStart": async (params) => {
+    const query = typeof params.query === "string" ? params.query.trim() : ""
+    let tabId: number
+    if (query && typeof params.tabId !== "number") {
+      const url = googleImagesSearchUrl(query, { large: params.largeOnly === true })
+      tabId = (await openTabForClaude(url, params.active === true, true)).id!
+    } else {
+      tabId = await googleImagesTab(params.tabId)
+      if (query) {
+        await chrome.tabs.update(tabId, { url: googleImagesSearchUrl(query, { large: params.largeOnly === true }) })
+        await waitForTabLoad(tabId)
+      }
+    }
+    const folder = sanitizeFolder(
+      params.folder ||
+        (await googleImagesFolder(tabId, params.inboxFolder || "google-images", params.takenFolders))
+    )
+    const destination = params.destination === "mediamake" ? "mediamake" : "browser"
+    const tags = Array.isArray(params.tags)
+      ? params.tags
+      : parseTags(String((await loadSettings()).tags || "google-images"))
+    const result = await startGiSession({
+      tabId,
+      destination,
+      folder,
+      sidecars: params.sidecars === true,
+      tags,
+      count: params.count ?? GI_DEFAULT_COUNT,
+      minWidth: params.minWidth,
+      minHeight: params.minHeight,
+      skipRefs: params.skipRefs
+    })
+    if (!result.success) throw new Error(result.message)
+    const { session } = result
+    return {
+      tabId,
+      query: session.query,
+      searchUrl: session.searchUrl,
+      count: session.count,
+      ...(session.minWidth || session.minHeight ? { minWidth: session.minWidth, minHeight: session.minHeight } : {}),
+      ...(destination === "browser" ? { folder } : { destination, tags }),
+      sidecars: session.sidecars,
+      ...(session.skipping ? { imagesTheLibraryHas: session.skipping } : {}),
+      note: "Runs in the tab until it has saved count images or Google has no more results; follow it with google_images_bulk_status."
+    }
+  },
+  "googleImages.bulkStop": async ({ tabId, closeTab }) => {
+    const id = await googleImagesTab(tabId)
+    const { success, ...result } = await stopGiSession(id)
+    if (!closeTab) return { tabId: id, ...result }
+    const { closed, notClosed } = await closeOpenedTabs([id])
+    return {
+      tabId: id,
+      ...result,
+      tabClosed: closed.includes(id),
+      ...(notClosed?.length ? { tabKeptOpen: notClosed[0].reason } : {})
+    }
+  },
+  "googleImages.bulkStatus": async ({ tabId }) =>
+    (await listGiSessions())
+      .filter((s) => typeof tabId !== "number" || s.tabId === tabId)
+      .map(giSummary),
   "pinterest.analyzeImage": async (params) =>
     (
       await dispatch(

@@ -7,6 +7,13 @@ last release; see `.github/workflows/release-browse-hack-mcp.yml`). They show
 on Browse Hack's page on MediaMake and in `get_status` / `update_browse_hack`
 after an update.
 
+## 0.17.0
+
+- Bulk-download Google Images searches, with Browse Hack 0.20.0. `google_images_bulk_start` takes a `query` (opened in a background tab; `largeOnly` adds Google's Size: Large filter) or an open Google Images tab, and saves the full-size original behind each result, not Google's thumbnail, in Google's order, until it has `count` images (default 50, up to 1000). Results smaller than `minWidth` x `minHeight` (Google's own size for the original), duplicates, and images whose site sends a page instead of the image are skipped and the next result takes their place.
+- The session runs in the tab by itself: it reads each result's original address and size from Google's own data (the page's scripts for the first 100, the answers to Google's More results requests after that) and clicks More results when it needs more, without sending Google requests of its own. It ends when it has `count` or Google has no more (a few hundred results per search). `google_images_bulk_status` shows its counts, the last page read and why it ended; `google_images_bulk_stop` ends it early and `closeTab` closes a tab it opened. If Google shows its unusual-traffic check, the session stops for the user to clear it.
+- With MediaMake's library set up, images go to `_INBOX/google-images/<date>-<search>`, each with a `<file>.source.json` (`tool: "google-images"`, the image's address as `ref`, the page it is on, its title and the search), and images the library already has, filed or still in the inbox, are skipped (`force` downloads them anyway).
+- The popup has a Google Images tab with the same bulk download (count, smallest side, folder, progress, Stop), and opens on it on a Google Images search (on the Pinterest tab on Pinterest).
+
 ## 0.16.1
 
 - `vocalGender` is checked on the request Suno actually sends. With Browse Hack 0.19.1, Create is clicked only once the form's More Options row shows the voice asked for (Female or Male, read back after every step that re-renders the form), and the page reads `metadata.vocal_gender` from suno.com's own Create request. `suno_create` and `suno_cover` answer with `vocalGender` (what the request asked for), and warn when it wasn't the one asked for or couldn't be read; a batch notes that warning in `run.log` and logs each job's vocal gender. Suno doesn't keep the vocal gender on the finished songs, so the request is the only place to check it.

@@ -17,6 +17,10 @@ This is a [Plasmo extension](https://docs.plasmo.com/) project bootstrapped with
 | `lib/mediamake.ts` | Mediamake sparkboard-index upload, shared by the Save overlay and bulk download |
 | `lib/pinterestBulk.ts` | Pinterest bulk download: session types, pin image and video URL parsing, page keys |
 | `lib/pinterestBulkBackground.ts` | Pinterest bulk download sessions (one per tab): per-page limits, skipping revisited pages, the download / upload queue. A stopped session keeps only its counts in `chrome.storage.session` (10 MB for the whole extension); when it is full, stopped sessions of other tabs are cleared |
+| `lib/googleImages.ts` | Google Images bulk download: session types, reading a result's original image from Google's data, file names (tests: `lib/googleImages.test.mjs`) |
+| `lib/googleImagesPage.ts` | Runs in the Google Images tab's own page: reads the results' data from its scripts and from the answers to Google's own More results requests, and clicks More results |
+| `lib/googleImagesBackground.ts` | Google Images bulk sessions (one per tab): reads the tab, asks for more results, the download / upload queue with its count, size filter and `.source.json` sidecars |
+| `componenets/GoogleImagesTab.tsx` | Popup tab: bulk-download the Google Images search in the active tab (count, smallest side, folder), progress and Stop |
 | `lib/pinterestVideoBackground.ts` | Saves one Pinterest video: finds its MP4, or falls back to HLS through `tabs/offscreen.tsx`. Shares the single offscreen-document slot with the YouTube downloader |
 | `contents/pinterest.ts` | Content script on Pinterest: Download button on video pins, progress cards |
 | `lib/pinterestVideoDownload.ts` | One-click Pinterest video downloads from that button: jobs, progress, cancel |

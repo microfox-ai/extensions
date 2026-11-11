@@ -89,6 +89,25 @@ Rules:
 - A video pin is saved as its video, never as its cover image, even when Pinterest shows only the cover and a duration badge (as it does when you're signed in): the extension looks the pin's video up.
 - The session belongs to that tab only and ends when you click Stop, close the tab, or quit the browser.
 
+### Bulk download from Google Images (Google Images tab)
+
+Saves the full-size original image behind each result of a Google Images search (not Google's thumbnails), in the order Google shows them, up to the number you ask for.
+
+1. Search on Google and click **Images** (the address has `udm=2`, or `tbm=isch` on older links), then open the popup. It opens on its **Google Images** tab (on Pinterest it opens on the Pinterest tab).
+2. Under **Bulk download**, set **How many images** and, if you want only big ones, **Smallest side** (for example 1000px or more: both sides at least that, by Google's own size for the original).
+3. Pick where they go:
+   - **Browser downloads**: a folder inside Downloads, by default MediaMake's library inbox, `_INBOX/google-images/<date>-<search>` (for example `_INBOX/google-images/2026-11-11-studio-ghibli-forest`). Inside the inbox each image gets a `<file>.source.json` with the image's address, the page it is on, its title and your search, so `mm media ingest` files it with that.
+   - **Mediamake**: every image is uploaded with the same tags.
+4. Click **Download N images**. The panel shows saved, queued, failed and too-small counts, and **Stop** ends it early.
+
+Rules:
+
+- The session runs the tab itself: it reads each result's original address from Google's own data on the page and clicks Google's **More results** when it needs more, so you don't have to scroll. It never sends Google requests of its own.
+- It stops once it has saved the number asked for, or when Google has no more results (Google stops at a few hundred per search).
+- Results smaller than the smallest side, the same image found twice, and images whose site sends a page instead of the image (a login wall, "forbidden") are skipped; the next result takes their place.
+- File names come from the image's address, else its title. The extension is the one the image's type calls for (`.png`, `.webp`, ...).
+- If Google shows its unusual-traffic check, the session stops: clear it in the tab yourself, then start again.
+
 ### Download one Pinterest video
 
 Hover a video pin anywhere on Pinterest (home feed, search, boards) and click **Download** in its bottom-left corner. On a video pin's own page the button stays visible on the video. The video is saved to your Downloads folder as an MP4 of up to 720p, named after the pin, for example `Pin title [1a2b3c4d].mp4`.
@@ -160,7 +179,7 @@ Shortcuts:
 
 ### Let Claude use the extension (MCP)
 
-With the [MCP server](mcp) set up, Claude can run everything above for you ("download this YouTube video at 720p", "bulk-download this Pinterest board", "save every slide of this Instagram post"). In **Settings**, **Let Claude use this extension (MCP)** turns this on or off; it shows **Connected to Claude** while the server runs. Setup steps are in [`mcp/README.md`](mcp/README.md).
+With the [MCP server](mcp) set up, Claude can run everything above for you ("download this YouTube video at 720p", "bulk-download this Pinterest board", "get me 50 big Google Images of Ghibli forests", "save every slide of this Instagram post"). In **Settings**, **Let Claude use this extension (MCP)** turns this on or off; it shows **Connected to Claude** while the server runs. Setup steps are in [`mcp/README.md`](mcp/README.md).
 
 ### Upload to YouTube from a pack folder (Claude only)
 
