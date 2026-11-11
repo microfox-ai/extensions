@@ -255,6 +255,30 @@ export async function knownPins(lib = readLibrary()): Promise<{ pins: string[]; 
   }
 }
 
+/**
+ * The refs the library has for a tool (filed online, or downloaded into <inbox>/<tool> and not filed yet),
+ * e.g. the image addresses of Google Images downloads, so a bulk session skips them.
+ */
+export async function knownRefs(tool: string, lib = readLibrary()): Promise<string[]> {
+  const filed =
+    (await readCatalog(lib, (db) =>
+      db
+        .prepare("SELECT s.ref FROM sources s JOIN items i ON i.id = s.item_id WHERE s.tool = ? AND i.status = 'online'")
+        .all(tool)
+        .map((row) => String(row.ref))
+    )) ?? []
+  const waiting: string[] = []
+  if (lib.inbox) {
+    for (const sidecar of filesIn(join(lib.inbox, tool), 3, (name) => name.endsWith(SIDECAR_SUFFIX))) {
+      const record = readJson(sidecar)
+      if (record?.tool === tool && typeof record.ref === "string" && existsSync(sidecar.slice(0, -SIDECAR_SUFFIX.length))) {
+        waiting.push(record.ref)
+      }
+    }
+  }
+  return [...new Set([...filed, ...waiting])]
+}
+
 /** Names of the folders in a directory (for picking one that's free). */
 export function subfolders(dir: string) {
   try {

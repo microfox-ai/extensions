@@ -1,4 +1,4 @@
-import { useState, type ComponentType } from "react"
+import { useEffect, useState, type ComponentType } from "react"
 import "./style.css"
 
 import { MidjourneyTab } from "./componenets/MidjourneyTab"
@@ -7,15 +7,19 @@ import { AgentsTab } from "./componenets/AgentsTab"
 import { SaverTab } from "./componenets/SaverTab"
 import { SettingsTab } from "./componenets/SettingsTab"
 import { PinterestTab } from "./componenets/PinterestTab"
+import { GoogleImagesTab } from "./componenets/GoogleImagesTab"
 import { YouTubeTab } from "./componenets/YouTubeTab"
 import { InstagramTab } from "./componenets/InstagramTab"
 import { DistroKidTab } from "./componenets/DistroKidTab"
 import { StudioTab } from "./componenets/StudioTab"
 import { SignInScreen, useAuthState } from "./componenets/SignInScreen"
+import { isGoogleImagesUrl } from "./lib/googleImages"
+import { isPinterestHost } from "./lib/saverRules"
 
 type MainTab =
   | "midjourney"
   | "pinterest"
+  | "googleImages"
   | "youtube"
   | "studio"
   | "instagram"
@@ -39,6 +43,12 @@ const TABS: {
     label: "Pinterest",
     activeColor: "#E60023",
     component: PinterestTab
+  },
+  {
+    id: "googleImages",
+    label: "Google Images",
+    activeColor: "#1a73e8",
+    component: GoogleImagesTab
   },
   {
     id: "youtube",
@@ -82,6 +92,22 @@ function IndexPopup() {
   const auth = useAuthState()
   const visibleTabs = TABS.filter((tab) => !tab.hidden)
   const ActiveComponent = TABS.find((tab) => tab.id === activeTab)!.component
+
+  // Opened on a Google Images search or on Pinterest, the popup starts on that
+  // tab, where its bulk download is.
+  useEffect(() => {
+    chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+      const url = tab?.url ?? ""
+      if (isGoogleImagesUrl(url)) setActiveTab("googleImages")
+      else {
+        try {
+          if (isPinterestHost(new URL(url).hostname)) setActiveTab("pinterest")
+        } catch {
+          // Not a web page.
+        }
+      }
+    })
+  }, [])
 
   if (!auth) return <div style={popupStyle} />
   if (!auth.signedIn) {

@@ -15,6 +15,7 @@ import {
   hasLibrary,
   inboxFolder,
   knownPins,
+  knownRefs,
   localDate,
   modelFromPrompt,
   pngHeight,
@@ -252,4 +253,41 @@ export async function startPinterestBulk(bridge: Bridge, { force, ...params }: P
     // Video pins are checked against these, so a saved cover doesn't stand for its video.
     skipVideos: known?.videos
   })
+}
+
+// --- Google Images ---
+
+export interface GoogleImagesBulkParams {
+  query?: string
+  tabId?: number
+  largeOnly?: boolean
+  active?: boolean
+  count?: number
+  minWidth?: number
+  minHeight?: number
+  destination?: "browser" | "mediamake"
+  folder?: string
+  tags?: string[]
+  force?: boolean
+}
+
+export async function startGoogleImagesBulk(bridge: Bridge, { force, ...params }: GoogleImagesBulkParams) {
+  const lib = readLibrary()
+  const library = params.destination !== "mediamake" && hasLibrary(lib)
+  // The extension names the session's folder after the search: <date>-<query>.
+  const inbox = library && params.folder === undefined ? inboxFolder(lib, "google-images") : undefined
+  const known = library && !force ? await knownRefs("google-images", lib) : undefined
+  return bridge.call(
+    "googleImages.bulkStart",
+    {
+      ...params,
+      folder: params.folder !== undefined ? downloadsFolder(params.folder, lib.home) : undefined,
+      inboxFolder: inbox,
+      takenFolders: inbox && lib.inbox ? subfolders(join(lib.inbox, "google-images")) : undefined,
+      // A <file>.source.json beside each image (its page, the search), for `mm media ingest`.
+      sidecars: library,
+      skipRefs: known?.length ? known : undefined
+    },
+    60_000
+  )
 }
