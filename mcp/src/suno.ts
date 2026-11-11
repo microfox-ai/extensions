@@ -379,6 +379,8 @@ export interface Made {
   creditsBefore?: number
   /** The model the Create form showed as Create was clicked. */
   model?: string
+  /** The vocal gender Suno's own Create request asked for (male, female or none), read in the page by Browse Hack 0.19.1+. */
+  vocalGender?: string
 }
 
 // Suno's Create form is one shared page in Browse Hack's Suno tab: a fill
@@ -411,6 +413,7 @@ async function finish(bridge: Bridge, made: Made, params: SongParams, ctx: Conte
     return {
       clipIds: made.clipIds,
       formModel: made.model,
+      ...(made.vocalGender ? { vocalGender: made.vocalGender } : {}),
       warnings: warnings.length ? warnings : undefined,
       note: "Suno is making them. Check with suno_get_songs; record and download them when they're done."
     }
@@ -435,6 +438,7 @@ async function finish(bridge: Bridge, made: Made, params: SongParams, ctx: Conte
     songs: songs.map(summary),
     finished,
     creditsBefore: made.creditsBefore,
+    ...(made.vocalGender ? { vocalGender: made.vocalGender } : {}),
     channel: ctx.channel,
     recorded: recorded.recorded,
     ...(wrong.length ? { modelMismatch: { asked: params.model, songs: wrong.map((s) => ({ id: s.id, model: s.model })) } } : {}),

@@ -10,6 +10,7 @@ import {
 } from "../lib/suno/clip"
 import {
   assertModel,
+  assertVocalGender,
   captchaVisible,
   clickCreate,
   clickDownload,
@@ -26,6 +27,7 @@ import {
 import { SEL } from "../lib/suno/selectors"
 import { isSaverActive, watchSaverRules, type SaverRule } from "../lib/saverRules"
 import { SUNO_PREFS_KEY, findChannel, readSunoPrefs, songSet, type SunoPrefs } from "../lib/sunoPrefs"
+import type { SentVocalGender } from "../lib/sunoRequest"
 
 // Browse Hack on suno.com. For the background worker (lib/sunoBridge.ts), it
 // reads songs, workspaces and credits through suno.com's own API with the
@@ -141,9 +143,13 @@ interface GenerateEvent {
   clipIds: string[]
   batchId?: string
   detail?: string
+  /** What the request asked for (contents/sunoPage.ts reads its body); undefined when it couldn't be read. */
+  sentVocalGender?: SentVocalGender
+  sentModelKey?: string
 }
 
 const generateEvents: GenerateEvent[] = []
+const GENDERS: SentVocalGender[] = ["male", "female", "none"]
 
 window.addEventListener("message", (event) => {
   const data = event.data
@@ -154,13 +160,15 @@ window.addEventListener("message", (event) => {
     status: Number(data.status) || 0,
     clipIds: Array.isArray(data.clipIds) ? data.clipIds.map(String) : [],
     batchId: typeof data.batchId === "string" ? data.batchId : undefined,
-    detail: typeof data.detail === "string" ? data.detail : undefined
+    detail: typeof data.detail === "string" ? data.detail : undefined,
+    sentVocalGender: GENDERS.includes(data.sentVocalGender) ? data.sentVocalGender : undefined,
+    sentModelKey: typeof data.sentModelKey === "string" ? data.sentModelKey : undefined
   })
   if (generateEvents.length > 40) generateEvents.shift()
 })
 
 type Outcome =
-  | { clipIds: string[]; batchId?: string; since: number }
+  | { clipIds: string[]; batchId?: string; since: number; sentVocalGender?: SentVocalGender; sentModelKey?: string }
   | { refused: string; status: number; since: number }
   | { captcha: true; since: number }
   | { error: string; since: number }
@@ -168,7 +176,13 @@ type Outcome =
 
 const outcomeOf = (event: GenerateEvent, since: number): Outcome =>
   event.ok
-    ? { clipIds: event.clipIds, batchId: event.batchId, since }
+    ? {
+        clipIds: event.clipIds,
+        batchId: event.batchId,
+        since,
+        sentVocalGender: event.sentVocalGender,
+        sentModelKey: event.sentModelKey
+      }
     : { refused: event.detail || `Suno answered ${event.status}.`, status: event.status, since }
 
 /** Waits for the answer to a Create clicked at `since`, noticing a captcha or an error message. */
@@ -187,9 +201,14 @@ async function awaitOutcome(since: number, waitMs: number, reportCaptcha = true)
   return { timeout: true, since }
 }
 
-/** Clicks Create, once the form shows `expectModel` (when given): a Create on another model spends credits for nothing. */
-async function submit(waitMs = 45_000, expectModel?: string) {
+/**
+ * Clicks Create, once the form shows `expectModel` and `expectVocalGender` (when
+ * given): a Create on another model or without the voice asked for spends
+ * credits for nothing.
+ */
+async function submit(waitMs = 45_000, expectModel?: string, expectVocalGender?: "male" | "female") {
   assertModel(expectModel)
+  await assertVocalGender(expectVocalGender)
   const before = readForm()
   const since = Date.now()
   clickCreate()
@@ -241,7 +260,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     case "giz-suno-fill":
       return reply(fillForm((msg.job ?? {}) as SunoFormJob))
     case "giz-suno-submit":
-      return reply(submit(Number(msg.waitMs) || 45_000, typeof msg.expectModel === "string" ? msg.expectModel : undefined))
+      return reply(
+        submit(
+          Number(msg.waitMs) || 45_000,
+          typeof msg.expectModel === "string" ? msg.expectModel : undefined,
+          msg.expectVocalGender === "male" || msg.expectVocalGender === "female" ? msg.expectVocalGender : undefined
+        )
+      )
     case "giz-suno-await":
       return reply(awaitOutcome(Number(msg.since) || 0, Number(msg.waitMs) || 60_000, msg.reportCaptcha !== false))
     case "giz-suno-download":

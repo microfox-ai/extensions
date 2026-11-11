@@ -61,6 +61,24 @@ Premier account. When Suno changes, fix `selectors.ts` (the page) or `clip.ts`
   its longer version, which is what reproduces the song.
 - Default sliders aren't stored: `control_sliders` held only `aug_creativity: 1`.
 
+## Vocal Gender (checked live 2026-11-11, request blocked in the page, no credits)
+
+- The site passes a `Request` to `fetch` for `/a/api/generate/v2-web/`, so its
+  body is read from `request.clone()`. With More Options' Vocal Gender on
+  Female the body has `metadata.vocal_gender: "f"` ("m" for Male; no key
+  when neither is on), beside `mv` (the model key: chirp-hawk = v6,
+  chirp-hawk-wild = v6-wild) and `metadata.create_mode: "custom"`.
+- The finished song does NOT keep it: `/a/api/clip/<id>` has no
+  `vocal_gender` (none in 600 songs of a Premier account), so the request
+  read by `contents/sunoPage.ts` is the only proof of the voice asked for.
+- The row's buttons carry `data-selected="true|false"`. The page also keeps a
+  hidden copy of the row (zero size, buttons without `data-selected`): pick
+  the live one. More Options can be folded (`aria-expanded="false"`) with its
+  rows still in the page; a click on them still sets the form.
+- The vocal gender isn't remembered across page loads (the memorized form
+  state in localStorage keeps the model and input heights only), and
+  "Clear all form inputs" turns it off. Switching the model keeps it.
+
 ## The Create page (`/create`)
 
 - URL parameters: `wid` (workspace), `song_id` + `remix_type` (`cover`,

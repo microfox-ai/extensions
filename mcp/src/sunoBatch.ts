@@ -343,13 +343,24 @@ class SunoBatch {
         const made = (job.mode ?? "create") === "create"
           ? await createSongs(this.bridge, params)
           : await coverSong(this.bridge, { ...params, from: job.from!, kind: job.mode as CoverKind })
-        const { clipIds: ids = [], formModel, warnings = [] } = made as { clipIds?: string[]; formModel?: string; warnings?: string[] }
+        const { clipIds: ids = [], formModel, vocalGender, warnings = [] } = made as {
+          clipIds?: string[]
+          formModel?: string
+          vocalGender?: string
+          warnings?: string[]
+        }
         Object.assign(job, { status: "submitted", clipIds: ids, submittedAt: now() })
         delete job.error
         this.waitingFor = undefined
         this.save()
-        this.log("submitted", job.name, ids.join(" "), job.model ? `form model ${formModel ?? "unknown"}` : "")
-        for (const warning of warnings) if (/model/i.test(warning)) this.noteError(`${job.name}: ${warning}`)
+        this.log(
+          "submitted",
+          job.name,
+          ids.join(" "),
+          job.model ? `form model ${formModel ?? "unknown"}` : "",
+          job.vocalGender ? `vocal gender ${vocalGender ?? "unknown"}` : ""
+        )
+        for (const warning of warnings) if (/model|vocal gender/i.test(warning)) this.noteError(`${job.name}: ${warning}`)
         room--
       } catch (error) {
         const text = message(error)

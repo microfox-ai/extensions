@@ -1,10 +1,13 @@
 import type { PlasmoCSConfig } from "plasmo"
 
+import { sentSettings, type SentSettings } from "../lib/sunoRequest"
+
 // Runs in suno.com's own page (not the extension's isolated world) before the
 // site's code, so it sees the answer to the site's own Create request: the ids
-// of the two songs it started, or why it was refused (captcha, credits). Only
-// those reach the content script (contents/suno.ts); request headers, tokens
-// and bodies never leave the page. It also sets the lyrics editor's text and
+// of the two songs it started, or why it was refused (captcha, credits), and
+// the vocal gender and model key the request asked for. Only those reach the
+// content script (contents/suno.ts); request headers, tokens and the rest of
+// the body never leave the page. It also sets the lyrics editor's text and
 // catches Suno's file picker for an upload, when the content script asks.
 
 export const config: PlasmoCSConfig = {
@@ -21,7 +24,7 @@ function clipIdsOf(body: any): string[] {
   return clips.map((clip: any) => clip?.id).filter((id: unknown) => typeof id === "string")
 }
 
-function report(url: string, status: number, body: any) {
+function report(url: string, status: number, body: any, sent?: SentSettings) {
   const ids = clipIdsOf(body)
   const detail =
     typeof body?.detail === "string"
@@ -42,7 +45,9 @@ function report(url: string, status: number, body: any) {
       status,
       clipIds: ids,
       batchId: typeof body?.id === "string" ? body.id : undefined,
-      detail: detail?.slice(0, 300)
+      detail: detail?.slice(0, 300),
+      sentVocalGender: sent?.vocalGender,
+      sentModelKey: sent?.modelKey
     },
     location.origin
   )
@@ -103,30 +108,56 @@ HTMLInputElement.prototype.click = function (this: HTMLInputElement) {
   this.setAttribute("data-browse-hack-file", "")
 }
 
+/**
+ * The settings a Create request asked for. suno.com passes a Request whose body
+ * is read from a copy, before the request itself is sent.
+ */
+function readSent(input: RequestInfo | URL, init?: RequestInit): Promise<SentSettings | undefined> {
+  try {
+    if (typeof init?.body === "string") return Promise.resolve(sentSettings(init.body))
+    if (init?.body == null && input instanceof Request) {
+      return input
+        .clone()
+        .text()
+        .then(sentSettings, () => undefined)
+    }
+  } catch {
+    // An unreadable body only means the settings go unchecked.
+  }
+  return Promise.resolve(undefined)
+}
+
 const originalFetch = window.fetch
 window.fetch = async function (input: RequestInfo | URL, init?: RequestInit) {
-  const response = await originalFetch.call(this, input, init)
+  let generateUrl: string | undefined
+  let sent: Promise<SentSettings | undefined> = Promise.resolve(undefined)
   try {
     const url = input instanceof Request ? input.url : String(input)
     const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase()
     if (method === "POST" && GENERATE.test(url)) {
-      response
-        .clone()
-        .json()
-        .then(
-          (body) => report(url, response.status, body),
-          () => report(url, response.status, null)
-        )
+      generateUrl = url
+      sent = readSent(input, init)
     }
   } catch {
     // Never get in the way of the site's own request.
+  }
+  const response = await originalFetch.call(this, input, init)
+  if (generateUrl) {
+    const url = generateUrl
+    Promise.all([response.clone().json().catch(() => null), sent.catch(() => undefined)]).then(
+      ([body, settings]) => report(url, response.status, body, settings),
+      () => report(url, response.status, null)
+    )
   }
   return response
 }
 
 const originalOpen = XMLHttpRequest.prototype.open
+const originalSend = XMLHttpRequest.prototype.send
+const xhrGenerate = new WeakMap<XMLHttpRequest, { url: string; sent?: SentSettings }>()
 XMLHttpRequest.prototype.open = function (method: string, url: string | URL, ...rest: any[]) {
   if (String(method).toUpperCase() === "POST" && GENERATE.test(String(url))) {
+    xhrGenerate.set(this, { url: String(url) })
     this.addEventListener("load", () => {
       let body: any = null
       try {
@@ -134,8 +165,13 @@ XMLHttpRequest.prototype.open = function (method: string, url: string | URL, ...
       } catch {
         // not JSON
       }
-      report(String(url), this.status, body)
+      report(String(url), this.status, body, xhrGenerate.get(this)?.sent)
     })
-  }
+  } else xhrGenerate.delete(this)
   return (originalOpen as any).call(this, method, url, ...rest)
+}
+XMLHttpRequest.prototype.send = function (body?: Document | XMLHttpRequestBodyInit | null) {
+  const generate = xhrGenerate.get(this)
+  if (generate && typeof body === "string") generate.sent = sentSettings(body)
+  return originalSend.call(this, body)
 }
