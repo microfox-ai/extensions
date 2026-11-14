@@ -37,6 +37,8 @@ export interface SourceFields {
   workspace?: { id: string; name: string }
   /** The library channel it belongs to. */
   channel?: string
+  /** What may be done with it: the licence or terms it was downloaded under (Tripo). */
+  license?: string
 }
 
 // The same keys, in the same order, as sourceRecord in mcp/src/library.ts.
@@ -61,7 +63,8 @@ const SOURCE_KEYS = [
   "relation",
   "sourceItem",
   "workspace",
-  "channel"
+  "channel",
+  "license"
 ] as const
 
 const keep = (value: unknown): unknown => {

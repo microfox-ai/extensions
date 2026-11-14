@@ -84,6 +84,7 @@ import {
 } from "./saverRules"
 import { distrokidCommands } from "./distrokidBridge"
 import { sunoCommands } from "./sunoBridge"
+import { tripoCommands } from "./tripoBridge"
 import { youtubeStudioCommands } from "./youtubeUploadBridge"
 import { googleAiAnswer } from "./googleAiAnswer"
 import { closeOpenedTabs, forgetOpenedTab, openTab, openTabForClaude, waitForTabLoad } from "./tabs"
@@ -838,7 +839,8 @@ const commands: Record<string, (params: any) => Promise<unknown>> = {
 
   ...distrokidCommands,
   ...youtubeStudioCommands,
-  ...sunoCommands
+  ...sunoCommands,
+  ...tripoCommands
 }
 
 // --- Connection ---

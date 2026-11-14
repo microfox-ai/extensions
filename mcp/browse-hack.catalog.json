@@ -2,10 +2,10 @@
   "kind": "mcp",
   "slug": "browse-hack",
   "title": "Browse Hack",
-  "summary": "Drive the Browse Hack Chrome extension from Claude: Midjourney prompts and queues, Pinterest image analysis, Google Images bulk downloads, YouTube downloads, Suno songs and covers recorded per channel, Reddit searches and threads as JSON, and saving media to MediaMake.",
+  "summary": "Drive the Browse Hack Chrome extension from Claude: Midjourney prompts and queues, Pinterest image analysis, Google Images bulk downloads, YouTube downloads, Suno songs and covers recorded per channel, Tripo 3D models, Reddit searches and threads as JSON, and saving media to MediaMake.",
   "visibility": "private",
   "status": "beta",
-  "tags": ["mcp", "chrome", "midjourney", "suno", "reddit"],
+  "tags": ["mcp", "chrome", "midjourney", "suno", "tripo", "reddit"],
   "install": {
     "method": "mcpb",
     "requires": [

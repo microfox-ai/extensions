@@ -19,6 +19,7 @@ import { toSource } from "./sources.js"
 import { clipIdOf, coverSong, createSongs, downloadSongs, listSongs, rateSongs, sunoStatus } from "./suno.js"
 import { pauseSunoBatch, startSunoBatch, sunoBatchStatus } from "./sunoBatch.js"
 import { SEARCH_SORTS, THREAD_SORTS, TIMES, redditSearch, redditThread } from "./reddit.js"
+import { MAX_GENERATE, downloadModels, generateModels, modelIdOf, tripoStatus } from "./tripo.js"
 import { Updater, serverVersion } from "./updates.js"
 
 // GET_INTO_ZONE_* are the names from before the rename to Browse Hack.
@@ -56,11 +57,15 @@ const server = new McpServer(
       "midjourney_explore searches and browses Midjourney's Explore (what the community publishes) with each image's prompt and style codes; " +
       "its refs work as imagePrompts or styleReferences in midjourney_generate, midjourney_explore_styles finds --sref codes, and " +
       "midjourney_explore_download saves picks into the library inbox as references. " +
+      "Tripo (3D models): tripo_generate fills Tripo's own create form and clicks Generate, which spends credits; it reads the price " +
+      "and balance first and generates nothing until approvedCredits covers the batch, so agree each batch with the user. " +
+      "tripo_download saves any model on Tripo, the user's own or the gallery's, any version: the GLB Tripo's viewer shows, or Tripo's " +
+      "own Export where Tripo offers it (free for the user's own models their plan exports; a gallery model's Export costs credits). " +
       "reddit_search and reddit_thread read Reddit's posts and comment threads as JSON from a reddit.com tab in the user's Chrome " +
       "(Reddit blocks plain curl), one request at a time; they never return usernames, so quote comments short and anonymous. " +
       "Tools act on the user's real browser tabs; most take an optional tabId (see list_tabs) and default to the active tab. " +
       "Downloads land in the browser's Downloads folder. When MediaMake's media library is set up (~/.mediamake/config.json), " +
-      "YouTube, Instagram, Pinterest, Google Images and Midjourney downloads go to its inbox with a <file>.source.json beside each, and " +
+      "YouTube, Instagram, Pinterest, Google Images, Midjourney and Tripo downloads go to its inbox with a <file>.source.json beside each, and " +
       "YouTube and Instagram media the library already has comes back as alreadyHave instead of downloading again (force skips that check). " +
       "Call get_status first if a tool says the extension isn't connected. " +
       "The extension may be installed in several Chrome profiles (accounts). When two or more are connected, ask the user which " +
@@ -794,6 +799,106 @@ tool(
     language: z.string().optional().describe('Default "en"')
   },
   "suno.uploadTrack"
+)
+
+// --- Tripo (3D models) ---
+
+localTool(
+  "tripo_status",
+  "Shows the Tripo (studio.tripo3d.ai) account in this Chrome profile: signed in, plan, credits left (and when some expire), " +
+    "the Free plan's monthly exports left, which model versions Tripo exports only to paying members, and the current and " +
+    "recent generate jobs with their progress. " +
+    "Call it first: tripo_generate and gallery exports spend credits.",
+  {},
+  () => tripoStatus(bridge),
+  true
+)
+tool(
+  "tripo_list_models",
+  "Lists the user's own Tripo models (the workspace's Assets), newest first: id, title, model version (H3.1…), prompt, " +
+    "generation settings (T-pose, texture, PBR…), link, and how tripo_download would save each (download.route: Tripo's " +
+    "Export or the viewer's copy; download.export when Tripo's Export is the other way). Pass nextOffset back as offset for more.",
+  {
+    offset: z.number().int().min(0).optional(),
+    limit: z.number().int().min(1).max(20).optional().describe("Default 20")
+  },
+  "tripo.myModels",
+  { readOnly: true, timeoutMs: 120_000 }
+)
+tool(
+  "tripo_search_gallery",
+  "Searches Tripo's community gallery: id, title, caption, author, likes, link. tripo_download saves any of them. " +
+    "Pass nextPageToken back as pageToken for more.",
+  {
+    query: z.string().describe("What to look for, as in the gallery's search box"),
+    pageToken: z.string().optional(),
+    limit: z.number().int().min(1).max(50).optional().describe("Default 20")
+  },
+  "tripo.search",
+  { readOnly: true, timeoutMs: 120_000 }
+)
+localTool(
+  "tripo_download",
+  "Downloads Tripo models (GLB) and their preview pictures into MediaMake's library inbox (_INBOX/tripo/<title>-<id>.glb) " +
+    "with a <file>.source.json holding the page, author, prompt, model version, settings, how it was saved and licence. " +
+    "Any model on Tripo, the user's own or the gallery's, any version (H3.1, P2.0…). via \"auto\" (default) takes Tripo's " +
+    "own Export when it costs nothing (the user's own models their plan exports: the full-quality file), else the GLB " +
+    "Tripo's viewer shows (meshopt-compressed, free). via \"export\" asks for Tripo's Export where Tripo offers it: a " +
+    "gallery model's costs Tripo credits (usually 5), so ask the user and pass approvedCredits for the batch. Models the " +
+    "library already has come back as alreadyHave (force downloads again). " +
+    "If Tripo shows a captcha, the tab comes forward and the user clears it; never try to solve one.",
+  {
+    ids: z.array(z.string()).min(1).max(20).describe("Tripo model ids or studio.tripo3d.ai model links"),
+    via: z
+      .enum(["auto", "viewer", "export"])
+      .optional()
+      .describe('"auto" (default): Tripo\'s Export when free, else the viewer\'s GLB. "viewer": the viewer\'s GLB. "export": Tripo\'s Export'),
+    approvedCredits: z.number().int().min(0).optional().describe("Credits the user agreed Tripo may charge for this batch's exports. Default 0"),
+    preview: z.boolean().optional().describe("Also save the preview picture (default true)"),
+    folder: downloadFolder("the library inbox's tripo folder"),
+    force
+  },
+  (params) => downloadModels(bridge, params as any)
+)
+localTool(
+  "tripo_generate",
+  "Makes 3D models on Tripo: fills Tripo's own create form in Browse Hack's Tripo tab (text or image to 3D, model version, " +
+    "T-pose, Geometry & Texture, privacy) and clicks Generate, which spends the account's credits (H3.1 was 55 a model). " +
+    "It reads the balance and the price Tripo's Generate button shows first, and refuses when credits are short. Spending " +
+    "needs the user's OK on each batch: without approvedCredits (or with less than the total) nothing is generated and it " +
+    "returns the price per model and the total to ask the user about. Characters to rig and animate: tPose true (without " +
+    "it Tripo may leave out the hands). Waits for each model (Tripo takes 4 to 15 minutes; one at a time on the Free plan) " +
+    "and returns it; download: true then saves it like tripo_download. If Tripo shows a captcha, the tab comes forward and " +
+    "the user clears it; never try to solve one.",
+  {
+    prompt: z.string().max(1000).optional().describe("Text to 3D: what to make (up to 1000 characters)"),
+    image: z.string().optional().describe("Image to 3D: an absolute path or URL of a JPG, PNG or WebP"),
+    model: z.string().optional().describe('Tripo model version: "H3.1" (best), "H3.0", "H2.5". Default: what the form shows'),
+    tPose: z.boolean().optional().describe("Text mode: a character in a T-pose, for rigging"),
+    texture: z.boolean().optional(),
+    textureQuality: z.enum(["2K", "4K", "8K"]).optional().describe("8K is for members"),
+    pbr: z.boolean().optional(),
+    removeLighting: z.boolean().optional().describe("Remove baked lighting from the texture"),
+    topology: z.enum(["quad", "triangle"]).optional(),
+    privacy: z.enum(["public", "private"]).optional().describe("Private is for members; Free-plan models are public"),
+    count: z.number().int().min(1).max(MAX_GENERATE).optional().describe("Models to make with these settings, one after another. Default 1"),
+    approvedCredits: z.number().int().min(0).optional().describe("Credits the user agreed to spend on this batch"),
+    wait: z.boolean().optional().describe("Wait for the model to finish (default true)"),
+    waitMinutes: z.number().int().min(1).max(60).optional().describe("How long to wait for each model (default 20)"),
+    download: z.boolean().optional().describe("Save each finished model into the library inbox")
+  },
+  (params) => generateModels(bridge, params as any)
+)
+tool(
+  "tripo_job_status",
+  "Shows a Tripo generate job's progress by its model (project) id or link: status, percent, seconds left, and the model once it's finished.",
+  { id: z.string().describe("The model's id or studio.tripo3d.ai/workspace/generate link, from tripo_generate") },
+  "tripo.job",
+  {
+    readOnly: true,
+    timeoutMs: 120_000,
+    prepare: async ({ id }) => ({ id: modelIdOf(id) ?? id })
+  }
 )
 
 // --- Midjourney ---

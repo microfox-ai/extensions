@@ -63,3 +63,31 @@ export function askedName(
     ? { ...suggestion, filename: withMimeExtension(suggestion.filename, item.mime) }
     : suggestion
 }
+
+// Other features file downloads the page starts (Tripo's Export) as Chrome
+// saves them. Chrome gives an extension one say in a download's name, so the
+// one onDeterminingFilename listener (sunoBridge's) asks these first; a router
+// that takes the download calls suggest and returns true.
+type DownloadRouter = (
+  item: chrome.downloads.DownloadItem,
+  suggest: (suggestion?: chrome.downloads.DownloadFilenameSuggestion) => void
+) => boolean
+
+const routers: DownloadRouter[] = []
+
+export function addDownloadRouter(router: DownloadRouter) {
+  if (!routers.includes(router)) routers.push(router)
+}
+
+export function routeDownload(
+  item: chrome.downloads.DownloadItem,
+  suggest: (suggestion?: chrome.downloads.DownloadFilenameSuggestion) => void
+) {
+  return routers.some((router) => {
+    try {
+      return router(item, suggest)
+    } catch {
+      return false
+    }
+  })
+}

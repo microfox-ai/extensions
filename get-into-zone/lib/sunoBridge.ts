@@ -8,7 +8,7 @@
 // recorded in MediaMake cloud under the channel's project (Part B's
 // /api/generations; skipped while that route doesn't exist).
 
-import { askedName } from "./downloads"
+import { askedName, routeDownload } from "./downloads"
 import { downloadFinished, inFolder, saveSourceSidecar, type SourceFields } from "./libraryFiles"
 import { authorizedFetch, mediamakeEndpoint } from "./mediamakeAuth"
 import { clipIdOf, generationRecord, songFileBase, SUNO, type SunoClip } from "./suno/clip"
@@ -387,6 +387,8 @@ export function initSunoDownloads() {
       suggest(asked)
       return
     }
+    // Downloads other features expect (Tripo's Export).
+    if (routeDownload(item, suggest)) return
     if (!fromSuno(item)) return
     const route = routes.find((r) => r.until > Date.now())
     if (route) {
