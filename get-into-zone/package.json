@@ -2,7 +2,7 @@
   "name": "browse-hack",
   "displayName": "Browse Hack",
   "version": "0.21.0",
-  "description": "Browser automations for Claude: Pinterest, YouTube, Instagram, Midjourney, Suno, Tripo, DistroKid, Reddit and Mediamake",
+  "description": "Browser automations for Claude: Pinterest, YouTube, Instagram, Midjourney, Suno, Tripo, DistroKid, Reddit, Phrasly and Mediamake",
   "author": "subhakar",
   "scripts": {
     "dev": "plasmo dev",
@@ -34,6 +34,7 @@
       "https://studio.tripo3d.ai/*",
       "https://api.tripo3d.ai/*",
       "https://*.tripo3d.com/*",
+      "https://phrasly.ai/*",
       "http://localhost:3000/*",
       "https://*/*"
     ],

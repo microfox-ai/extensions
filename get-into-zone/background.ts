@@ -19,6 +19,7 @@ import { initMidjourneyEdit } from "./lib/midjourneyEdit"
 import { initMcpBridge } from "./lib/mcpBridge"
 import { handleSunoUi, initSunoDownloads } from "./lib/sunoBridge"
 import { handleTripoUi, initTripoDownloads } from "./lib/tripoBridge"
+import { handlePhraslyUi, initPhraslyBridge } from "./lib/phraslyBridge"
 import { startStudioJob } from "./lib/studioJobs"
 
 initMediamakeAuth()
@@ -30,6 +31,7 @@ initPinterestVideoDownloads()
 initInstagramBackground()
 initSunoDownloads()
 initTripoDownloads()
+initPhraslyBridge()
 
 const QUEUE_REQUEST_RATE_LIMIT_MS = 3000
 
@@ -98,6 +100,7 @@ const handleMessage = (
 ) => {
   if (request.action === "suno-ui") return handleSunoUi(request, sender, sendResponse)
   if (request.action === "tripo-ui") return handleTripoUi(request, sender, sendResponse)
+  if (request.action === "phrasly-ui") return handlePhraslyUi(request, sender, sendResponse)
   if (request.action === "studio-job") {
     startStudioJob(request.job).then(sendResponse, (error) => sendResponse({ ok: false, error: String(error?.message || error) }))
     return true

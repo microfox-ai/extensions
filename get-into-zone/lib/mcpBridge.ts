@@ -83,6 +83,7 @@ import {
   type SaverScope
 } from "./saverRules"
 import { distrokidCommands } from "./distrokidBridge"
+import { phraslyCommands } from "./phraslyBridge"
 import { sunoCommands } from "./sunoBridge"
 import { tripoCommands } from "./tripoBridge"
 import { youtubeStudioCommands } from "./youtubeUploadBridge"
@@ -840,7 +841,8 @@ const commands: Record<string, (params: any) => Promise<unknown>> = {
   ...distrokidCommands,
   ...youtubeStudioCommands,
   ...sunoCommands,
-  ...tripoCommands
+  ...tripoCommands,
+  ...phraslyCommands
 }
 
 // --- Connection ---

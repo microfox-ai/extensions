@@ -18,6 +18,15 @@ import { downloadExplore, exploreMidjourney, exploreMidjourneyStyles } from "./m
 import { toSource } from "./sources.js"
 import { clipIdOf, coverSong, createSongs, downloadSongs, listSongs, rateSongs, sunoStatus } from "./suno.js"
 import { pauseSunoBatch, startSunoBatch, sunoBatchStatus } from "./sunoBatch.js"
+import {
+  DEFAULT_DRAFTS,
+  MAX_DRAFTS,
+  MAX_WORDS,
+  MIN_WORDS,
+  humanize as humanizePhrasly,
+  phraslySettings,
+  phraslyStatus
+} from "./phrasly.js"
 import { SEARCH_SORTS, THREAD_SORTS, TIMES, redditSearch, redditThread } from "./reddit.js"
 import { MAX_GENERATE, downloadModels, generateModels, modelIdOf, tripoStatus } from "./tripo.js"
 import { Updater, serverVersion } from "./updates.js"
@@ -63,6 +72,9 @@ const server = new McpServer(
       "own Export where Tripo offers it (free for the user's own models their plan exports; a gallery model's Export costs credits). " +
       "reddit_search and reddit_thread read Reddit's posts and comment threads as JSON from a reddit.com tab in the user's Chrome " +
       "(Reddit blocks plain curl), one request at a time; they never return usernames, so quote comments short and anonymous. " +
+      "phrasly_humanize rewrites text with Phrasly's AI humanizer (30 to 5,000 words, 1 to 5 drafts) in Browse Hack's Phrasly tab: " +
+      "use the phrasly_ tools only when the user explicitly asks to humanize text or to use Phrasly. If Phrasly shows a captcha, " +
+      "the answer says needsUser: tell the user to complete it in the Phrasly tab that came forward, then call again. " +
       "Tools act on the user's real browser tabs; most take an optional tabId (see list_tabs) and default to the active tab. " +
       "Downloads land in the browser's Downloads folder. When MediaMake's media library is set up (~/.mediamake/config.json), " +
       "YouTube, Instagram, Pinterest, Google Images, Midjourney and Tripo downloads go to its inbox with a <file>.source.json beside each, and " +
@@ -1562,6 +1574,66 @@ localTool(
     saveTo
   },
   (params) => redditThread(bridge, params as any)
+)
+
+// --- Phrasly (AI humanizer) ---
+
+const ONLY_WHEN_ASKED =
+  "Use it only when the user explicitly asks to humanize text or to use Phrasly; never to rewrite text on your own initiative."
+
+localTool(
+  "phrasly_humanize",
+  `Humanizes text with Phrasly's AI humanizer in the user's Chrome. ${ONLY_WHEN_ASKED} ` +
+    `Phrasly takes ${MIN_WORDS} to ${MAX_WORDS} words a run: text outside that is refused here and nothing is sent (send a short ` +
+    "span with the sentences around it; split a long text at paragraph breaks). Browse Hack pastes it into its own Phrasly tab " +
+    "(signed in as the user), presses Humanize, then Next draft until it has `drafts` different rewrites (1-5, default 3), and " +
+    "returns every draft plus the settings used. One Phrasly job runs a minute, so 3 drafts take about 3 minutes. Settings: " +
+    "Phrasly's own (read off its page on the first run, see phrasly_settings) unless `settings` overrides one for this run; " +
+    "the page's settings are put back after. If Phrasly shows a captcha, the answer is needsUser: \"captcha\" with the drafts so " +
+    "far, and Browse Hack's Phrasly tab comes to the front: tell the user to complete the check in that tab (never try to solve " +
+    "one), then call again with the same text and settings to carry on. ultraToday counts today's Ultra documents (each draft " +
+    "is one): Phrasly may move the plan off Ultra after about 50 a day, and a warning comes from 40. Needs Browse Hack 0.20.0.",
+  {
+    text: z.string().min(1).describe(`The text to humanize, ${MIN_WORDS} to ${MAX_WORDS} words, paragraphs separated by blank lines`),
+    drafts: z
+      .number()
+      .int()
+      .min(1)
+      .max(MAX_DRAFTS)
+      .optional()
+      .describe(`How many different drafts to get (1-${MAX_DRAFTS}, default ${DEFAULT_DRAFTS}); each is a separate rewrite of the whole text`),
+    settings: z
+      .object({
+        model: z.string().optional().describe('The model as Phrasly names it, e.g. "Phrasly Ultra"'),
+        mode: z
+          .union([z.string(), z.number().int().min(1).max(5)])
+          .optional()
+          .describe("Ultra's rewrite mode: Gentle, Light, Balanced, Strong or Max (or its step, 1-5)"),
+        sentences: z.enum(["Longer", "Shorter", "longer", "shorter"]).optional().describe("Sentence length in Text settings")
+      })
+      .optional()
+      .describe("Overrides for this run only; leave out to use the stored defaults")
+  },
+  (params) => humanizePhrasly(bridge, params)
+)
+localTool(
+  "phrasly_settings",
+  `Shows the Phrasly settings every phrasly_humanize run uses (model, mode, sentence length, and Text settings' switches), ` +
+    "as read off Phrasly's humanizer page on the first run, or with refresh: true reads them from the page again and keeps " +
+    `those. Never changes Phrasly's own settings. ${ONLY_WHEN_ASKED}`,
+  { refresh: z.boolean().optional().describe("Read the settings from Phrasly's page again (opens Browse Hack's Phrasly tab)") },
+  (params) => phraslySettings(bridge, params),
+  true
+)
+localTool(
+  "phrasly_status",
+  "Shows Browse Hack's Phrasly humanizer: whether its Phrasly tab is open and signed in, whether Phrasly is showing a captcha " +
+    "(the user completes it in that tab), the run in progress (its step and drafts done) or the last one (resumable when a " +
+    "captcha stopped it), seconds until the next job may start, the stored settings, and today's runs and Ultra documents " +
+    `(warning from 40; Phrasly may move the plan off Ultra after about 50 a day). ${ONLY_WHEN_ASKED}`,
+  {},
+  () => phraslyStatus(bridge),
+  true
 )
 
 await server.connect(new StdioServerTransport())
