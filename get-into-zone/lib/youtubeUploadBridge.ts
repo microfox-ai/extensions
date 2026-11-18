@@ -192,16 +192,38 @@ async function goTo(tabId: number, url: string) {
 }
 
 /** Reads Studio's page; its lists and dialogs only show in a tab Chrome paints, so the tab comes forward meanwhile. */
-async function ask<T>(tabId: number, action: string, key: string): Promise<T> {
-  const reply = await inFront(tabId, () => chrome.tabs.sendMessage(tabId, { action }))
+async function ask<T>(tabId: number, action: string, key: string, extra: Record<string, unknown> = {}): Promise<T> {
+  const reply = await inFront(tabId, () => chrome.tabs.sendMessage(tabId, { action, ...extra }))
   if (!reply?.ok) throw new Error(reply?.error || "YouTube Studio didn't answer.")
   return reply[key] as T
 }
 
-/** The channel's Shorts tab, every page of it. */
-export async function readShortsList(tabId: number, channelId: string, context = ""): Promise<StudioShort[]> {
-  await goTo(tabId, studioUrl(`channel/${channelId}/videos/short`, context))
-  return ask<StudioShort[]>(tabId, "giz-ytstudio-shorts", "shorts")
+/** The channel's two content lists in Studio: Videos ("upload") and Shorts ("short"). */
+export type ContentList = "upload" | "short"
+
+/** A channel's content list (its Shorts tab unless told otherwise), up to `pages` pages of it. */
+export async function readContentList(
+  tabId: number,
+  channelId: string,
+  context = "",
+  list: ContentList = "short",
+  pages = 20
+): Promise<StudioShort[]> {
+  await goTo(tabId, studioUrl(`channel/${channelId}/videos/${list}`, context))
+  return ask<StudioShort[]>(tabId, "giz-ytstudio-shorts", "shorts", { pages })
+}
+
+const CHUNK = 1024 * 1024
+
+/** A file as the base64 pieces the Studio tab's port takes (port messages are JSON). */
+export async function* fileChunks(file: Blob) {
+  const total = Math.max(1, Math.ceil(file.size / CHUNK))
+  for (let index = 0; index < total; index++) {
+    const bytes = new Uint8Array(await file.slice(index * CHUNK, (index + 1) * CHUNK).arrayBuffer())
+    let binary = ""
+    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+    yield { index, total, base64: btoa(binary) }
+  }
 }
 
 /** A video's details from its Studio page, as info.json fields. */
@@ -210,19 +232,32 @@ export async function readVideoDetails(tabId: number, videoId: string, context =
   return ask<Record<string, unknown>>(tabId, "giz-ytstudio-details", "fields")
 }
 
-/** Opens a draft from the channel's Shorts list and fills its upload dialog. */
+/**
+ * Opens a draft from the channel's content list (Shorts unless told otherwise) and fills its upload dialog:
+ * everything but the video, which is already up. The thumbnail and A/B test thumbnails go to the tab first.
+ */
 export async function fillDraft(
   tabId: number,
   channelId: string,
   draftId: string,
   info: YoutubeUploadInfo,
   finish: boolean,
-  context = ""
+  context = "",
+  { list = "short", thumbnail, abThumbnails = [] }: { list?: ContentList; thumbnail?: File; abThumbnails?: File[] } = {}
 ): Promise<YoutubeFillResult> {
-  await goTo(tabId, studioUrl(`channel/${channelId}/videos/short`, context))
+  await goTo(tabId, studioUrl(`channel/${channelId}/videos/${list}`, context))
   // Studio's form only works in a tab Chrome paints: the tab is in front while it fills.
   const port = chrome.tabs.connect(tabId, { name: "giz-youtube-upload" })
+  const send = async (id: string, file: File) => {
+    for await (const chunk of fileChunks(file)) {
+      if (chunk.index === 0) port.postMessage({ type: "file-start", id, name: file.name, mime: file.type, total: chunk.total })
+      port.postMessage({ type: "chunk", id, ...chunk })
+    }
+  }
   try {
+    if (thumbnail) await send("thumbnail", thumbnail)
+    const abThumbnailIds = abThumbnails.map((_, index) => `ab-${index}`)
+    for (const [index, file] of abThumbnails.entries()) await send(abThumbnailIds[index], file)
     return await inFront(tabId, () => new Promise<YoutubeFillResult>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("YouTube Studio took too long to fill the draft.")), 300_000)
       port.onMessage.addListener((msg: any) => {
@@ -234,7 +269,14 @@ export async function fillDraft(
         clearTimeout(timer)
         reject(new Error("Lost the YouTube Studio tab before the draft was filled."))
       })
-      port.postMessage({ type: "fill-draft", info, draftId, finish })
+      port.postMessage({
+        type: "fill-draft",
+        info,
+        draftId,
+        thumbnailId: thumbnail ? "thumbnail" : undefined,
+        abThumbnailIds: abThumbnailIds.length ? abThumbnailIds : undefined,
+        finish
+      })
     }))
   } finally {
     port.disconnect()
@@ -277,7 +319,7 @@ export const youtubeStudioCommands: Record<string, (params: any) => Promise<unkn
     tomorrow.setDate(tomorrow.getDate() + 1)
     const tab = await openChannelTab(wanted)
     try {
-      const shorts = await readShortsList(tab.tabId, tab.channelId, tab.context)
+      const shorts = await readContentList(tab.tabId, tab.channelId, tab.context)
       const taken = [...new Set(shorts.filter((short) => !short.draft && short.date).map((short) => short.date as string))].sort()
       return {
         channel: { name: tab.name, handle: tab.handle },
