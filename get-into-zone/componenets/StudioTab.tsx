@@ -2,17 +2,16 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 
 import { clearJobFiles, putJobFile } from "../lib/studioFiles"
 import type { StudioJob, StudioJobItem, StudioJobState } from "../lib/studioJobs"
-import { videoIdFrom } from "../lib/youtubeDrafts"
 import { readPackFolder, type PackFolder } from "../lib/youtubePackFiles"
 
-// YouTube Studio: upload a pack folder (info.json), upload every short of a
-// shorts-pack.json, fill the drafts such an upload left when its details didn't go
-// in, or fill the channel's Shorts drafts from a similar short. The service worker
-// does the work (lib/studioJobs.ts): this popup closes as soon as a Studio tab
-// comes to the front, and the job carries on.
+// YouTube Studio: upload a pack folder (info.json), fill a draft the user opened in
+// Studio from one (its video went up but its details didn't), upload every short of
+// a shorts-pack.json, or fill the channel's Shorts drafts from a similar short. The
+// service worker does the work (lib/studioJobs.ts): this popup closes as soon as a
+// Studio tab comes to the front, and the job carries on.
 
-/** Fill the drafts the folder's uploads left instead of uploading; draftId names the one draft. */
-type FillMode = { drafts: boolean; draftId?: string | null }
+/** Fill the draft open in the Studio tab in front instead of uploading. */
+type FillMode = { openDraft: boolean }
 
 type Prefs = { channel: string; time: string; finish: boolean }
 const PREFS_KEY = "studioPrefs"
@@ -43,33 +42,47 @@ export function StudioTab() {
 
   const busy = job?.status === "running"
 
+  /** The Studio tab in front, when it has a draft's upload dialog open; else why not. */
+  const openDraftTab = async (): Promise<number | string> => {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+    if (tab?.id === undefined || !tab.url?.startsWith("https://studio.youtube.com/")) {
+      return "Open the draft in YouTube Studio first (its Edit draft button), then click Fill the open draft with that tab in front."
+    }
+    const state = await chrome.tabs.sendMessage(tab.id, { action: "giz-ytstudio-ping" }).catch(() => null)
+    if (!state?.ok) return "Browse Hack can't reach this Studio tab yet. Reload it, open the draft again, then click Fill the open draft."
+    if (!state.draftOpen) return "No draft is open in this Studio tab. Click the draft's Edit draft, then click Fill the open draft."
+    return tab.id
+  }
+
   /** Saves the folder's files for the service worker and hands it the job (a draft fill leaves the video out). */
-  const start = async (job: StudioJob, folder?: PackFolder, mode: FillMode = { drafts: false }) => {
+  const start = async (job: StudioJob, folder?: PackFolder, mode: FillMode = { openDraft: false }) => {
     setError("")
     if (busy) return setError("A job is still running.")
+    if (mode.openDraft) {
+      const tabId = await openDraftTab()
+      if (typeof tabId === "string") return setError(tabId)
+      job.draftTab = tabId
+    }
     await clearJobFiles()
     if (folder) {
       const items: StudioJobItem[] = []
       for (const [index, upload] of folder.uploads.entries()) {
         const key = (name: string) => `${index}/${name}`
-        if (!mode.drafts) await putJobFile(key("video"), upload.video)
+        if (!mode.openDraft) await putJobFile(key("video"), upload.video)
         if (upload.thumbnail) await putJobFile(key("thumbnail"), upload.thumbnail)
         for (const [n, file] of upload.abThumbnails.entries()) await putJobFile(key(`ab-${n}`), file)
         items.push({
           label: upload.label,
           fields: upload.fields,
           files: {
-            video: mode.drafts ? undefined : key("video"),
+            video: mode.openDraft ? undefined : key("video"),
             thumbnail: upload.thumbnail ? key("thumbnail") : undefined,
             ab: upload.abThumbnails.map((_, n) => key(`ab-${n}`))
           },
-          videoName: upload.video.name,
-          draftId: mode.draftId || undefined,
           needsDay: upload.needsDay
         })
       }
       job.items = items
-      job.drafts = mode.drafts
     }
     const reply = await chrome.runtime.sendMessage({ action: "studio-job", job })
     if (!reply?.ok) setError(reply?.error || "The job didn't start.")
@@ -163,7 +176,6 @@ function PackCard({
   const inputRef = useRef<HTMLInputElement | null>(null)
   const [folder, setFolder] = useState<PackFolder | null>(null)
   const [reading, setReading] = useState(false)
-  const [draftLink, setDraftLink] = useState("")
 
   const onFiles = async (files: FileList | null) => {
     if (!files?.length) return
@@ -177,9 +189,6 @@ function PackCard({
   }
 
   const blocked = busy || !folder || folder.errors.length > 0 || !folder.uploads.length
-  const draftId = kind === "pack" ? videoIdFrom(draftLink) : null
-  const badLink = !!draftLink.trim() && !draftId
-  const draftBlocked = blocked || badLink
   const count = folder?.uploads.length || 0
   return (
     <Card title={title}>
@@ -222,33 +231,25 @@ function PackCard({
           <button
             type="button"
             disabled={blocked}
-            onClick={() => void onStart(folder, { drafts: false })}
+            onClick={() => void onStart(folder, { openDraft: false })}
             style={{ ...buttonStyle(blocked ? "#E0E0E0" : "#CC0000", blocked ? "#666" : "#fff"), marginTop: 6 }}>
             {count > 1 ? `Upload ${count} shorts` : "Upload"}
           </button>
-          <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed #E0E0E0" }}>
-            <p style={{ margin: "0 0 6px", color: "#444" }}>
-              Video already uploaded, but its details didn't go in? Fill the draft{count > 1 ? "s" : ""} it left on the
-              channel instead: everything but the video. {count > 1 ? "Each draft is" : "The draft is"} found by its
-              title or the video's file name.
-            </p>
-            {kind === "pack" && (
-              <input
-                value={draftLink}
-                onChange={(event) => setDraftLink(event.target.value)}
-                placeholder="Draft's link or video ID (optional)"
-                style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }}
-              />
-            )}
-            {badLink && <div style={{ color: "#9f1239", marginTop: 4 }}>That isn't a YouTube video link or ID.</div>}
-            <button
-              type="button"
-              disabled={draftBlocked}
-              onClick={() => void onStart(folder, { drafts: true, draftId })}
-              style={{ ...buttonStyle(draftBlocked ? "#E0E0E0" : "#111", draftBlocked ? "#666" : "#fff"), marginTop: 6 }}>
-              {count > 1 ? `Fill ${count} drafts` : "Fill its draft"}
-            </button>
-          </div>
+          {kind === "pack" && (
+            <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed #E0E0E0" }}>
+              <p style={{ margin: "0 0 6px", color: "#444" }}>
+                Video already uploaded, but its details didn't go in? Open its draft in Studio (Edit draft), then fill
+                it from this folder: everything but the video.
+              </p>
+              <button
+                type="button"
+                disabled={blocked}
+                onClick={() => void onStart(folder, { openDraft: true })}
+                style={{ ...buttonStyle(blocked ? "#E0E0E0" : "#111", blocked ? "#666" : "#fff"), marginTop: 2 }}>
+                Fill the open draft
+              </button>
+            </div>
+          )}
         </div>
       )}
     </Card>
@@ -257,7 +258,7 @@ function PackCard({
 
 function JobStatus({ job }: { job: StudioJobState }) {
   const title = job.drafts
-    ? "Fill drafts from a pack"
+    ? "Fill the open draft"
     : { pack: "Upload from a pack", shorts: "Bulk Upload Shorts", autofill: "Autofill Shorts" }[job.kind]
   const state = { running: "running…", done: "done", failed: "stopped" }[job.status]
   return (

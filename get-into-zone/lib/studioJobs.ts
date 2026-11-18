@@ -4,25 +4,24 @@
 //
 // - pack: one upload from a folder with info.json (what youtube_fill_uploads does).
 // - shorts: every short of a shorts-pack.json, each on the next day with no short.
-// - pack or shorts with `drafts`: no upload. Each upload's video already went up but
-//   its details didn't (the upload dialog was lost), so the draft it left on the
-//   channel is found and filled from the pack: everything but the video.
+// - pack with `draftTab`: no upload. Its video already went up but its details didn't
+//   (the upload dialog was lost), so the user opened that draft in Studio (Edit draft)
+//   and its dialog, open in that tab, is filled from the pack: everything but the video.
 // - autofill: the drafts on a channel's Shorts tab, each filled from its most similar
 //   filled-in short (title included) and scheduled on the next day with no short.
 
 import { closeStudioTab } from "./studioFront"
 import { clearJobFiles, getJobFile } from "./studioFiles"
-import { describeDrafts, matchDraft, type DraftMatch } from "./youtubeDrafts"
 import {
   fileChunks,
   fillDraft,
+  fillOpenDraft,
   openChannelTab,
-  readContentList,
+  readShortsList,
   readVideoDetails,
-  youtubeStudioCommands,
-  type ContentList
+  youtubeStudioCommands
 } from "./youtubeUploadBridge"
-import { emptyDays, isoDay, pickReference, type StudioShort } from "./youtubeShorts"
+import { emptyDays, isoDay, pickReference } from "./youtubeShorts"
 import { parseYoutubeUploadInfo, type YoutubeFillResult } from "./youtubeUpload"
 
 export type StudioJobItem = {
@@ -31,17 +30,13 @@ export type StudioJobItem = {
   fields: Record<string, unknown>
   /** Keys of its files in lib/studioFiles.ts (no video when filling a draft). */
   files: { video?: string; thumbnail?: string; ab: string[] }
-  /** The video's file name: a draft is named after it until a title is typed. */
-  videoName: string
-  /** The draft to fill, when the user named it (its video id). */
-  draftId?: string
   needsDay: boolean
 }
 
 export type StudioJob = {
   kind: "pack" | "shorts" | "autofill"
-  /** Fill the drafts the pack's uploads left instead of uploading. */
-  drafts?: boolean
+  /** Instead of uploading, fill the draft's upload dialog the user opened in this Studio tab. */
+  draftTab?: number
   channel: string
   /** HH:MM for the days found on the channel's calendar. */
   time?: string
@@ -87,7 +82,7 @@ export async function startStudioJob(job: StudioJob): Promise<{ ok: boolean; err
   running = true
   const state: StudioJobState = {
     kind: job.kind,
-    drafts: !!job.drafts,
+    drafts: job.draftTab !== undefined,
     channel: job.channel,
     status: "running",
     startedAt: new Date().toISOString(),
@@ -108,7 +103,7 @@ async function run(job: StudioJob, state: StudioJobState) {
   }
   try {
     if (job.kind === "autofill") await autofillDrafts(job, state, log)
-    else if (job.drafts) await fillPackDrafts(job, state, log)
+    else if (job.draftTab !== undefined) await fillTheOpenDraft(job, job.draftTab, state, log)
     else await uploadAll(job, state, log)
     state.status = "done"
   } catch (error) {
@@ -133,7 +128,7 @@ async function freeDays(
   const own = tab ?? (await openChannelTab(job.channel))
   try {
     await log(`Reading ${job.channel}'s Shorts to find days with no short…`)
-    const shorts = await readContentList(own.tabId, own.channelId, own.context)
+    const shorts = await readShortsList(own.tabId, own.channelId, own.context)
     const taken = shorts.filter((short) => !short.draft && short.date).map((short) => short.date as string)
     return { shorts, days: emptyDays(taken, count, job.from || tomorrow()) }
   } finally {
@@ -200,90 +195,21 @@ async function uploadAll(job: StudioJob, state: StudioJobState, log: (line: stri
   }
 }
 
-const LIST_NAMES: Record<ContentList, string> = { upload: "Videos", short: "Shorts" }
-
-/**
- * Fills the drafts a pack's uploads left behind (the video went up, then the upload dialog was
- * lost): finds each one on the channel's Videos or Shorts list, then fills everything but the video.
- */
-async function fillPackDrafts(job: StudioJob, state: StudioJobState, log: (line: string) => Promise<void>) {
-  const items = job.items || []
-  const tab = await openChannelTab(job.channel)
-  const channelName = tab.name || job.channel
-  let keepTab = false
+/** Fills the draft's upload dialog the user opened in this Studio tab from the pack: everything but the video. */
+async function fillTheOpenDraft(job: StudioJob, tabId: number, state: StudioJobState, log: (line: string) => Promise<void>) {
+  const item = job.items?.[0]
+  if (!item) throw new Error("There's nothing to fill.")
+  const parsed = parseYoutubeUploadInfo(item.fields)
+  if (parsed.errors.length) throw new Error(parsed.errors.join(" "))
+  await log(`Filling the draft open in Studio from ${item.label}…`)
   try {
-    const allFields = await scheduledFields(job, log, tab)
-    // A Shorts pack's drafts are most likely on the Shorts list, an info.json pack's on Videos.
-    const order: ContentList[] = job.kind === "shorts" ? ["short", "upload"] : ["upload", "short"]
-    // A recent draft sits on the first pages (newest first); a named one may be further down.
-    const pages = items.some((item) => item.draftId) ? 20 : 3
-    const lists = new Map<ContentList, StudioShort[]>()
-    const rowsOf = async (list: ContentList) => {
-      if (!lists.has(list)) {
-        await log(`Reading ${channelName}'s ${LIST_NAMES[list]} for drafts…`)
-        lists.set(list, await readContentList(tab.tabId, tab.channelId, tab.context, list, pages))
-      }
-      return lists.get(list)!
-    }
-
-    // Find every draft first: once one is filled, its dialog stays open in this tab.
-    const taken = new Set<string>()
-    const plans: { item: StudioJobItem; fields: Record<string, unknown>; list: ContentList; match: DraftMatch }[] = []
-    for (const [n, item] of items.entries()) {
-      const wanted = { draftId: item.draftId, title: String(item.fields.title || ""), videoName: item.videoName }
-      let found: { list: ContentList; match: DraftMatch } | null = null
-      for (const list of order) {
-        const match = matchDraft(await rowsOf(list), wanted, taken)
-        if (match) {
-          found = { list, match }
-          break
-        }
-      }
-      const fail = (message: string) => state.results.push({ ok: false, label: item.label, message, warnings: [], filled: [] })
-      if (!found) {
-        const rows = order.flatMap((list) => lists.get(list) || [])
-        fail(
-          item.draftId
-            ? `No video ${item.draftId} on ${channelName}'s Videos or Shorts lists. Check the link and the channel in info.json.`
-            : `No draft on ${channelName} is titled "${wanted.title}" or named after ${item.videoName}. ${describeDrafts(rows)}` +
-                (job.kind === "pack" ? " Paste the draft's link and try again." : "")
-        )
-      } else if (!found.match.row.draft) {
-        fail(`${found.match.row.videoId} isn't a draft (Studio lists it as ${found.match.row.visibility || "not a draft"}). Change it on its own page in Studio.`)
-      } else {
-        taken.add(found.match.row.videoId)
-        plans.push({ item, fields: allFields[n], ...found })
-      }
-    }
-    await save(state)
-
-    let tabId = tab.tabId
-    for (const [index, { item, fields, list, match }] of plans.entries()) {
-      const draft = match.row
-      const label = `${item.label} → draft "${draft.title}"`
-      let scheduled = false
-      try {
-        const parsed = parseYoutubeUploadInfo(fields)
-        if (parsed.errors.length) throw new Error(parsed.errors.join(" "))
-        await log(`Filling the draft "${draft.title}" (${draft.videoId}) on ${LIST_NAMES[list]} from ${item.label}…`)
-        const result = await fillDraft(tabId, tab.channelId, draft.videoId, parsed.info, job.finish, tab.context, {
-          list,
-          thumbnail: item.files.thumbnail ? await jobFile(item.files.thumbnail) : undefined,
-          abThumbnails: await Promise.all(item.files.ab.map(jobFile))
-        })
-        if (match.others) result.warnings.push(`${match.others} more draft${match.others === 1 ? "" : "s"} had this name; this one is the newest.`)
-        state.results.push({ ...result, label, tabId })
-        scheduled = !!result.scheduled
-      } catch (error) {
-        state.results.push({ ok: false, label, message: errorText(error), warnings: [], filled: [], tabId })
-      }
-      keepTab = true
-      await save(state)
-      // A draft left open (for its Save or Schedule click, or to see what went wrong) keeps its tab; the next one gets its own.
-      if (!scheduled && index < plans.length - 1) tabId = (await chrome.tabs.create({ url: "https://studio.youtube.com/", active: false })).id!
-    }
-  } finally {
-    if (!keepTab) await closeStudioTab(tab.tabId)
+    const result = await fillOpenDraft(tabId, parsed.info, job.finish, {
+      thumbnail: item.files.thumbnail ? await jobFile(item.files.thumbnail) : undefined,
+      abThumbnails: await Promise.all(item.files.ab.map(jobFile))
+    })
+    state.results.push({ ...result, label: item.label, tabId })
+  } catch (error) {
+    state.results.push({ ok: false, label: item.label, message: errorText(error), warnings: [], filled: [], tabId })
   }
 }
 
