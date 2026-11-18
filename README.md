@@ -196,6 +196,18 @@ The `info.json` fields are listed in [`mcp/README.md`](mcp/README.md#infojson-fo
 
 Ask Claude to search Reddit or read a thread ("top posts about X this week", "the comments on this post"). Browse Hack reads Reddit's own JSON from a reddit.com tab in this Chrome profile, with your Reddit session, one request at a time, and hands Claude the posts and comments without usernames. If Reddit shows a check, a consent banner or a sign-in instead, Claude asks you to clear it in that tab. See [`mcp/README.md`](mcp/README.md#reddit).
 
+### Download and make 3D models on Tripo (tripo3d.ai)
+
+On studio.tripo3d.ai, model pages and gallery cards get a **⬇ MediaMake** button. **Save GLB to MediaMake** saves any model, yours or the gallery's, whatever its version, with its preview picture into MediaMake's library inbox (`_INBOX/tripo`) and a `.source.json` (page, author, prompt, model version, settings, how it was saved and licence).
+
+- It saves the GLB Tripo's viewer shows (meshopt-compressed). For your own models that your plan exports, it uses Tripo's own **Export** instead, which gives the full-quality file at no cost.
+- Where Tripo offers its Export for a gallery model, **Export with Tripo** gets the full-quality file for Tripo credits (5): the button asks for a second click first.
+- With the [MCP server](mcp), Claude can list your models, search the gallery, download, and generate new models (`tripo_generate`) by filling Tripo's create form. Generating spends credits: Claude tells you the price per model and the total first and only goes ahead once you agree. See [`mcp/README.md`](mcp/README.md#tripo).
+
+### Humanize text with Phrasly (Claude only, Phrasly tab)
+
+Sign in to phrasly.ai in the same Chrome profile. When you ask Claude to humanize a text or to use Phrasly, Browse Hack pastes it into Phrasly's humanizer in its own background tab, presses Humanize and Next draft, and hands Claude up to five drafts (30 to 5,000 words a run, one job a minute). It runs with Phrasly's own settings, read off the page the first time, and puts the page's settings back after a run that overrides one. If Phrasly asks for a captcha, that tab comes forward: complete it there and ask Claude to carry on. The popup's **Phrasly** tab shows the settings, today's runs and Ultra documents (Phrasly may move a plan off Ultra after about 50 a day; Browse Hack warns from 40). See [`mcp/README.md`](mcp/README.md#phrasly).
+
 ### Make songs on Suno (Suno tab and suno.com)
 
 Sign in to suno.com in the same Chrome profile. Browse Hack keeps every song you make for a channel in MediaMake: each take is recorded under the channel's MediaMake project (the team sees the prompts, lyrics and ratings), and the songs you keep are saved into MediaMake's media library.

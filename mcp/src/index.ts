@@ -18,7 +18,17 @@ import { downloadExplore, exploreMidjourney, exploreMidjourneyStyles } from "./m
 import { toSource } from "./sources.js"
 import { clipIdOf, coverSong, createSongs, downloadSongs, listSongs, rateSongs, sunoStatus } from "./suno.js"
 import { pauseSunoBatch, startSunoBatch, sunoBatchStatus } from "./sunoBatch.js"
+import {
+  DEFAULT_DRAFTS,
+  MAX_DRAFTS,
+  MAX_WORDS,
+  MIN_WORDS,
+  humanize as humanizePhrasly,
+  phraslySettings,
+  phraslyStatus
+} from "./phrasly.js"
 import { SEARCH_SORTS, THREAD_SORTS, TIMES, redditSearch, redditThread } from "./reddit.js"
+import { MAX_GENERATE, downloadModels, generateModels, modelIdOf, tripoStatus } from "./tripo.js"
 import { Updater, serverVersion } from "./updates.js"
 
 // GET_INTO_ZONE_* are the names from before the rename to Browse Hack.
@@ -56,11 +66,18 @@ const server = new McpServer(
       "midjourney_explore searches and browses Midjourney's Explore (what the community publishes) with each image's prompt and style codes; " +
       "its refs work as imagePrompts or styleReferences in midjourney_generate, midjourney_explore_styles finds --sref codes, and " +
       "midjourney_explore_download saves picks into the library inbox as references. " +
+      "Tripo (3D models): tripo_generate fills Tripo's own create form and clicks Generate, which spends credits; it reads the price " +
+      "and balance first and generates nothing until approvedCredits covers the batch, so agree each batch with the user. " +
+      "tripo_download saves any model on Tripo, the user's own or the gallery's, any version: the GLB Tripo's viewer shows, or Tripo's " +
+      "own Export where Tripo offers it (free for the user's own models their plan exports; a gallery model's Export costs credits). " +
       "reddit_search and reddit_thread read Reddit's posts and comment threads as JSON from a reddit.com tab in the user's Chrome " +
       "(Reddit blocks plain curl), one request at a time; they never return usernames, so quote comments short and anonymous. " +
+      "phrasly_humanize rewrites text with Phrasly's AI humanizer (30 to 5,000 words, 1 to 5 drafts) in Browse Hack's Phrasly tab: " +
+      "use the phrasly_ tools only when the user explicitly asks to humanize text or to use Phrasly. If Phrasly shows a captcha, " +
+      "the answer says needsUser: tell the user to complete it in the Phrasly tab that came forward, then call again. " +
       "Tools act on the user's real browser tabs; most take an optional tabId (see list_tabs) and default to the active tab. " +
       "Downloads land in the browser's Downloads folder. When MediaMake's media library is set up (~/.mediamake/config.json), " +
-      "YouTube, Instagram, Pinterest, Google Images and Midjourney downloads go to its inbox with a <file>.source.json beside each, and " +
+      "YouTube, Instagram, Pinterest, Google Images, Midjourney and Tripo downloads go to its inbox with a <file>.source.json beside each, and " +
       "YouTube and Instagram media the library already has comes back as alreadyHave instead of downloading again (force skips that check). " +
       "Call get_status first if a tool says the extension isn't connected. " +
       "The extension may be installed in several Chrome profiles (accounts). When two or more are connected, ask the user which " +
@@ -796,6 +813,106 @@ tool(
   "suno.uploadTrack"
 )
 
+// --- Tripo (3D models) ---
+
+localTool(
+  "tripo_status",
+  "Shows the Tripo (studio.tripo3d.ai) account in this Chrome profile: signed in, plan, credits left (and when some expire), " +
+    "the Free plan's monthly exports left, which model versions Tripo exports only to paying members, and the current and " +
+    "recent generate jobs with their progress. " +
+    "Call it first: tripo_generate and gallery exports spend credits.",
+  {},
+  () => tripoStatus(bridge),
+  true
+)
+tool(
+  "tripo_list_models",
+  "Lists the user's own Tripo models (the workspace's Assets), newest first: id, title, model version (H3.1…), prompt, " +
+    "generation settings (T-pose, texture, PBR…), link, and how tripo_download would save each (download.route: Tripo's " +
+    "Export or the viewer's copy; download.export when Tripo's Export is the other way). Pass nextOffset back as offset for more.",
+  {
+    offset: z.number().int().min(0).optional(),
+    limit: z.number().int().min(1).max(20).optional().describe("Default 20")
+  },
+  "tripo.myModels",
+  { readOnly: true, timeoutMs: 120_000 }
+)
+tool(
+  "tripo_search_gallery",
+  "Searches Tripo's community gallery: id, title, caption, author, likes, link. tripo_download saves any of them. " +
+    "Pass nextPageToken back as pageToken for more.",
+  {
+    query: z.string().describe("What to look for, as in the gallery's search box"),
+    pageToken: z.string().optional(),
+    limit: z.number().int().min(1).max(50).optional().describe("Default 20")
+  },
+  "tripo.search",
+  { readOnly: true, timeoutMs: 120_000 }
+)
+localTool(
+  "tripo_download",
+  "Downloads Tripo models (GLB) and their preview pictures into MediaMake's library inbox (_INBOX/tripo/<title>-<id>.glb) " +
+    "with a <file>.source.json holding the page, author, prompt, model version, settings, how it was saved and licence. " +
+    "Any model on Tripo, the user's own or the gallery's, any version (H3.1, P2.0…). via \"auto\" (default) takes Tripo's " +
+    "own Export when it costs nothing (the user's own models their plan exports: the full-quality file), else the GLB " +
+    "Tripo's viewer shows (meshopt-compressed, free). via \"export\" asks for Tripo's Export where Tripo offers it: a " +
+    "gallery model's costs Tripo credits (usually 5), so ask the user and pass approvedCredits for the batch. Models the " +
+    "library already has come back as alreadyHave (force downloads again). " +
+    "If Tripo shows a captcha, the tab comes forward and the user clears it; never try to solve one.",
+  {
+    ids: z.array(z.string()).min(1).max(20).describe("Tripo model ids or studio.tripo3d.ai model links"),
+    via: z
+      .enum(["auto", "viewer", "export"])
+      .optional()
+      .describe('"auto" (default): Tripo\'s Export when free, else the viewer\'s GLB. "viewer": the viewer\'s GLB. "export": Tripo\'s Export'),
+    approvedCredits: z.number().int().min(0).optional().describe("Credits the user agreed Tripo may charge for this batch's exports. Default 0"),
+    preview: z.boolean().optional().describe("Also save the preview picture (default true)"),
+    folder: downloadFolder("the library inbox's tripo folder"),
+    force
+  },
+  (params) => downloadModels(bridge, params as any)
+)
+localTool(
+  "tripo_generate",
+  "Makes 3D models on Tripo: fills Tripo's own create form in Browse Hack's Tripo tab (text or image to 3D, model version, " +
+    "T-pose, Geometry & Texture, privacy) and clicks Generate, which spends the account's credits (H3.1 was 55 a model). " +
+    "It reads the balance and the price Tripo's Generate button shows first, and refuses when credits are short. Spending " +
+    "needs the user's OK on each batch: without approvedCredits (or with less than the total) nothing is generated and it " +
+    "returns the price per model and the total to ask the user about. Characters to rig and animate: tPose true (without " +
+    "it Tripo may leave out the hands). Waits for each model (Tripo takes 4 to 15 minutes; one at a time on the Free plan) " +
+    "and returns it; download: true then saves it like tripo_download. If Tripo shows a captcha, the tab comes forward and " +
+    "the user clears it; never try to solve one.",
+  {
+    prompt: z.string().max(1000).optional().describe("Text to 3D: what to make (up to 1000 characters)"),
+    image: z.string().optional().describe("Image to 3D: an absolute path or URL of a JPG, PNG or WebP"),
+    model: z.string().optional().describe('Tripo model version: "H3.1" (best), "H3.0", "H2.5". Default: what the form shows'),
+    tPose: z.boolean().optional().describe("Text mode: a character in a T-pose, for rigging"),
+    texture: z.boolean().optional(),
+    textureQuality: z.enum(["2K", "4K", "8K"]).optional().describe("8K is for members"),
+    pbr: z.boolean().optional(),
+    removeLighting: z.boolean().optional().describe("Remove baked lighting from the texture"),
+    topology: z.enum(["quad", "triangle"]).optional(),
+    privacy: z.enum(["public", "private"]).optional().describe("Private is for members; Free-plan models are public"),
+    count: z.number().int().min(1).max(MAX_GENERATE).optional().describe("Models to make with these settings, one after another. Default 1"),
+    approvedCredits: z.number().int().min(0).optional().describe("Credits the user agreed to spend on this batch"),
+    wait: z.boolean().optional().describe("Wait for the model to finish (default true)"),
+    waitMinutes: z.number().int().min(1).max(60).optional().describe("How long to wait for each model (default 20)"),
+    download: z.boolean().optional().describe("Save each finished model into the library inbox")
+  },
+  (params) => generateModels(bridge, params as any)
+)
+tool(
+  "tripo_job_status",
+  "Shows a Tripo generate job's progress by its model (project) id or link: status, percent, seconds left, and the model once it's finished.",
+  { id: z.string().describe("The model's id or studio.tripo3d.ai/workspace/generate link, from tripo_generate") },
+  "tripo.job",
+  {
+    readOnly: true,
+    timeoutMs: 120_000,
+    prepare: async ({ id }) => ({ id: modelIdOf(id) ?? id })
+  }
+)
+
 // --- Midjourney ---
 
 tool(
@@ -1457,6 +1574,66 @@ localTool(
     saveTo
   },
   (params) => redditThread(bridge, params as any)
+)
+
+// --- Phrasly (AI humanizer) ---
+
+const ONLY_WHEN_ASKED =
+  "Use it only when the user explicitly asks to humanize text or to use Phrasly; never to rewrite text on your own initiative."
+
+localTool(
+  "phrasly_humanize",
+  `Humanizes text with Phrasly's AI humanizer in the user's Chrome. ${ONLY_WHEN_ASKED} ` +
+    `Phrasly takes ${MIN_WORDS} to ${MAX_WORDS} words a run: text outside that is refused here and nothing is sent (send a short ` +
+    "span with the sentences around it; split a long text at paragraph breaks). Browse Hack pastes it into its own Phrasly tab " +
+    "(signed in as the user), presses Humanize, then Next draft until it has `drafts` different rewrites (1-5, default 3), and " +
+    "returns every draft plus the settings used. One Phrasly job runs a minute, so 3 drafts take about 3 minutes. Settings: " +
+    "Phrasly's own (read off its page on the first run, see phrasly_settings) unless `settings` overrides one for this run; " +
+    "the page's settings are put back after. If Phrasly shows a captcha, the answer is needsUser: \"captcha\" with the drafts so " +
+    "far, and Browse Hack's Phrasly tab comes to the front: tell the user to complete the check in that tab (never try to solve " +
+    "one), then call again with the same text and settings to carry on. ultraToday counts today's Ultra documents (each draft " +
+    "is one): Phrasly may move the plan off Ultra after about 50 a day, and a warning comes from 40. Needs Browse Hack 0.20.0.",
+  {
+    text: z.string().min(1).describe(`The text to humanize, ${MIN_WORDS} to ${MAX_WORDS} words, paragraphs separated by blank lines`),
+    drafts: z
+      .number()
+      .int()
+      .min(1)
+      .max(MAX_DRAFTS)
+      .optional()
+      .describe(`How many different drafts to get (1-${MAX_DRAFTS}, default ${DEFAULT_DRAFTS}); each is a separate rewrite of the whole text`),
+    settings: z
+      .object({
+        model: z.string().optional().describe('The model as Phrasly names it, e.g. "Phrasly Ultra"'),
+        mode: z
+          .union([z.string(), z.number().int().min(1).max(5)])
+          .optional()
+          .describe("Ultra's rewrite mode: Gentle, Light, Balanced, Strong or Max (or its step, 1-5)"),
+        sentences: z.enum(["Longer", "Shorter", "longer", "shorter"]).optional().describe("Sentence length in Text settings")
+      })
+      .optional()
+      .describe("Overrides for this run only; leave out to use the stored defaults")
+  },
+  (params) => humanizePhrasly(bridge, params)
+)
+localTool(
+  "phrasly_settings",
+  `Shows the Phrasly settings every phrasly_humanize run uses (model, mode, sentence length, and Text settings' switches), ` +
+    "as read off Phrasly's humanizer page on the first run, or with refresh: true reads them from the page again and keeps " +
+    `those. Never changes Phrasly's own settings. ${ONLY_WHEN_ASKED}`,
+  { refresh: z.boolean().optional().describe("Read the settings from Phrasly's page again (opens Browse Hack's Phrasly tab)") },
+  (params) => phraslySettings(bridge, params),
+  true
+)
+localTool(
+  "phrasly_status",
+  "Shows Browse Hack's Phrasly humanizer: whether its Phrasly tab is open and signed in, whether Phrasly is showing a captcha " +
+    "(the user completes it in that tab), the run in progress (its step and drafts done) or the last one (resumable when a " +
+    "captcha stopped it), seconds until the next job may start, the stored settings, and today's runs and Ultra documents " +
+    `(warning from 40; Phrasly may move the plan off Ultra after about 50 a day). ${ONLY_WHEN_ASKED}`,
+  {},
+  () => phraslyStatus(bridge),
+  true
 )
 
 await server.connect(new StdioServerTransport())

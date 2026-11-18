@@ -3,6 +3,7 @@ import "./style.css"
 
 import { MidjourneyTab } from "./componenets/MidjourneyTab"
 import { SunoTab } from "./componenets/SunoTab"
+import { PhraslyTab } from "./componenets/PhraslyTab"
 import { AgentsTab } from "./componenets/AgentsTab"
 import { SaverTab } from "./componenets/SaverTab"
 import { SettingsTab } from "./componenets/SettingsTab"
@@ -24,6 +25,7 @@ type MainTab =
   | "studio"
   | "instagram"
   | "suno"
+  | "phrasly"
   | "distrokid"
   | "agents"
   | "saver"
@@ -69,6 +71,7 @@ const TABS: {
     component: InstagramTab
   },
   { id: "suno", label: "Suno", activeColor: "#F97316", component: SunoTab },
+  { id: "phrasly", label: "Phrasly", activeColor: "#16A34A", component: PhraslyTab },
   {
     id: "distrokid",
     label: "DistroKid",

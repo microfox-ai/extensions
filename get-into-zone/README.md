@@ -41,6 +41,11 @@ This is a [Plasmo extension](https://docs.plasmo.com/) project bootstrapped with
 | `contents/sunoPage.ts` | Runs in suno.com's own page: reports what the site's Create request returned, and sets the Lexical lyrics editor |
 | `lib/sunoBridge.ts` | Suno for the MCP server and the buttons: the background Suno tab, making and downloading songs one at a time, filing downloads into the library inbox, MediaMake cloud records and presets |
 | `lib/sunoPrefs.ts`, `componenets/SunoTab.tsx` | Suno settings and their popup tab: channel ↔ workspace ↔ MediaMake project links, download format, upload terms |
+| `lib/tripo/model.ts` | Tripo as Browse Hack sees it: model links, versions (H3.1), plans, a model's record, what this account may download and how (`downloadVerdict`), the licence line and source.json fields, file names (tests: `lib/tripo.test.mjs`) |
+| `lib/tripo/page.ts`, `lib/tripo/selectors.ts` | Tripo's create form and Export dialog, driven like a person (Reka UI pickers, T-pose, Geometry & Texture, Generate's price). Every selector is in `selectors.ts` |
+| `contents/tripo.ts` | Content script on studio.tripo3d.ai: reads, form filling, Export, and the ⬇ MediaMake button and panel on model pages and gallery cards |
+| `contents/tripoPage.ts` | Runs in Tripo's own page: the account, plan and export rules from the app's stores, a few api.tripo3d.ai reads and the gallery search with the page's sign-in, and how Tripo answered Generate and Export |
+| `lib/tripoBridge.ts`, `lib/tripoPrefs.ts` | Tripo for the MCP server and the panel: the background Tripo tab, generating and exporting one at a time, filing downloads into the library inbox with source.json, recent jobs |
 | `contents/youtubeStudio.ts` | Content script on YouTube Studio: switches channels, fills the upload dialog from info.json (Details, Monetisation, Ad suitability, Video elements, Visibility), reads the Shorts list and a video's details, opens drafts |
 | `contents/youtubeStudioPage.ts` | Runs in Studio's own page: sets thumbnail files (from the isolated world their upload fails) and reads the thumbnail editor's error |
 | `lib/youtubeUploadBridge.ts` | YouTube Studio for the MCP server and the popup's jobs: channel switching, one Studio tab per upload, drafts |
