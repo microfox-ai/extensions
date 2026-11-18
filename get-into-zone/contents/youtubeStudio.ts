@@ -36,11 +36,12 @@ type FillMsg = {
   /** Click Schedule at the end (the popup's choice). */
   finish?: boolean
 }
-/** Fill a draft that's already uploaded: its row is on this tab's content list. Its thumbnails come first as files. */
-type FillDraftMsg = {
-  type: "fill-draft"
+/** Fill a draft that's already uploaded: its row is on this tab's content list. */
+type FillDraftMsg = { type: "fill-draft"; info: YoutubeUploadInfo; draftId: string; finish?: boolean }
+/** Fill the upload dialog the user opened on this tab (a draft's Edit draft): everything but the video. Its thumbnails come first as files. */
+type FillOpenMsg = {
+  type: "fill-open"
   info: YoutubeUploadInfo
-  draftId: string
   thumbnailId?: string
   abThumbnailIds?: string[]
   finish?: boolean
@@ -79,7 +80,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true
   }
   if (msg?.action === "giz-ytstudio-shorts") {
-    listShorts(Number(msg.pages) || 20).then(
+    listShorts().then(
       (shorts) => sendResponse({ ok: true, shorts }),
       (error) => sendResponse({ ok: false, error: errorText(error) })
     )
@@ -117,19 +118,23 @@ chrome.runtime.onConnect.addListener((port) => {
     return new File(bin.parts, bin.name, { type: bin.mime })
   }
 
-  port.onMessage.addListener((msg: FileStart | FileChunk | FillMsg | FillDraftMsg) => {
+  port.onMessage.addListener((msg: FileStart | FileChunk | FillMsg | FillDraftMsg | FillOpenMsg) => {
     if (msg.type === "fill-draft") {
-      const thumbnail = take(msg.thumbnailId)
-      const abThumbnails = (msg.abThumbnailIds || []).map((id) => take(id))
-      bins.clear()
-      const warnings = msg.thumbnailId && !thumbnail ? ["The thumbnail file didn't arrive in full; add it by hand."] : []
       reply(
         openDraft(msg.draftId).then((opened) =>
           typeof opened === "string"
             ? { ok: false, message: opened, warnings: [], filled: [] }
-            : fillForm(opened, msg.info, thumbnail, abThumbnails, !!msg.finish, [`Draft: ${msg.draftId}`], warnings)
+            : fillForm(opened, msg.info, null, [], !!msg.finish, [`Draft: ${msg.draftId}`], [])
         )
       )
+      return
+    }
+    if (msg.type === "fill-open") {
+      const thumbnail = take(msg.thumbnailId)
+      const abThumbnails = (msg.abThumbnailIds || []).map((id) => take(id))
+      bins.clear()
+      const warnings = msg.thumbnailId && !thumbnail ? ["The thumbnail file didn't arrive in full; add it by hand."] : []
+      reply(fillOpenDialog(msg.info, thumbnail, abThumbnails, !!msg.finish, warnings))
       return
     }
     if (msg.type === "file-start") {
@@ -218,7 +223,9 @@ function pageState() {
     // A channel shared with you through its permissions opens with ?c=<its id>; without it Studio says Oops.
     context: new URLSearchParams(location.search).get("c") || "",
     channelName,
-    uploadReady: !!filePicker() || !!dialog()?.querySelector("#title-textarea #textbox")
+    uploadReady: !!filePicker() || !!dialog()?.querySelector("#title-textarea #textbox"),
+    // An upload dialog past its file step is open: a draft the user opened with Edit draft.
+    draftOpen: !filePicker() && !!currentStep()
   }
 }
 
@@ -477,10 +484,44 @@ function askPage(type: string, target: Element, extra: Record<string, unknown> =
   })
 }
 
+/** When each thumbnail upload of this fill began: Set test and Next wait for them (waitForThumbnails). */
+const thumbnailStarts: number[] = []
+/** The least time a thumbnail gets to go up before the form moves on, and the most it is waited for. */
+const THUMBNAIL_SETTLE_MS = 15_000
+const THUMBNAIL_MAX_MS = 120_000
+
+/**
+ * A spinner turning in one of Studio's thumbnail slots: an upload still going. Only a spinning one
+ * (its active attribute) counts, so an idle element left on the page can't hold the form up.
+ */
+function thumbnailBusy(): boolean {
+  const slots = ["ytcp-thumbnail-uploader", "ytcp-video-custom-still-editor"]
+  const selector = slots.flatMap((slot) => [`${slot} tp-yt-paper-spinner`, `${slot} tp-yt-paper-spinner-lite`]).join(", ")
+  return Array.from(document.querySelectorAll<HTMLElement>(selector)).some((spinner) => shown(spinner) && spinner.hasAttribute("active"))
+}
+
+/**
+ * Holds the form until the thumbnails set so far have gone up: Studio previews a thumbnail at once and
+ * uploads it after, and moving on (Next, Set test) while it uploads can lose it. Each gets at least
+ * THUMBNAIL_SETTLE_MS from its start and no spinner left in its slot, for up to THUMBNAIL_MAX_MS.
+ */
+async function waitForThumbnails(warnings: string[]) {
+  if (!thumbnailStarts.length) return
+  const last = Math.max(...thumbnailStarts)
+  thumbnailStarts.length = 0
+  const settled = await waitFor(
+    () => Date.now() - last >= THUMBNAIL_SETTLE_MS && !thumbnailBusy(),
+    Math.max(0, last + THUMBNAIL_MAX_MS - Date.now())
+  )
+  if (!settled) warnings.push("A thumbnail was still uploading after 2 minutes when Browse Hack went on; check it went in.")
+  const late = thumbnailError()
+  if (late) warnings.push(`Studio said about a thumbnail: ${late}`)
+}
+
 /**
  * Gives one of Studio's thumbnail uploaders (the video's, or an A/B testing slot's) an image, and
- * waits for it to go up. Studio previews the file at once and uploads it after, so a failure can
- * come a few seconds after the preview. Null when it went up.
+ * waits for its upload to start. Studio previews the file at once and uploads it after, so a failure can
+ * come a few seconds after the preview; waitForThumbnails holds the form until it is up. Null when it went in.
  */
 async function uploadImage(uploader: HTMLElement, file: File): Promise<string | null> {
   const input = uploader.querySelector<HTMLInputElement>("input#file-loader")
@@ -490,7 +531,9 @@ async function uploadImage(uploader: HTMLElement, file: File): Promise<string | 
   let failed = false
   const onStart = () => (started = true)
   const onFail = () => (failed = true)
+  const onStartAt = () => thumbnailStarts.push(Date.now())
   uploader.addEventListener("upload-started", onStart)
+  uploader.addEventListener("upload-started", onStartAt, { once: true })
   uploader.addEventListener("upload-reverted", onFail)
   editor?.addEventListener("custom-still-upload-error", onFail)
   try {
@@ -502,6 +545,7 @@ async function uploadImage(uploader: HTMLElement, file: File): Promise<string | 
     if (started && !failed) await waitFor(() => failed, 5000)
   } finally {
     uploader.removeEventListener("upload-started", onStart)
+    uploader.removeEventListener("upload-started", onStartAt)
     uploader.removeEventListener("upload-reverted", onFail)
     editor?.removeEventListener("custom-still-upload-error", onFail)
   }
@@ -975,6 +1019,7 @@ async function setAbTest(variants: YoutubeAbVariant[], files: (File | null)[], f
       if (problem) return giveUp(problem)
     }
   }
+  await waitForThumbnails(warnings)
   const setTest = () => host.querySelector<HTMLElement>("ytcp-button#set-test-button")
   if (!(await waitFor(() => enabled(setTest()), 8000))) {
     const errors = editorErrors(host)
@@ -1176,18 +1221,18 @@ async function nextListPage(): Promise<boolean> {
   return !!(await waitFor(() => listRows().length && rowVideoId(listRows()[0]) !== first, 10_000))
 }
 
-/** Every row of the content list this tab shows (the channel's Videos or Shorts tab), up to `pages` pages. */
-async function listShorts(pages = 20): Promise<StudioShort[]> {
+/** Every row of the content list this tab shows (the channel's Shorts tab), page by page. */
+async function listShorts(): Promise<StudioShort[]> {
   if (!(await waitFor(() => listRows().length || firstShown("ytcp-video-section-content #empty-state, ytcp-video-list-empty-state"), 20_000))) {
     throw new Error("YouTube Studio's content list didn't load.")
   }
   const shorts = new Map<string, StudioShort>()
-  for (let page = 0; page < pages; page++) {
+  for (let page = 0; page < 20; page++) {
     for (const row of listRows()) {
       const short = readRow(row)
       if (short.videoId) shorts.set(short.videoId, short)
     }
-    if (page < pages - 1 && !(await nextListPage())) break
+    if (!(await nextListPage())) break
   }
   return [...shorts.values()]
 }
@@ -1275,7 +1320,7 @@ async function readDetails(): Promise<Record<string, unknown>> {
   return fields
 }
 
-/** Opens a draft from the content list (the channel's Videos or Shorts tab) into the upload dialog, turning pages to find it. */
+/** Opens a draft from the content list (the channel's Shorts tab) into the upload dialog, turning pages to find it. */
 async function openDraft(videoId: string): Promise<HTMLElement | string> {
   const find = () => listRows().find((item) => rowVideoId(item) === videoId)
   if (!(await waitFor(() => listRows().length, 20_000))) return "YouTube Studio's content list didn't load."
@@ -1336,6 +1381,40 @@ async function fillUpload(
   return fillForm(titleBox, info, thumbnail, abThumbnails, finish, filled, warnings)
 }
 
+/**
+ * Fills the upload dialog the user opened on this tab (a draft's Edit draft) from info.json: everything but
+ * the video, which is up already. A dialog left on a later step goes Back to Details first.
+ */
+async function fillOpenDialog(
+  info: YoutubeUploadInfo,
+  thumbnail: File | null,
+  abThumbnails: (File | null)[],
+  finish: boolean,
+  warnings: string[]
+): Promise<YoutubeFillResult> {
+  const filled: string[] = []
+  const again = "then click Fill the open draft in Browse Hack again."
+  if (filePicker()) {
+    return { ok: false, message: `This upload dialog has no video yet. Close it, open the draft with its Edit draft button, ${again}`, warnings, filled }
+  }
+  if (!currentStep()) {
+    return { ok: false, message: `No upload dialog is open on this tab. Open the draft in Studio with its Edit draft button, ${again}`, warnings, filled }
+  }
+  for (let tries = 0; currentStep() !== "details" && tries < 6; tries++) {
+    const back = dialog()?.querySelector<HTMLElement>("#back-button")
+    if (!enabled(back)) break
+    const from = currentStep()
+    press(back)
+    await waitFor(() => currentStep() !== from || null, 5000)
+  }
+  const titleBox = firstShown<HTMLElement>("ytcp-uploads-dialog #title-textarea #textbox")
+  if (!titleBox) {
+    return { ok: false, message: `Couldn't take the dialog back to its Details step. Click Details in the dialog, ${again}`, warnings, filled }
+  }
+  filled.push(`Draft: ${text(titleBox) || "the open dialog"}`)
+  return fillForm(titleBox, info, thumbnail, abThumbnails, finish, filled, warnings)
+}
+
 /** Fills the upload dialog from its Details step on: a new upload's, or a draft's. */
 async function fillForm(
   titleBox: HTMLElement,
@@ -1346,6 +1425,7 @@ async function fillForm(
   filled: string[],
   warnings: string[]
 ): Promise<YoutubeFillResult> {
+  thumbnailStarts.length = 0
   await sleep(800)
 
   if (setEditable(titleBox, info.title)) filled.push("Title")
@@ -1455,6 +1535,8 @@ async function fillForm(
     else filled.push(`Thumbnail: ${thumbnail.name} (second try)`)
   }
   if (info.abTest) await setAbTest(info.abTest, abThumbnails, filled, warnings)
+  // Never leave Details while a thumbnail is still going up.
+  await waitForThumbnails(warnings)
 
   // On to Visibility, one step at a time; Checks is left as it is.
   let step: Step | null = "details"

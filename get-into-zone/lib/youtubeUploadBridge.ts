@@ -192,25 +192,16 @@ async function goTo(tabId: number, url: string) {
 }
 
 /** Reads Studio's page; its lists and dialogs only show in a tab Chrome paints, so the tab comes forward meanwhile. */
-async function ask<T>(tabId: number, action: string, key: string, extra: Record<string, unknown> = {}): Promise<T> {
-  const reply = await inFront(tabId, () => chrome.tabs.sendMessage(tabId, { action, ...extra }))
+async function ask<T>(tabId: number, action: string, key: string): Promise<T> {
+  const reply = await inFront(tabId, () => chrome.tabs.sendMessage(tabId, { action }))
   if (!reply?.ok) throw new Error(reply?.error || "YouTube Studio didn't answer.")
   return reply[key] as T
 }
 
-/** The channel's two content lists in Studio: Videos ("upload") and Shorts ("short"). */
-export type ContentList = "upload" | "short"
-
-/** A channel's content list (its Shorts tab unless told otherwise), up to `pages` pages of it. */
-export async function readContentList(
-  tabId: number,
-  channelId: string,
-  context = "",
-  list: ContentList = "short",
-  pages = 20
-): Promise<StudioShort[]> {
-  await goTo(tabId, studioUrl(`channel/${channelId}/videos/${list}`, context))
-  return ask<StudioShort[]>(tabId, "giz-ytstudio-shorts", "shorts", { pages })
+/** The channel's Shorts tab, every page of it. */
+export async function readShortsList(tabId: number, channelId: string, context = ""): Promise<StudioShort[]> {
+  await goTo(tabId, studioUrl(`channel/${channelId}/videos/short`, context))
+  return ask<StudioShort[]>(tabId, "giz-ytstudio-shorts", "shorts")
 }
 
 const CHUNK = 1024 * 1024
@@ -232,21 +223,13 @@ export async function readVideoDetails(tabId: number, videoId: string, context =
   return ask<Record<string, unknown>>(tabId, "giz-ytstudio-details", "fields")
 }
 
+type DraftFiles = { thumbnail?: File; abThumbnails?: File[] }
+
 /**
- * Opens a draft from the channel's content list (Shorts unless told otherwise) and fills its upload dialog:
- * everything but the video, which is already up. The thumbnail and A/B test thumbnails go to the tab first.
+ * Sends the files to the Studio tab, then the fill message, and waits for the form's result. Studio's form
+ * only works in a tab Chrome paints, so the tab is in front while it fills.
  */
-export async function fillDraft(
-  tabId: number,
-  channelId: string,
-  draftId: string,
-  info: YoutubeUploadInfo,
-  finish: boolean,
-  context = "",
-  { list = "short", thumbnail, abThumbnails = [] }: { list?: ContentList; thumbnail?: File; abThumbnails?: File[] } = {}
-): Promise<YoutubeFillResult> {
-  await goTo(tabId, studioUrl(`channel/${channelId}/videos/${list}`, context))
-  // Studio's form only works in a tab Chrome paints: the tab is in front while it fills.
+async function fillOverPort(tabId: number, message: Record<string, unknown>, { thumbnail, abThumbnails = [] }: DraftFiles = {}) {
   const port = chrome.tabs.connect(tabId, { name: "giz-youtube-upload" })
   const send = async (id: string, file: File) => {
     for await (const chunk of fileChunks(file)) {
@@ -270,17 +253,49 @@ export async function fillDraft(
         reject(new Error("Lost the YouTube Studio tab before the draft was filled."))
       })
       port.postMessage({
-        type: "fill-draft",
-        info,
-        draftId,
+        ...message,
         thumbnailId: thumbnail ? "thumbnail" : undefined,
-        abThumbnailIds: abThumbnailIds.length ? abThumbnailIds : undefined,
-        finish
+        abThumbnailIds: abThumbnailIds.length ? abThumbnailIds : undefined
       })
     }))
   } finally {
     port.disconnect()
   }
+}
+
+/** Opens a draft from the channel's Shorts list and fills its upload dialog. */
+export async function fillDraft(
+  tabId: number,
+  channelId: string,
+  draftId: string,
+  info: YoutubeUploadInfo,
+  finish: boolean,
+  context = ""
+): Promise<YoutubeFillResult> {
+  await goTo(tabId, studioUrl(`channel/${channelId}/videos/short`, context))
+  return fillOverPort(tabId, { type: "fill-draft", info, draftId, finish })
+}
+
+/** Whether this Studio page is on another channel than info.json names (a warning, never a switch: that would close the dialog). */
+async function otherChannel(state: PageState, wanted: string): Promise<boolean> {
+  const key = channelKey(wanted)
+  if (key.kind === "name") return !!state.channelName && state.channelName.replace(/\s+/g, " ").toLowerCase() !== key.value
+  const id = key.kind === "id" ? key.value : await channelIdForHandle(key.value)
+  return !!id && !!state.channelId && id !== state.channelId
+}
+
+/**
+ * Fills the upload dialog the user opened in this Studio tab (a draft's Edit draft) from info.json: everything
+ * but the video, which is up already. The tab stays as it is: no channel switch, no other page.
+ */
+export async function fillOpenDraft(tabId: number, info: YoutubeUploadInfo, finish: boolean, files: DraftFiles = {}) {
+  const state = await ping(tabId)
+  if (!state?.ok) throw new Error("Browse Hack can't reach this YouTube Studio tab. Reload it, open the draft again, then click Fill the open draft.")
+  const result = await fillOverPort(tabId, { type: "fill-open", info, finish }, files)
+  if (await otherChannel(state, info.channel)) {
+    result.warnings.unshift(`This draft is on ${state.channelName || state.channelId}, not ${info.channel} (info.json's channel). Check it's the right draft.`)
+  }
+  return result
 }
 
 function takeSession(sessionId: unknown): Session {
@@ -319,7 +334,7 @@ export const youtubeStudioCommands: Record<string, (params: any) => Promise<unkn
     tomorrow.setDate(tomorrow.getDate() + 1)
     const tab = await openChannelTab(wanted)
     try {
-      const shorts = await readContentList(tab.tabId, tab.channelId, tab.context)
+      const shorts = await readShortsList(tab.tabId, tab.channelId, tab.context)
       const taken = [...new Set(shorts.filter((short) => !short.draft && short.date).map((short) => short.date as string))].sort()
       return {
         channel: { name: tab.name, handle: tab.handle },
