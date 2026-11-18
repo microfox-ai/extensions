@@ -50,9 +50,9 @@ This is a [Plasmo extension](https://docs.plasmo.com/) project bootstrapped with
 | `contents/youtubeStudioPage.ts` | Runs in Studio's own page: sets thumbnail files (from the isolated world their upload fails) and reads the thumbnail editor's error |
 | `lib/youtubeUploadBridge.ts` | YouTube Studio for the MCP server and the popup's jobs: channel switching, one Studio tab per upload, drafts |
 | `lib/studioFront.ts` | Brings a Studio tab to the front only while Browse Hack uses Studio's page (account menu, reading lists, filling the form; Studio draws none of them in a background tab), then puts the user's tab back |
-| `componenets/StudioTab.tsx` | Popup tab: Upload from a pack (info.json), Bulk Upload Shorts (shorts-pack.json), Autofill Shorts (drafts copy their most similar short and go on the next day with no short) |
+| `componenets/StudioTab.tsx` | Popup tab: Upload from a pack (info.json), Bulk Upload Shorts (shorts-pack.json), Fill its draft (a pack whose video went up but whose details didn't: finds the draft it left and fills everything but the video), Autofill Shorts (drafts copy their most similar short and go on the next day with no short) |
 | `lib/studioJobs.ts`, `lib/studioFiles.ts` | The popup's Studio jobs, run by the service worker from files the popup saved in IndexedDB (the popup closes once Studio comes to the front) |
-| `lib/youtubePackFiles.ts`, `lib/youtubeShorts.ts` | Reading a picked pack folder (info.json or shorts-pack.json), empty-day scheduling, and which short a draft copies |
+| `lib/youtubePackFiles.ts`, `lib/youtubeShorts.ts`, `lib/youtubeDrafts.ts` | Reading a picked pack folder (info.json or shorts-pack.json), empty-day scheduling, which short a draft copies, and which draft a pack's upload left (by its title, its video's file name or a pasted link) |
 | `lib/libraryFiles.ts` | Files for MediaMake's media library, written through `chrome.downloads`: a download's `<file>.source.json` and a Pinterest session's `_session.json` |
 | `lib/saverRules.ts` | Saver toggle rules (page / site / window / everywhere) shared by popup, content script, and background |
 | `lib/saverBackground.ts` | Toolbar "OFF" badge, right-click menu, window-rule cleanup |

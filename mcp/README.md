@@ -164,7 +164,7 @@ For more than a few prompts, `midjourney_batch_start` takes the whole list (`job
 
 ### Tripo
 
-Browse Hack works with Tripo (studio.tripo3d.ai) the way you would, in your signed-in Chrome: it reads your account, your models, a model's record and the gallery search through Tripo's own API with the page's sign-in (no token ever leaves the page), and it generates by filling Tripo's create form in a background "Browse Hack" Tripo tab and clicking Generate. Needs Browse Hack 0.21.0.
+Browse Hack works with Tripo (studio.tripo3d.ai) the way you would, in your signed-in Chrome: it reads your account, your models, a model's record and the gallery search through Tripo's own API with the page's sign-in (no token ever leaves the page), and it generates by filling Tripo's create form in a background "Browse Hack" Tripo tab and clicking Generate. Needs Browse Hack 0.22.0.
 
 | Tool | What it does |
 | --- | --- |

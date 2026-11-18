@@ -2,12 +2,17 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 
 import { clearJobFiles, putJobFile } from "../lib/studioFiles"
 import type { StudioJob, StudioJobItem, StudioJobState } from "../lib/studioJobs"
+import { videoIdFrom } from "../lib/youtubeDrafts"
 import { readPackFolder, type PackFolder } from "../lib/youtubePackFiles"
 
 // YouTube Studio: upload a pack folder (info.json), upload every short of a
-// shorts-pack.json, or fill the channel's Shorts drafts from a similar short. The
-// service worker does the work (lib/studioJobs.ts): this popup closes as soon as a
-// Studio tab comes to the front, and the job carries on.
+// shorts-pack.json, fill the drafts such an upload left when its details didn't go
+// in, or fill the channel's Shorts drafts from a similar short. The service worker
+// does the work (lib/studioJobs.ts): this popup closes as soon as a Studio tab
+// comes to the front, and the job carries on.
+
+/** Fill the drafts the folder's uploads left instead of uploading; draftId names the one draft. */
+type FillMode = { drafts: boolean; draftId?: string | null }
 
 type Prefs = { channel: string; time: string; finish: boolean }
 const PREFS_KEY = "studioPrefs"
@@ -38,8 +43,8 @@ export function StudioTab() {
 
   const busy = job?.status === "running"
 
-  /** Saves the folder's files for the service worker and hands it the job. */
-  const start = async (job: StudioJob, folder?: PackFolder) => {
+  /** Saves the folder's files for the service worker and hands it the job (a draft fill leaves the video out). */
+  const start = async (job: StudioJob, folder?: PackFolder, mode: FillMode = { drafts: false }) => {
     setError("")
     if (busy) return setError("A job is still running.")
     await clearJobFiles()
@@ -47,21 +52,24 @@ export function StudioTab() {
       const items: StudioJobItem[] = []
       for (const [index, upload] of folder.uploads.entries()) {
         const key = (name: string) => `${index}/${name}`
-        await putJobFile(key("video"), upload.video)
+        if (!mode.drafts) await putJobFile(key("video"), upload.video)
         if (upload.thumbnail) await putJobFile(key("thumbnail"), upload.thumbnail)
         for (const [n, file] of upload.abThumbnails.entries()) await putJobFile(key(`ab-${n}`), file)
         items.push({
           label: upload.label,
           fields: upload.fields,
           files: {
-            video: key("video"),
+            video: mode.drafts ? undefined : key("video"),
             thumbnail: upload.thumbnail ? key("thumbnail") : undefined,
             ab: upload.abThumbnails.map((_, n) => key(`ab-${n}`))
           },
+          videoName: upload.video.name,
+          draftId: mode.draftId || undefined,
           needsDay: upload.needsDay
         })
       }
       job.items = items
+      job.drafts = mode.drafts
     }
     const reply = await chrome.runtime.sendMessage({ action: "studio-job", job })
     if (!reply?.ok) setError(reply?.error || "The job didn't start.")
@@ -87,7 +95,7 @@ export function StudioTab() {
         hint="A folder with info.json, the video and its thumbnails, as MediaMake's pack-youtube makes it."
         kind="pack"
         busy={busy}
-        onStart={(folder) => start({ kind: "pack", channel: folder.channel, finish: prefs.finish }, folder)}
+        onStart={(folder, mode) => start({ kind: "pack", channel: folder.channel, finish: prefs.finish }, folder, mode)}
       />
 
       <PackCard
@@ -95,7 +103,7 @@ export function StudioTab() {
         hint="A folder with shorts-pack.json. Shorts without a scheduleAt go on the next days that have no short."
         kind="shorts"
         busy={busy}
-        onStart={(folder) =>
+        onStart={(folder, mode) =>
           start(
             {
               kind: "shorts",
@@ -104,7 +112,8 @@ export function StudioTab() {
               from: folder.schedule?.from,
               finish: prefs.finish
             },
-            folder
+            folder,
+            mode
           )
         }
       />
@@ -149,11 +158,12 @@ function PackCard({
   hint: string
   kind: PackFolder["kind"]
   busy: boolean
-  onStart: (folder: PackFolder) => Promise<void>
+  onStart: (folder: PackFolder, mode: FillMode) => Promise<void>
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null)
   const [folder, setFolder] = useState<PackFolder | null>(null)
   const [reading, setReading] = useState(false)
+  const [draftLink, setDraftLink] = useState("")
 
   const onFiles = async (files: FileList | null) => {
     if (!files?.length) return
@@ -167,6 +177,10 @@ function PackCard({
   }
 
   const blocked = busy || !folder || folder.errors.length > 0 || !folder.uploads.length
+  const draftId = kind === "pack" ? videoIdFrom(draftLink) : null
+  const badLink = !!draftLink.trim() && !draftId
+  const draftBlocked = blocked || badLink
+  const count = folder?.uploads.length || 0
   return (
     <Card title={title}>
       <p style={{ margin: "0 0 6px", color: "#444" }}>{hint}</p>
@@ -208,10 +222,33 @@ function PackCard({
           <button
             type="button"
             disabled={blocked}
-            onClick={() => void onStart(folder)}
+            onClick={() => void onStart(folder, { drafts: false })}
             style={{ ...buttonStyle(blocked ? "#E0E0E0" : "#CC0000", blocked ? "#666" : "#fff"), marginTop: 6 }}>
-            {folder.uploads.length > 1 ? `Upload ${folder.uploads.length} shorts` : "Upload"}
+            {count > 1 ? `Upload ${count} shorts` : "Upload"}
           </button>
+          <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed #E0E0E0" }}>
+            <p style={{ margin: "0 0 6px", color: "#444" }}>
+              Video already uploaded, but its details didn't go in? Fill the draft{count > 1 ? "s" : ""} it left on the
+              channel instead: everything but the video. {count > 1 ? "Each draft is" : "The draft is"} found by its
+              title or the video's file name.
+            </p>
+            {kind === "pack" && (
+              <input
+                value={draftLink}
+                onChange={(event) => setDraftLink(event.target.value)}
+                placeholder="Draft's link or video ID (optional)"
+                style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }}
+              />
+            )}
+            {badLink && <div style={{ color: "#9f1239", marginTop: 4 }}>That isn't a YouTube video link or ID.</div>}
+            <button
+              type="button"
+              disabled={draftBlocked}
+              onClick={() => void onStart(folder, { drafts: true, draftId })}
+              style={{ ...buttonStyle(draftBlocked ? "#E0E0E0" : "#111", draftBlocked ? "#666" : "#fff"), marginTop: 6 }}>
+              {count > 1 ? `Fill ${count} drafts` : "Fill its draft"}
+            </button>
+          </div>
         </div>
       )}
     </Card>
@@ -219,7 +256,9 @@ function PackCard({
 }
 
 function JobStatus({ job }: { job: StudioJobState }) {
-  const title = { pack: "Upload from a pack", shorts: "Bulk Upload Shorts", autofill: "Autofill Shorts" }[job.kind]
+  const title = job.drafts
+    ? "Fill drafts from a pack"
+    : { pack: "Upload from a pack", shorts: "Bulk Upload Shorts", autofill: "Autofill Shorts" }[job.kind]
   const state = { running: "running…", done: "done", failed: "stopped" }[job.status]
   return (
     <Card title={`${title} · ${job.channel}: ${state}`}>
