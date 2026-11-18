@@ -36,8 +36,15 @@ type FillMsg = {
   /** Click Schedule at the end (the popup's choice). */
   finish?: boolean
 }
-/** Fill a draft that's already uploaded: its row is on this tab's content list. */
-type FillDraftMsg = { type: "fill-draft"; info: YoutubeUploadInfo; draftId: string; finish?: boolean }
+/** Fill a draft that's already uploaded: its row is on this tab's content list. Its thumbnails come first as files. */
+type FillDraftMsg = {
+  type: "fill-draft"
+  info: YoutubeUploadInfo
+  draftId: string
+  thumbnailId?: string
+  abThumbnailIds?: string[]
+  finish?: boolean
+}
 
 const CATEGORY_PREFIX = "CREATOR_VIDEO_CATEGORY_"
 const COMMENT_STATE = { on: "COMMENTS_ENABLEMENT_STATE_ON", off: "COMMENTS_ENABLEMENT_STATE_OFF" }
@@ -72,7 +79,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true
   }
   if (msg?.action === "giz-ytstudio-shorts") {
-    listShorts().then(
+    listShorts(Number(msg.pages) || 20).then(
       (shorts) => sendResponse({ ok: true, shorts }),
       (error) => sendResponse({ ok: false, error: errorText(error) })
     )
@@ -104,13 +111,23 @@ chrome.runtime.onConnect.addListener((port) => {
       (error) => port.postMessage({ type: "result", result: { ok: false, message: errorText(error), warnings: [], filled: [] } })
     )
 
+  const take = (id?: string) => {
+    const bin = id ? bins.get(id) : undefined
+    if (!bin || bin.parts.length !== bin.total || bin.parts.some((part) => !part)) return null
+    return new File(bin.parts, bin.name, { type: bin.mime })
+  }
+
   port.onMessage.addListener((msg: FileStart | FileChunk | FillMsg | FillDraftMsg) => {
     if (msg.type === "fill-draft") {
+      const thumbnail = take(msg.thumbnailId)
+      const abThumbnails = (msg.abThumbnailIds || []).map((id) => take(id))
+      bins.clear()
+      const warnings = msg.thumbnailId && !thumbnail ? ["The thumbnail file didn't arrive in full; add it by hand."] : []
       reply(
         openDraft(msg.draftId).then((opened) =>
           typeof opened === "string"
             ? { ok: false, message: opened, warnings: [], filled: [] }
-            : fillForm(opened, msg.info, null, [], !!msg.finish, [`Draft: ${msg.draftId}`], [])
+            : fillForm(opened, msg.info, thumbnail, abThumbnails, !!msg.finish, [`Draft: ${msg.draftId}`], warnings)
         )
       )
       return
@@ -125,11 +142,6 @@ chrome.runtime.onConnect.addListener((port) => {
       return
     }
     if (msg.type === "fill") {
-      const take = (id?: string) => {
-        const bin = id ? bins.get(id) : undefined
-        if (!bin || bin.parts.length !== bin.total || bin.parts.some((part) => !part)) return null
-        return new File(bin.parts, bin.name, { type: bin.mime })
-      }
       const video = take(msg.videoId)
       const thumbnail = take(msg.thumbnailId)
       const abThumbnails = (msg.abThumbnailIds || []).map((id) => take(id))
@@ -1153,23 +1165,29 @@ function readRow(row: HTMLElement): StudioShort {
   }
 }
 
-/** Every row of the content list this tab shows (the channel's Shorts tab), page by page. */
-async function listShorts(): Promise<StudioShort[]> {
-  const rows = () => shownIn<HTMLElement>("ytcp-video-row")
-  if (!(await waitFor(() => rows().length || firstShown("ytcp-video-section-content #empty-state, ytcp-video-list-empty-state"), 20_000))) {
-    throw new Error("YouTube Studio's Shorts list didn't load.")
+const listRows = () => shownIn<HTMLElement>("ytcp-video-row")
+
+/** Turns the content list to its next page; false on the last one. */
+async function nextListPage(): Promise<boolean> {
+  const next = document.querySelector<HTMLElement>("ytcp-table-footer #navigate-after")
+  if (!enabled(next)) return false
+  const first = rowVideoId(listRows()[0] || document.body)
+  press(next)
+  return !!(await waitFor(() => listRows().length && rowVideoId(listRows()[0]) !== first, 10_000))
+}
+
+/** Every row of the content list this tab shows (the channel's Videos or Shorts tab), up to `pages` pages. */
+async function listShorts(pages = 20): Promise<StudioShort[]> {
+  if (!(await waitFor(() => listRows().length || firstShown("ytcp-video-section-content #empty-state, ytcp-video-list-empty-state"), 20_000))) {
+    throw new Error("YouTube Studio's content list didn't load.")
   }
   const shorts = new Map<string, StudioShort>()
-  for (let page = 0; page < 20; page++) {
-    for (const row of rows()) {
+  for (let page = 0; page < pages; page++) {
+    for (const row of listRows()) {
       const short = readRow(row)
       if (short.videoId) shorts.set(short.videoId, short)
     }
-    const next = document.querySelector<HTMLElement>("ytcp-table-footer #navigate-after")
-    if (!enabled(next)) break
-    const first = rowVideoId(rows()[0] || document.body)
-    press(next)
-    if (!(await waitFor(() => rows().length && rowVideoId(rows()[0]) !== first, 10_000))) break
+    if (page < pages - 1 && !(await nextListPage())) break
   }
   return [...shorts.values()]
 }
@@ -1257,10 +1275,13 @@ async function readDetails(): Promise<Record<string, unknown>> {
   return fields
 }
 
-/** Opens a draft from the content list (the channel's Shorts tab) into the upload dialog. */
+/** Opens a draft from the content list (the channel's Videos or Shorts tab) into the upload dialog, turning pages to find it. */
 async function openDraft(videoId: string): Promise<HTMLElement | string> {
-  const row = await waitFor(() => shownIn<HTMLElement>("ytcp-video-row").find((item) => rowVideoId(item) === videoId), 20_000)
-  if (!row) return `The draft ${videoId} isn't on this page of the Shorts list.`
+  const find = () => listRows().find((item) => rowVideoId(item) === videoId)
+  if (!(await waitFor(() => listRows().length, 20_000))) return "YouTube Studio's content list didn't load."
+  let row = await waitFor(find, 2000)
+  for (let page = 1; !row && page < 20 && (await nextListPage()); page++) row = await waitFor(find, 2000)
+  if (!row) return `The draft ${videoId} isn't on the channel's content list.`
   const opener =
     shownIn<HTMLElement>("ytcp-button, button", row).find((button) => /edit draft/i.test(text(button))) ||
     row.querySelector<HTMLElement>("a#video-title, a[href*='/video/']")
