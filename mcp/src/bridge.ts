@@ -11,6 +11,11 @@
 // with one profile: the only one connected, or the one picked with
 // useProfile. With two or more connected and none picked, calls fail with a
 // message telling Claude to ask the user which profile to use.
+//
+// The extension can call the hub too, for what only a program on the computer
+// can do (on Windows, lifting a Chrome window above the app the user is in:
+// windowLift.ts). The hub's welcome names those methods; an older hub sends no
+// welcome, so the extension doesn't ask.
 
 import { WebSocket, WebSocketServer } from "ws"
 
@@ -43,6 +48,8 @@ interface Extension {
   profile: Profile
   lastHeardAt: number
 }
+
+export type Served = Record<string, (params: any) => Promise<unknown>>
 
 interface Pending {
   ws: WebSocket
@@ -97,7 +104,9 @@ export class Bridge {
 
   constructor(
     private port: number,
-    private extensionId?: string
+    private extensionId?: string,
+    /** Methods the extension may call on this server when it is the hub. */
+    private served: Served = {}
   ) {}
 
   /** Calls a method on the extension (see get-into-zone/lib/mcpBridge.ts). */
@@ -244,11 +253,16 @@ export class Bridge {
       if (message.type === "ping") return send(ws, { type: "pong" })
       if (message.type === "hello" && !role) {
         role = message.role === "extension" ? "extension" : "peer"
-        if (role === "extension") this.addExtension(ws, message)
+        if (role === "extension") {
+          this.addExtension(ws, message)
+          send(ws, { type: "welcome", serves: Object.keys(this.served) })
+        }
         return
       }
       if (role === "extension" && message.type === "response") {
         this.onResponse(message)
+      } else if (role === "extension" && message.type === "request") {
+        void this.serveExtension(ws, message)
       } else if (role === "extension" && message.type === "status" && extension) {
         Object.assign(extension.profile, signInOf(message))
       } else if (role === "peer" && message.type === "request") {
@@ -287,6 +301,17 @@ export class Bridge {
     this.known.set(id, profile)
     console.error(`[bridge] extension ${profile.version ?? ""} connected (${profile.label})`)
     this.waiters.forEach((wake) => wake())
+  }
+
+  /** Answers a call the extension makes of this server, in the same frames the other way round. */
+  private async serveExtension(ws: WebSocket, { id, method, params }: { id?: unknown; method?: unknown; params?: unknown }) {
+    const handler = typeof method === "string" && Object.hasOwn(this.served, method) ? this.served[method] : undefined
+    try {
+      if (!handler) throw new Error(`Unknown method: ${String(method)}`)
+      send(ws, { type: "response", id, ok: true, result: await handler(params ?? {}) })
+    } catch (error) {
+      send(ws, { type: "response", id, ok: false, error: error instanceof Error ? error.message : String(error) })
+    }
   }
 
   private dropSilentExtensions() {

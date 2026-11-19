@@ -255,6 +255,13 @@ function readChannel(item: HTMLElement): YoutubeChannel {
 
 const accountMenuOpen = () => accountItems().length > 0 || !!firstShown("ytd-compact-link-renderer")
 
+/** Why a menu may not have shown: Studio draws nothing in a tab Chrome isn't showing. */
+function offScreen(): string {
+  return document.visibilityState === "hidden"
+    ? " Chrome isn't showing this Studio tab (its window is minimized or behind another app), and Studio only draws its menus on screen: bring that Chrome window forward and try again."
+    : ""
+}
+
 /** The account button toggles the menu; wait out its closing animation. */
 async function closeAccountMenu() {
   if (!accountMenuOpen()) return
@@ -281,10 +288,10 @@ async function openAccountList(): Promise<HTMLElement[]> {
         (link) => shown(link) && /switch account/i.test(text(link))
       )
   )
-  if (!switcher) throw new Error("Couldn't find Switch account in YouTube Studio's account menu.")
+  if (!switcher) throw new Error(`Couldn't find Switch account in YouTube Studio's account menu.${offScreen()}`)
   ;(switcher.querySelector<HTMLElement>("tp-yt-paper-item") || switcher).click()
   const first = await waitFor(() => accountItems().length > 0, 8000)
-  if (!first) throw new Error("YouTube Studio's channel list didn't open.")
+  if (!first) throw new Error(`YouTube Studio's channel list didn't open.${offScreen()}`)
   // The list fills in over a moment; wait until it stops growing.
   let count = 0
   for (let i = 0; i < 10 && accountItems().length !== count; i++) {

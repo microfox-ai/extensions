@@ -272,6 +272,8 @@ npm run pack:mcpb # build browse-hack.mcpb for Claude Desktop
 
 The extension side lives in [`get-into-zone/lib/mcpBridge.ts`](../get-into-zone/lib/mcpBridge.ts): each tool calls a method there (`youtube.download`, `pinterest.bulkStart`, …). To add a tool, add a method to `commands` in that file and a `tool(...)` line in [`src/index.ts`](src/index.ts).
 
+The extension can call the server the other way round, for what only a program on the computer can do. The hub's `welcome` names those methods; today they're `window.lift` and `window.lower` on Windows ([`src/windowLift.ts`](src/windowLift.ts)). Windows doesn't let Chrome take the foreground from the app you're in, and YouTube Studio only draws its menus and upload form in a window that's on screen. So the server lifts the Studio tab's window above that app without taking focus, then puts it back afterwards.
+
 ## `info.json` for YouTube uploads
 
 Put it in the upload folder beside the video. Only `channel` and the title are required; a field you leave out keeps YouTube's default. Paths are relative to the folder.

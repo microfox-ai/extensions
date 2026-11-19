@@ -154,6 +154,27 @@ describe("Chrome's window behind another app", () => {
     assert.equal(windows.find((item) => item.focused).id, 20)
   })
 
+  test("with no server to lift it (a Mac, or no Claude app open), focuses the window as before", async () => {
+    windows = [
+      { id: 10, focused: false },
+      { id: 20, focused: true }
+    ]
+    const lowered = []
+    front.useWindowLifter({ lift: async () => null, lower: async (info) => void lowered.push(info) })
+    try {
+      let during
+      await front.inFront(2, async () => {
+        during = windows.find((item) => item.focused).id
+      })
+      assert.equal(during, 10)
+      await later(front.PUT_BACK_AFTER_MS)
+      assert.equal(windows.find((item) => item.focused).id, 20)
+      assert.deepEqual(lowered, [])
+    } finally {
+      front.useWindowLifter(null)
+    }
+  })
+
   test("doesn't raise the window when it's on screen but not focused", async () => {
     windows = [
       { id: 10, focused: false },
@@ -164,5 +185,77 @@ describe("Chrome's window behind another app", () => {
     await later(front.PUT_BACK_AFTER_MS)
     assert.deepEqual(calls, ["tab 2", "tab 1"])
     assert.equal(windows.find((item) => item.focused).id, 20)
+  })
+})
+
+describe("Windows: Chrome can't take the foreground from the app the user is in", () => {
+  let lifts
+  let lowers
+  let onTop
+  let below
+
+  beforeEach(() => {
+    // The user is in another app (Claude). Focusing Chrome's window changes nothing; only the server's lift shows it.
+    windows = [
+      { id: 10, focused: false },
+      { id: 20, focused: false }
+    ]
+    lifts = []
+    lowers = []
+    onTop = false
+    below = "200"
+    paints = (id) => onTop && !!tabs.find((item) => item.id === id)?.active
+    front.useWindowLifter({
+      lift: async (tabId) => {
+        lifts.push(tabId)
+        onTop = true
+        return { hwnd: "100", below, minimized: false }
+      },
+      lower: async (info) => {
+        lowers.push(info)
+        onTop = false
+      }
+    })
+  })
+
+  afterEach(() => front.useWindowLifter(null))
+
+  test("the server lifts the window for the step, then puts it back behind that app", async () => {
+    let during
+    await front.inFront(2, async () => {
+      during = paints(2)
+    })
+    assert.equal(during, true)
+    assert.deepEqual(lifts, [2])
+    assert.ok(!calls.includes("window 10"), "Chrome isn't asked for focus, which only flashes its taskbar button")
+    await later(front.PUT_BACK_AFTER_MS)
+    assert.equal(activeIn(10), 1)
+    assert.deepEqual(lowers, [{ hwnd: "100", below: "200", minimized: false }])
+  })
+
+  test("back-to-back steps lift the window once and put it back once", async () => {
+    await front.inFront(2, async () => {})
+    await later(1000)
+    await front.inFront(3, async () => {})
+    await later(front.PUT_BACK_AFTER_MS)
+    assert.deepEqual(lifts, [2])
+    assert.equal(lowers.length, 1)
+  })
+
+  test("covered again between steps: lifted again, put back where it was first", async () => {
+    await front.inFront(2, async () => {})
+    onTop = false
+    below = "300"
+    await front.inFront(2, async () => {})
+    await later(front.PUT_BACK_AFTER_MS)
+    assert.deepEqual(lifts, [2, 2])
+    assert.deepEqual(lowers, [{ hwnd: "100", below: "200", minimized: false }])
+  })
+
+  test("closing the Studio tab puts the window back too", async () => {
+    await front.inFront(3, async () => {})
+    await front.closeStudioTab(3)
+    assert.equal(lowers.length, 1)
+    assert.equal(activeIn(10), 1)
   })
 })

@@ -30,11 +30,12 @@ import {
 import { SEARCH_SORTS, THREAD_SORTS, TIMES, redditSearch, redditThread } from "./reddit.js"
 import { MAX_GENERATE, downloadModels, generateModels, modelIdOf, tripoStatus } from "./tripo.js"
 import { Updater, serverVersion } from "./updates.js"
+import { windowMethods } from "./windowLift.js"
 
 // GET_INTO_ZONE_* are the names from before the rename to Browse Hack.
 const env = (name: string) => process.env[`BROWSE_HACK_${name}`] || process.env[`GET_INTO_ZONE_${name}`]
 const PORT = Number(env("PORT")) || 17892
-const bridge = new Bridge(PORT, env("EXTENSION_ID") || undefined)
+const bridge = new Bridge(PORT, env("EXTENSION_ID") || undefined, windowMethods())
 const VERSION = serverVersion()
 const updater = new Updater({
   bridge: {

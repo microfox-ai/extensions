@@ -7,6 +7,12 @@
 // forward, and 100 ms timers run once a second. Opening Studio, its reload after a channel switch and
 // the files streaming in all work behind the user's tab, so only the steps that use Studio's page (the
 // account menu, reading the Shorts list or a video's details, filling the form) come forward.
+//
+// When Chrome's window is minimized or behind another app, focusing it brings it forward on a Mac. Windows
+// doesn't let Chrome take the foreground from the app the user is in, so there the MCP server lifts the window
+// instead (windowLift.ts), without taking the user's focus, and puts it back afterwards.
+
+import type { Lifted, WindowLifter } from "./windowLift"
 
 /** How long a Studio tab stays in front after its step, so back-to-back steps don't flicker. */
 export const PUT_BACK_AFTER_MS = 3000
@@ -18,9 +24,17 @@ type Behind = {
   /** Browse Hack focused that window (it wasn't being painted), and the Chrome window that had focus then. */
   raised: boolean
   focusedWindowId?: number
+  /** The MCP server lifted that window above the app in front (Windows), and how to put it back. */
+  lifted?: Lifted
 }
 
 let behind: Behind | null = null
+let lifter: WindowLifter | null = null
+
+/** Set by the MCP bridge: lifts a window above other apps where Chrome can't bring itself forward (Windows). */
+export function useWindowLifter(next: WindowLifter | null) {
+  lifter = next
+}
 /** The Studio tabs brought forward since `behind` was noted. */
 const brought = new Set<number>()
 let steps = 0
@@ -58,13 +72,16 @@ export function putBack(force = false): Promise<void> {
   brought.clear()
   restoring = restoring.then(async () => {
     const [active] = await chrome.tabs.query({ active: true, windowId: was.windowId }).catch(() => [] as chrome.tabs.Tab[])
-    if (active?.id === undefined || !ours.has(active.id)) return
-    if (was.tabId !== undefined && was.tabId !== active.id) {
-      await chrome.tabs.update(was.tabId, { active: true }).catch(() => {})
+    if (active?.id !== undefined && ours.has(active.id)) {
+      if (was.tabId !== undefined && was.tabId !== active.id) {
+        await chrome.tabs.update(was.tabId, { active: true }).catch(() => {})
+      }
+      if (was.raised && was.focusedWindowId !== undefined && was.focusedWindowId !== was.windowId) {
+        await chrome.windows.update(was.focusedWindowId, { focused: true }).catch(() => {})
+      }
     }
-    if (was.raised && was.focusedWindowId !== undefined && was.focusedWindowId !== was.windowId) {
-      await chrome.windows.update(was.focusedWindowId, { focused: true }).catch(() => {})
-    }
+    // Back behind the app that was in front, or minimized again. The server leaves it if the user is in it now.
+    if (was.lifted) await lifter?.lower(was.lifted).catch(() => {})
   })
   return restoring
 }
@@ -81,7 +98,15 @@ async function bringForward(tabId: number) {
     brought.add(tabId)
     if (!tab.active) await chrome.tabs.update(tabId, { active: true })
     if (await painting(tabId)) return
-    // Chrome's window is minimized or covered by another app, so it isn't painted until it has focus.
+    // Chrome's window is minimized or covered by another app. On Windows Chrome can't come in front of the app the
+    // user is in (focusing it only flashes its taskbar button), so the MCP server lifts it, without taking focus.
+    const lifted = lifter ? await lifter.lift(tabId).catch(() => null) : null
+    if (lifted) {
+      // The first lift says where the window was; a second one (after the user covered it again) keeps that.
+      behind.lifted ??= lifted
+      if (await painting(tabId, 3000)) return
+    }
+    // Elsewhere (a Mac) the window is painted once it has focus.
     if (!behind.raised) {
       const focused = await chrome.windows.getLastFocused().catch(() => undefined)
       behind.raised = true
