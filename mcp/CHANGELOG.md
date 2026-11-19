@@ -7,6 +7,11 @@ last release; see `.github/workflows/release-browse-hack-mcp.yml`). They show
 on Browse Hack's page on MediaMake and in `get_status` / `update_browse_hack`
 after an update.
 
+## 0.18.1
+
+- YouTube Studio works on Windows when Chrome is minimized or behind another app, with Browse Hack 0.22.2. Studio draws its account menu, lists and upload form only in a Chrome window that's on screen. On a Mac the extension brings Chrome forward itself, but Windows doesn't let Chrome take the foreground from the app you're in (Claude), so `youtube_list_channels`, `youtube_switch_channel`, `youtube_fill_uploads` and `youtube_bulk_upload_shorts` stopped at "Couldn't find Switch account in YouTube Studio's account menu" before any file was sent. Now the server lifts that Chrome window above the other apps for Studio's steps without taking your keyboard focus, and afterwards puts it back behind the app you were in (or minimized again). Nothing changes on a Mac.
+- The extension can ask this server for things only a program on the computer can do: the server's welcome names them (on Windows, `window.lift` and `window.lower`). An older extension or server simply doesn't use them.
+
 ## 0.18.0
 
 - Tripo 3D models (studio.tripo3d.ai), with Browse Hack 0.22.0. `tripo_status` shows the account in this Chrome profile: plan, credits (and when some expire), the Free plan's exports left this month, which model versions Tripo exports only to paying members, and the current generate jobs with their progress. `tripo_list_models` lists your own models (version, prompt, T-pose, texture and PBR settings) and `tripo_search_gallery` searches Tripo's community gallery, both through Tripo's own API with your sign-in.
