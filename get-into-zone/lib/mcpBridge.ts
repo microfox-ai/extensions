@@ -2,6 +2,10 @@
 // it. The worker connects out to ws://127.0.0.1:<port>; the server sends
 // { type: "request", id, method, params } and gets back
 // { type: "response", id, ok, result | error }.
+//
+// The extension asks the server in the same frames, the other way round, for
+// what only a program on the computer can do: the server's welcome names those
+// methods (on Windows, window.lift and window.lower: see windowLift.ts).
 
 import { config } from "../config"
 import {
@@ -86,6 +90,8 @@ import { distrokidCommands } from "./distrokidBridge"
 import { phraslyCommands } from "./phraslyBridge"
 import { sunoCommands } from "./sunoBridge"
 import { tripoCommands } from "./tripoBridge"
+import { useWindowLifter } from "./studioFront"
+import { windowLifter } from "./windowLift"
 import { youtubeStudioCommands } from "./youtubeUploadBridge"
 import { googleAiAnswer } from "./googleAiAnswer"
 import { closeOpenedTabs, forgetOpenedTab, openTab, openTabForClaude, waitForTabLoad } from "./tabs"
@@ -133,6 +139,46 @@ let retryMs = 2000
 // Calls from Claude being handled right now, so an update doesn't reload the
 // extension under them.
 let inFlight = 0
+
+// What the connected server does for the extension (its welcome), and the
+// extension's calls to it waiting for an answer.
+let serverMethods = new Set<string>()
+const serverCalls = new Map<
+  number,
+  { resolve: (value: any) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }
+>()
+let nextServerCall = 1
+
+/** Whether the connected MCP server answers this method. */
+export const serverServes = (method: string) =>
+  socket?.readyState === WebSocket.OPEN && serverMethods.has(method)
+
+/** Calls a method on the MCP server (one its welcome named). */
+export function callServer(method: string, params: Record<string, unknown> = {}, timeoutMs = 15_000) {
+  const ws = socket
+  if (!ws || !serverServes(method)) {
+    return Promise.reject(new Error(`The MCP server doesn't do ${method}.`))
+  }
+  const id = nextServerCall++
+  return new Promise<any>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      serverCalls.delete(id)
+      reject(new Error(`${method} got no answer from the MCP server.`))
+    }, timeoutMs)
+    serverCalls.set(id, { resolve, reject, timer })
+    send(ws, { type: "request", id, method, params })
+  })
+}
+
+/** The connection is gone: the next server may do other things, and no answer is coming. */
+function forgetServer() {
+  serverMethods = new Set()
+  for (const [id, call] of serverCalls) {
+    clearTimeout(call.timer)
+    serverCalls.delete(id)
+    call.reject(new Error("Lost the connection to the MCP server."))
+  }
+}
 
 // Runs one of background.ts's message actions as if the popup had sent it.
 const dispatch = (request: Record<string, unknown>, timeoutMs = 60_000) =>
@@ -895,6 +941,19 @@ async function onFrame(ws: WebSocket, raw: unknown) {
   } catch {
     return
   }
+  if (message?.type === "welcome") {
+    serverMethods = new Set(Array.isArray(message.serves) ? message.serves.map(String) : [])
+    return
+  }
+  if (message?.type === "response") {
+    const call = serverCalls.get(message.id)
+    if (!call) return
+    serverCalls.delete(message.id)
+    clearTimeout(call.timer)
+    if (message.ok) call.resolve(message.result)
+    else call.reject(new Error(message.error || "The MCP server couldn't do that."))
+    return
+  }
   if (message?.type !== "request") return
   const command = commands[message.method]
   inFlight++
@@ -959,6 +1018,7 @@ async function connect() {
     clearInterval(pingTimer)
     if (socket !== ws) return
     socket = null
+    forgetServer()
     setStatus("disconnected", port)
     scheduleRetry()
   }
@@ -968,6 +1028,7 @@ async function connect() {
 function dropConnection(ws: WebSocket) {
   if (socket !== ws) return
   socket = null
+  forgetServer()
   clearInterval(pingTimer)
   ws.close()
   loadPrefs().then(({ port }) => setStatus("disconnected", port))
@@ -978,6 +1039,7 @@ function dropConnection(ws: WebSocket) {
 function disconnect() {
   const ws = socket
   socket = null
+  forgetServer()
   clearInterval(pingTimer)
   clearTimeout(retryTimer)
   ws?.close()
@@ -985,6 +1047,8 @@ function disconnect() {
 
 export function initMcpBridge(handler: MessageHandler) {
   handleMessage = handler
+  // Studio steps lift Chrome's window through the server where Chrome can't bring itself forward (Windows).
+  useWindowLifter(windowLifter(callServer, serverServes))
 
   // The worker stops when idle; the alarm wakes it to reconnect once the MCP
   // server is running.
