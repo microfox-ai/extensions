@@ -1,4 +1,6 @@
-import { useRef, useState, type CSSProperties } from "react"
+import { useEffect, useRef, useState, type CSSProperties } from "react"
+
+import type { DistrokidReleaseRow } from "../lib/distrokidPage"
 
 import {
   findDistrokidLyrics,
@@ -136,7 +138,8 @@ export function DistroKidTab() {
 
   return (
     <div>
-      <h2 style={{ margin: "0 0 8px", fontSize: 16 }}>DistroKid</h2>
+      <SongDetails />
+      <h2 style={{ margin: "0 0 8px", fontSize: 16 }}>DistroKid upload</h2>
       <p style={{ margin: "0 0 12px", fontSize: 12, lineHeight: 1.45, color: "#444" }}>
         Choose the release folder. The form at distrokid.com/new is filled from
         info.json, the audio, and the square cover. You click Continue yourself. With
@@ -446,4 +449,154 @@ async function postFile(port: chrome.runtime.Port, id: string, file: File) {
     })
     await new Promise((resolve) => setTimeout(resolve, 0))
   }
+}
+
+// --- Song details: download from a release page or My Music ----------------------------------
+
+const DETAILS_JOB_KEY = "distrokidDetailsJob"
+
+type DetailsJob = {
+  running: boolean
+  label: string
+  done: number
+  total: number
+  current: string
+  saved: string[]
+  errors: string[]
+}
+
+type Page =
+  | { kind: "album"; tabId: number; url: string; title: string }
+  | { kind: "mymusic"; tabId: number }
+  | { kind: "other" }
+
+function askBackground<T>(op: string, extra: Record<string, unknown> = {}): Promise<T> {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({ action: "distrokid-ui", op, ...extra }, (response) => {
+      if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message))
+      if (!response?.ok) return reject(new Error(response?.error || "Browse Hack did not answer."))
+      resolve(response.result as T)
+    })
+  })
+}
+
+function SongDetails() {
+  const [page, setPage] = useState<Page | null>(null)
+  const [rows, setRows] = useState<DistrokidReleaseRow[] | null>(null)
+  const [artist, setArtist] = useState("")
+  const [job, setJob] = useState<DetailsJob | null>(null)
+  const [error, setError] = useState("")
+
+  useEffect(() => {
+    chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+      const url = tab?.url || ""
+      if (tab?.id && /^https:\/\/(www\.)?distrokid\.com\/dashboard\/album\/.*albumuuid=/i.test(url)) {
+        setPage({ kind: "album", tabId: tab.id, url, title: (tab.title || "").replace(/ - DistroKid$/, "") })
+      } else if (tab?.id && /^https:\/\/(www\.)?distrokid\.com\/mymusic/i.test(url)) {
+        setPage({ kind: "mymusic", tabId: tab.id })
+      } else {
+        setPage({ kind: "other" })
+      }
+    })
+    chrome.storage.session.get(DETAILS_JOB_KEY, (value) => setJob(value?.[DETAILS_JOB_KEY] ?? null))
+    const onChanged = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area === "session" && changes[DETAILS_JOB_KEY]) setJob(changes[DETAILS_JOB_KEY].newValue ?? null)
+    }
+    chrome.storage.onChanged.addListener(onChanged)
+    return () => chrome.storage.onChanged.removeListener(onChanged)
+  }, [])
+
+  useEffect(() => {
+    if (page?.kind !== "mymusic") return
+    askBackground<DistrokidReleaseRow[]>("artists", { tabId: page.tabId })
+      .then((list) => {
+        setRows(list)
+        const counts = new Map<string, number>()
+        for (const row of list) counts.set(row.artist, (counts.get(row.artist) || 0) + 1)
+        const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]
+        if (top) setArtist((current) => current || top[0])
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+  }, [page])
+
+  const start = (extra: Record<string, unknown>) => {
+    setError("")
+    askBackground("details", extra).catch((err) => setError(err instanceof Error ? err.message : String(err)))
+  }
+
+  const artists = rows
+    ? [...rows.reduce((map, row) => map.set(row.artist, (map.get(row.artist) || 0) + 1), new Map<string, number>())]
+    : []
+  const busy = !!job?.running
+
+  return (
+    <div style={{ marginBottom: 18, paddingBottom: 14, borderBottom: "1px solid #e5e5e5" }}>
+      <h2 style={{ margin: "0 0 8px", fontSize: 16 }}>Song details</h2>
+      <p style={{ margin: "0 0 10px", fontSize: 12, lineHeight: 1.45, color: "#444" }}>
+        Saves each song's UPC, release and upload dates, store links, ISRC, plain lyrics,
+        credits, DistroKid link and Apple Music genre as JSON in Downloads/DistroKid/&lt;artist&gt;/.
+        The tab it reads them in closes when it is done.
+      </p>
+      {page?.kind === "album" && (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => start({ album: page.url })}
+          style={buttonStyle(busy ? "#E0E0E0" : "#0073C7", busy ? "#666" : "#fff")}>
+          Download this release{page.title ? ` (${page.title})` : ""}
+        </button>
+      )}
+      {page?.kind === "mymusic" && (
+        <div>
+          {!rows && !error && <div style={{ fontSize: 12 }}>Reading My Music (showing all releases)…</div>}
+          {rows && (
+            <>
+              <select
+                value={artist}
+                onChange={(event) => setArtist(event.target.value)}
+                style={{ width: "100%", padding: 8, marginBottom: 8, fontSize: 13 }}>
+                {artists.map(([name, count]) => (
+                  <option key={name} value={name}>
+                    {name} ({count} release{count === 1 ? "" : "s"})
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={busy || !artist}
+                onClick={() => start({ artist })}
+                style={buttonStyle(busy ? "#E0E0E0" : "#0073C7", busy ? "#666" : "#fff")}>
+                Download all of {artist || "this artist"}'s songs
+              </button>
+            </>
+          )}
+        </div>
+      )}
+      {page?.kind === "other" && (
+        <button
+          type="button"
+          onClick={() => chrome.tabs.create({ url: "https://distrokid.com/mymusic/" })}
+          style={buttonStyle("#E0E0E0", "#111")}>
+          Open My Music on DistroKid
+        </button>
+      )}
+      {error && <p style={{ color: "#9f1239", fontSize: 12, margin: "8px 0 0" }}>{error}</p>}
+      {job && (
+        <div style={{ fontSize: 12, lineHeight: 1.45, marginTop: 8 }}>
+          <div>
+            {job.running
+              ? `Downloading ${job.label}: ${job.done} of ${job.total || "?"}${job.current ? ` · ${job.current}` : ""}`
+              : `Last run (${job.label}): ${job.saved.length} song file${job.saved.length === 1 ? "" : "s"} saved.`}
+          </div>
+          {job.errors.length > 0 && (
+            <ul style={{ color: "#9a3412", paddingLeft: 18, margin: "4px 0" }}>
+              {job.errors.slice(0, 8).map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  )
 }

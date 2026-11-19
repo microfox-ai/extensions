@@ -9,7 +9,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
 
 import { Bridge } from "./bridge.js"
-import { fillDistrokidReleases } from "./distrokid.js"
+import { fillDistrokidReleases, recordDistrokidPacks } from "./distrokid.js"
 import { bulkUploadShorts, fillYoutubeUploads } from "./youtubeUpload.js"
 import { downloadMidjourneyImages, instagramDownload, startGoogleImagesBulk, startPinterestBulk, youtubeDownload } from "./downloads.js"
 import { saveGoogleAiAnswers } from "./googleAiAnswers.js"
@@ -1224,7 +1224,9 @@ localTool(
     "Does not click Continue or submit the release form. The user reviews each tab and clicks Continue. " +
     "After that, in the same tab: with useMyOriginals true in info.json, the extension picks Use my originals ($0) on the " +
     "Mixea page; with addLyrics true, it opens Add your lyrics on the Done page, pastes the folder's distrokid_lyrics.md, " +
-    "picks the free Basic plan and ticks the DistroKid Lyric Agreement. The user clicks Continue on the Mixea page and Save lyrics.",
+    "picks the free Basic plan and ticks the DistroKid Lyric Agreement. The user clicks Continue on the Mixea page and Save lyrics. " +
+    "When the release reaches DistroKid's Done page, the extension records it with its folder: the pack's last step is then " +
+    "distrokid_record_packs, which writes DistroKid's details (link, UPC, ISRC, dates) back into the folder's info.json.",
   {
     folders: z
       .array(z.string())
@@ -1241,6 +1243,67 @@ localTool(
       .describe("How many DistroKid tabs to fill at the same time. Default 3.")
   },
   ({ folders, concurrency }) => fillDistrokidReleases(bridge, folders, concurrency ?? 3)
+)
+
+localTool(
+  "distrokid_record_packs",
+  "The last step of a DistroKid pack upload: once the user has submitted the release (Continue through to DistroKid's " +
+    "Done page), finds that release on DistroKid and writes its DistroKid-only details into the pack's info.json under " +
+    "\"distrokid\": link (the release page), albumUuid, upc, uploadDate, releaseDate, recordLabel, status, each track's ISRC " +
+    "(and isrc for a single). The release is the one the Done page recorded for that folder (packs filled with " +
+    "distrokid_fill_releases), else the newest release on My Music with the same title (version in brackets) and artist. " +
+    "Store links come days later: sync those with distrokid_sync_links. Opens DistroKid in a background tab and closes it.",
+  {
+    folders: z
+      .array(z.string())
+      .min(1)
+      .describe("Absolute paths: release folders with info.json, or a parent whose child folders each have one."),
+    album: z
+      .string()
+      .optional()
+      .describe("The release's DistroKid link (…/dashboard/album/?albumuuid=…) or albumuuid, when the title doesn't find it. One folder only.")
+  },
+  ({ folders, album }) => recordDistrokidPacks(bridge, folders, { album })
+)
+tool(
+  "distrokid_song_details",
+  "Downloads DistroKid song details: for each song its DistroKid UPC, release and upload dates, record label, ISRC, store " +
+    "links from Delivered to (Spotify, Apple Music, iTunes, Amazon and the rest), plain lyrics, credits, DistroKid link and " +
+    "the primary genre from its Apple Music link. One release (album), every release of an artist on My Music (artist; " +
+    "it clicks Show all releases first), or all. Saves one JSON per song in Downloads/DistroKid/<artist>/ unless save is " +
+    "false, and returns the songs. Reads them in a background tab that is closed when done; about 3 s per release.",
+  {
+    album: z.string().optional().describe("A release link (…/dashboard/album/?albumuuid=…) or its albumuuid: that release only."),
+    artist: z.string().optional().describe("Every release of this artist, as My Music names it."),
+    all: z.boolean().optional().describe("Every release on My Music."),
+    lyrics: z.boolean().optional().describe("Read plain lyrics (default true)."),
+    credits: z.boolean().optional().describe("Read credits (default true)."),
+    genre: z.boolean().optional().describe("Look up the Apple Music genre (default true)."),
+    save: z.boolean().optional().describe("Save JSON files to Downloads (default true).")
+  },
+  "distrokid.details",
+  { readOnly: true, timeoutMs: (p) => (p.album ? 120_000 : 30 * 60_000) }
+)
+tool(
+  "distrokid_list_releases",
+  "Lists the releases on DistroKid's My Music (title, artist, Single or n tracks, albumUuid, link), all of them after " +
+    "Show all releases, optionally only one artist's. Reads My Music in a background tab that is closed again.",
+  { artist: z.string().optional() },
+  "distrokid.releases",
+  { readOnly: true, timeoutMs: 120_000 }
+)
+tool(
+  "distrokid_sync_links",
+  "Saves a DistroKid release's store links (and its DistroKid link, UPC and dates in the distrokid group; ISRC and release " +
+    "date only where the record has none) to the MediaMake Library Songs records linked to it: records whose distrokid " +
+    "group (its link) names the release's albumuuid. Same as the Sync links button in the release page's Delivered to " +
+    "section. dryRun lists the linked records without saving; ask the user before saving.",
+  {
+    album: z.string().describe("The release link (…/dashboard/album/?albumuuid=…) or its albumuuid."),
+    dryRun: z.boolean().optional()
+  },
+  "distrokid.syncLinks",
+  { timeoutMs: 120_000 }
 )
 
 // --- YouTube Studio ---

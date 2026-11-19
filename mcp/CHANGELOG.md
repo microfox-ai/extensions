@@ -7,6 +7,12 @@ last release; see `.github/workflows/release-browse-hack-mcp.yml`). They show
 on Browse Hack's page on MediaMake and in `get_status` / `update_browse_hack`
 after an update.
 
+## 0.19.0
+
+- DistroKid song details, with Browse Hack 0.23.0. `distrokid_song_details` reads releases on DistroKid and saves one JSON per song in `Downloads/DistroKid/<artist>/`: DistroKid UPC, release and upload dates, record label, ISRC, the store links in Delivered to (Spotify, Apple Music, iTunes, Amazon and any others shown), plain lyrics, credits, the DistroKid link, and the primary genre from the release's Apple Music link. One release (`album`), every release of an `artist` on My Music (after Show all releases), or `all`. Pages are read in a background tab that is closed when the run ends. `distrokid_list_releases` lists My Music.
+- The last step of a pack upload: when a release filled by `distrokid_fill_releases` reaches DistroKid's Done page, the extension records it with its folder, and `distrokid_record_packs` writes DistroKid's own details back into that folder's `info.json` under `"distrokid"` (link, albumUuid, UPC, dates, label, status, each track's ISRC), so the pack can later be saved or synced to its MediaMake Library record. A release the Done page didn't record is found by title and artist on My Music.
+- `distrokid_sync_links` saves a release's store links (with its DistroKid link, UPC and dates in the `distrokid` group, and the ISRC and release date where the record has none) to the MediaMake Library Songs records linked to it: those whose `distrokid.link` holds the release link. On DistroKid's release pages the same is a **Sync links to MediaMake** button in Delivered to, shown only when a record is linked.
+
 ## 0.18.1
 
 - YouTube Studio works on Windows when Chrome is minimized or behind another app, with Browse Hack 0.22.2. Studio draws its account menu, lists and upload form only in a Chrome window that's on screen. On a Mac the extension brings Chrome forward itself, but Windows doesn't let Chrome take the foreground from the app you're in (Claude), so `youtube_list_channels`, `youtube_switch_channel`, `youtube_fill_uploads` and `youtube_bulk_upload_shorts` stopped at "Couldn't find Switch account in YouTube Studio's account menu" before any file was sent. Now the server lifts that Chrome window above the other apps for Studio's steps without taking your keyboard focus, and afterwards puts it back behind the app you were in (or minimized again). Nothing changes on a Mac.

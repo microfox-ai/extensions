@@ -108,6 +108,8 @@ If that tool says the extension is not connected, or the user wants to fill a si
 3. Choose this folder and click Fill.
 4. Read the warnings on the page, fix anything that looks wrong, and click Continue themselves. With `useMyOriginals` or `addLyrics` on, the Mixea and lyrics pages that follow are filled in, and they click Continue and Save lyrics.
 
+Last step, once the user says the release is submitted (DistroKid showed its Done page): call `distrokid_record_packs` with the same folders. It writes DistroKid's own details (release link, UPC, upload and release dates, each track's ISRC) into each folder's `info.json` under `"distrokid"`, so the pack can later be saved or synced to its MediaMake Library record. Tell the user what was written, and which folders it could not find a release for yet. Store links come days later, when the stores go live: `distrokid_sync_links` (or the Sync links button on the release page) saves them to the linked record.
+
 ## Genre labels
 
 Copy these strings exactly.

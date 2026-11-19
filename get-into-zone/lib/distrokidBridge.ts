@@ -3,7 +3,21 @@
 // reuses the content-script port the popup already uses. It never clicks Continue
 // on the release form.
 
+import type { DistrokidAlbum } from "./distrokidPage"
 import { parseDistrokidInfo, type DistrokidRelease } from "./distrokidRelease"
+import {
+  albumUuidOf,
+  appleGenre,
+  detailsJob,
+  distrokidSongDetails,
+  linkedRecords,
+  listDistrokidReleases,
+  listUploads,
+  readRelease,
+  recordUpload,
+  syncLinks
+} from "./distrokidSongs"
+import { readDistrokidReleases } from "./distrokidPage"
 import { openTab } from "./tabs"
 
 type Session = {
@@ -11,6 +25,8 @@ type Session = {
   port: chrome.runtime.Port
   release: DistrokidRelease
   lyrics: string
+  /** The release folder on disk, recorded with the release once DistroKid shows its Done page. */
+  folder: string
 }
 
 const sessions = new Map<string, Session>()
@@ -41,7 +57,7 @@ function takeSession(sessionId: unknown): Session {
 }
 
 export const distrokidCommands: Record<string, (params: any) => Promise<unknown>> = {
-  "distrokid.open": async ({ infoJson, lyrics }) => {
+  "distrokid.open": async ({ infoJson, lyrics, folder }) => {
     let parsed: ReturnType<typeof parseDistrokidInfo>
     try {
       parsed = parseDistrokidInfo(JSON.parse(String(infoJson ?? "").replace(/^\uFEFF/, "")))
@@ -64,7 +80,8 @@ export const distrokidCommands: Record<string, (params: any) => Promise<unknown>
       tabId: tab.id,
       port,
       release: parsed.release,
-      lyrics: typeof lyrics === "string" ? lyrics : ""
+      lyrics: typeof lyrics === "string" ? lyrics : "",
+      folder: typeof folder === "string" ? folder : ""
     })
     port.onDisconnect.addListener(() => {
       const current = sessions.get(sessionId)
@@ -125,12 +142,48 @@ export const distrokidCommands: Record<string, (params: any) => Promise<unknown>
         type: "fill",
         release: session.release,
         lyrics: session.lyrics,
+        folder: session.folder,
         trackIds: Array.isArray(trackIds) ? trackIds : [],
         coverId: String(coverId || "cover")
       })
     })
     sessions.delete(sessionId)
     return { tabId: session.tabId, ...result }
+  },
+
+  "distrokid.details": async (params) =>
+    distrokidSongDetails({
+      album: params?.album ? String(params.album) : undefined,
+      artist: params?.artist ? String(params.artist) : undefined,
+      all: params?.all === true,
+      lyrics: params?.lyrics !== false,
+      credits: params?.credits !== false,
+      genre: params?.genre !== false,
+      save: params?.save !== false
+    }),
+
+  "distrokid.releases": async ({ artist }) => ({
+    releases: await listDistrokidReleases(artist ? String(artist) : undefined)
+  }),
+
+  /** One release's DistroKid-only details (no lyrics or credits), for the pack record. */
+  "distrokid.release": async ({ album, genre }) => {
+    const uuid = albumUuidOf(String(album || ""))
+    if (!uuid) throw new Error("Pass a DistroKid release link or its albumuuid.")
+    const found = await readRelease(uuid, { lyrics: false, credits: false })
+    return { ...found, primaryGenre: genre ? await appleGenre(found.storeLinks) : "" }
+  },
+
+  "distrokid.uploads": async () => ({ uploads: await listUploads() }),
+
+  "distrokid.syncLinks": async ({ album, dryRun }) => {
+    const uuid = albumUuidOf(String(album || ""))
+    if (!uuid) throw new Error("Pass a DistroKid release link or its albumuuid.")
+    const records = await linkedRecords(uuid)
+    if (!records.length) return { synced: false, records, message: "No MediaMake Library record is linked to this release." }
+    if (dryRun) return { synced: false, records }
+    const found = await readRelease(uuid, { lyrics: false, credits: false })
+    return { synced: true, results: await syncLinks(found) }
   },
 
   "distrokid.abort": async ({ sessionId }) => {
@@ -141,4 +194,58 @@ export const distrokidCommands: Record<string, (params: any) => Promise<unknown>
     session.port.disconnect()
     return { aborted: true, tabId: session.tabId }
   }
+}
+
+// --- Messages from the popup's DistroKid tab and DistroKid's own pages ------------------------
+
+export function handleDistrokidUi(
+  request: any,
+  _sender: chrome.runtime.MessageSender,
+  sendResponse: (response: unknown) => void
+) {
+  const reply = (work: Promise<unknown>) => {
+    work.then(
+      (result) => sendResponse({ ok: true, result }),
+      (error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) })
+    )
+    return true
+  }
+  switch (request.op) {
+    case "details":
+      // Runs on after the popup closes; the popup follows it through the job in storage.
+      distrokidSongDetails({
+        album: request.album,
+        artist: request.artist,
+        all: request.all === true
+      }).catch(() => {})
+      return reply(Promise.resolve({ started: true }))
+    case "job":
+      return reply(detailsJob())
+    case "artists":
+      return reply(
+        (async () => {
+          const tabId = Number(request.tabId)
+          const [injection] = await chrome.scripting.executeScript({
+            target: { tabId },
+            func: readDistrokidReleases
+          })
+          return injection?.result ?? []
+        })()
+      )
+    case "linked":
+      return reply(linkedRecords(String(request.albumUuid || "")))
+    case "sync":
+      return reply(syncLinks(request.album as DistrokidAlbum))
+    case "uploaded":
+      return reply(
+        recordUpload({
+          folder: String(request.folder || ""),
+          title: String(request.title || ""),
+          artist: String(request.artist || ""),
+          albumUuid: String(request.albumUuid || "")
+        })
+      )
+  }
+  sendResponse({ ok: false, error: `Unknown request: ${request.op}` })
+  return false
 }

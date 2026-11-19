@@ -1,7 +1,7 @@
 // Reads release folders on disk and streams them to the extension, one
 // DistroKid tab per folder. The browser cannot see these paths itself.
 
-import { readdir, readFile, stat } from "node:fs/promises"
+import { readdir, readFile, stat, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { basename, extname, isAbsolute, join, resolve, sep } from "node:path"
 
@@ -255,7 +255,7 @@ async function fillOne(bridge: Bridge, folder: string): Promise<FillOutcome> {
   const release = await readRelease(folder)
   const opened = (await bridge.call(
     "distrokid.open",
-    { infoJson: release.infoJson, lyrics: release.lyrics },
+    { infoJson: release.infoJson, lyrics: release.lyrics, folder },
     60_000
   )) as {
     sessionId: string
@@ -325,4 +325,127 @@ export async function fillDistrokidReleases(
       "Tabs whose info.json sets useMyOriginals or addLyrics then fill in the Mixea and lyrics pages; the user clicks Continue and Save lyrics there.",
     results
   }
+}
+
+// --- After the upload: DistroKid's own details back into the pack ------------------------------
+
+type Upload = { folder: string; title: string; artist: string; albumUuid: string; at: number }
+type ReleaseRow = { title: string; artist: string; kind: string; albumUuid: string; url: string }
+type Album = {
+  albumUuid: string
+  distrokidLink: string
+  title: string
+  artist: string
+  recordLabel: string
+  uploadDate: string
+  uploadDateText: string
+  releaseDate: string
+  releaseDateText: string
+  upc: string
+  status: string
+  aiTagged: boolean
+  storeLinks: { store: string; url: string }[]
+  tracks: { number: number; title: string; isrc: string }[]
+  primaryGenre?: string
+}
+
+export type RecordOutcome = {
+  folder: string
+  ok: boolean
+  message: string
+  distrokid?: Record<string, unknown>
+}
+
+const norm = (value: string) =>
+  String(value || "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim()
+
+/** The title DistroKid lists: the song title with its version in brackets. */
+function listedTitle(info: Record<string, unknown>) {
+  const title = String(info.songTitle ?? info.songtitle ?? "").trim()
+  const version = String(info.version ?? "").trim()
+  return version ? `${title} (${version})` : title
+}
+
+async function readInfo(folder: string) {
+  const path = join(folder, "info.json")
+  const text = (await readFile(path, "utf8")).replace(/^\uFEFF/, "")
+  const info = JSON.parse(text) as Record<string, unknown>
+  if (!info || typeof info !== "object" || Array.isArray(info)) throw new Error(`${path} is not a JSON object.`)
+  return { path, info }
+}
+
+/**
+ * Finds each pack's release on DistroKid (the one its Done page recorded, else
+ * by title and artist on My Music), reads its DistroKid-only details and writes
+ * them into the pack's info.json under "distrokid".
+ */
+export async function recordDistrokidPacks(
+  bridge: Bridge,
+  inputs: string[],
+  options: { album?: string } = {}
+): Promise<{ results: RecordOutcome[] }> {
+  const folders = await resolveReleaseFolders(inputs)
+  if (options.album && folders.length !== 1) throw new Error("album works with one release folder at a time.")
+  const { uploads } = (await bridge.call("distrokid.uploads", {}, 15_000)) as { uploads: Upload[] }
+  let releases: ReleaseRow[] | null = null
+  const results: RecordOutcome[] = []
+
+  for (const folder of folders) {
+    try {
+      const { path, info } = await readInfo(folder)
+      const title = listedTitle(info)
+      const artist = String(info.artist ?? "").trim()
+      let album = options.album || ""
+      let how = "the release link given"
+      if (!album) {
+        const recorded = uploads.find((item) => item.folder === folder && item.albumUuid)
+        if (recorded) {
+          album = recorded.albumUuid
+          how = "the upload recorded on DistroKid's Done page"
+        }
+      }
+      if (!album) {
+        releases ??= ((await bridge.call("distrokid.releases", {}, 120_000)) as { releases: ReleaseRow[] }).releases
+        // My Music lists the newest first, so the first match is the latest upload.
+        const match = releases.find(
+          (row) => norm(row.title) === norm(title) && (!artist || norm(row.artist) === norm(artist))
+        )
+        if (!match) {
+          results.push({
+            folder,
+            ok: false,
+            message: `No release "${title}" by ${artist || "this artist"} on DistroKid's My Music yet. Upload it first, or pass its release link as album.`
+          })
+          continue
+        }
+        album = match.albumUuid
+        how = "its title and artist on My Music"
+      }
+      const found = (await bridge.call("distrokid.release", { album, genre: false }, 120_000)) as Album
+      const distrokid: Record<string, unknown> = {
+        link: found.distrokidLink,
+        albumUuid: found.albumUuid,
+        upc: found.upc,
+        uploadDate: found.uploadDate || found.uploadDateText,
+        releaseDate: found.releaseDate || found.releaseDateText,
+        recordLabel: found.recordLabel,
+        status: found.status,
+        tracks: found.tracks.map((track) => ({ number: track.number, title: track.title, isrc: track.isrc })),
+        recordedAt: new Date().toISOString()
+      }
+      if (found.tracks.length === 1 && found.tracks[0].isrc) distrokid.isrc = found.tracks[0].isrc
+      for (const key of Object.keys(distrokid)) if (distrokid[key] === "" || distrokid[key] == null) delete distrokid[key]
+      // Read again right before writing, so nothing else in info.json is lost.
+      const latest = await readInfo(folder)
+      latest.info.distrokid = distrokid
+      await writeFile(path, JSON.stringify(latest.info, null, 2) + "\n", "utf8")
+      results.push({ folder, ok: true, message: `Found by ${how}; written to info.json under "distrokid".`, distrokid })
+    } catch (error) {
+      results.push({ folder, ok: false, message: error instanceof Error ? error.message : String(error) })
+    }
+  }
+  return { results }
 }
