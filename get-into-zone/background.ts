@@ -19,6 +19,7 @@ import { initMidjourneyEdit } from "./lib/midjourneyEdit"
 import { initMcpBridge } from "./lib/mcpBridge"
 import { handleSunoUi, initSunoDownloads } from "./lib/sunoBridge"
 import { handleTripoUi, initTripoDownloads } from "./lib/tripoBridge"
+import { handleDistrokidUi } from "./lib/distrokidBridge"
 import { handlePhraslyUi, initPhraslyBridge } from "./lib/phraslyBridge"
 import { startStudioJob } from "./lib/studioJobs"
 
@@ -101,6 +102,7 @@ const handleMessage = (
   if (request.action === "suno-ui") return handleSunoUi(request, sender, sendResponse)
   if (request.action === "tripo-ui") return handleTripoUi(request, sender, sendResponse)
   if (request.action === "phrasly-ui") return handlePhraslyUi(request, sender, sendResponse)
+  if (request.action === "distrokid-ui") return handleDistrokidUi(request, sender, sendResponse)
   if (request.action === "studio-job") {
     startStudioJob(request.job).then(sendResponse, (error) => sendResponse({ ok: false, error: String(error?.message || error) }))
     return true

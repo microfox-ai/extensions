@@ -50,6 +50,8 @@ type FillMsg = {
   trackIds: string[]
   coverId: string
   lyrics?: string
+  /** The release folder on disk (MCP fills only). */
+  folder?: string
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -90,6 +92,7 @@ chrome.runtime.onConnect.addListener((port) => {
       const tracks = msg.trackIds.map(take)
       const cover = take(msg.coverId)
       void fillForm(msg.release, tracks, cover, msg.lyrics || "").then((result) => {
+        if (result.ok) rememberPack(msg.release, msg.folder || "")
         port.postMessage({ type: "result", result })
       })
     }
@@ -992,9 +995,61 @@ async function fillLyricsPage() {
   save.click()
 }
 
+// The pack this tab was filled from rides along to the Done page, where the
+// release is recorded so distrokid_record_packs can write its DistroKid
+// details back into that folder.
+const PACK_KEY = "giz-distrokid-pack"
+
+type PackMark = { at: number; folder: string; title: string; artist: string }
+
+function rememberPack(release: DistrokidRelease, folder: string) {
+  try {
+    const mark: PackMark = { at: Date.now(), folder, title: release.songTitle, artist: release.artist }
+    sessionStorage.setItem(PACK_KEY, JSON.stringify(mark))
+  } catch {
+    // Storage blocked: the pack is matched by its title later instead.
+  }
+}
+
+async function recordUploadedPack() {
+  let mark: PackMark | null = null
+  try {
+    mark = JSON.parse(sessionStorage.getItem(PACK_KEY) || "null")
+  } catch {
+    mark = null
+  }
+  if (!mark?.at || Date.now() - mark.at > AFTER_TTL_MS) return
+  // The Done page links to the new release; wait a moment for it to draw.
+  const albumLink = () =>
+    Array.from(document.querySelectorAll<HTMLAnchorElement>("a[href*='albumuuid=']")).find((link) =>
+      /albumuuid=[0-9a-f-]{20,}/i.test(link.href)
+    )
+  await waitFor(() => !!albumLink(), 10_000)
+  const albumUuid =
+    (albumLink() && new URL(albumLink()!.href).searchParams.get("albumuuid")) ||
+    new URL(location.href).searchParams.get("albumuuid") ||
+    ""
+  try {
+    sessionStorage.removeItem(PACK_KEY)
+  } catch {
+    // ignore
+  }
+  chrome.runtime.sendMessage({
+    action: "distrokid-ui",
+    op: "uploaded",
+    folder: mark.folder,
+    title: mark.title,
+    artist: mark.artist,
+    albumUuid
+  })
+}
+
 const page = location.pathname
 if (page.startsWith("/new/mixea")) void useOriginalsOnMixea()
-else if (page.startsWith("/new/done")) void openLyricsFromDone()
+else if (page.startsWith("/new/done")) {
+  void recordUploadedPack()
+  void openLyricsFromDone()
+}
 else if (page.startsWith("/lyrics/track") && !page.startsWith("/lyrics/track/save")) {
   void fillLyricsPage()
 }

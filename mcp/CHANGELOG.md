@@ -7,6 +7,12 @@ last release; see `.github/workflows/release-browse-hack-mcp.yml`). They show
 on Browse Hack's page on MediaMake and in `get_status` / `update_browse_hack`
 after an update.
 
+## 0.19.0
+
+- DistroKid song details, with Browse Hack 0.23.0. `distrokid_song_details` reads releases on DistroKid and saves one JSON per song in `Downloads/DistroKid/<artist>/`: DistroKid UPC, release and upload dates, record label, ISRC, the store links in Delivered to (Spotify, Apple Music, iTunes, Amazon and any others shown), plain lyrics, credits, the DistroKid link, and the primary genre from the release's Apple Music link. One release (`album`), every release of an `artist` on My Music (after Show all releases), or `all`. Pages are read in a background tab that is closed when the run ends. `distrokid_list_releases` lists My Music.
+- The last step of a pack upload: when a release filled by `distrokid_fill_releases` reaches DistroKid's Done page, the extension records it with its folder, and `distrokid_record_packs` writes DistroKid's own details back into that folder's `info.json` under `"distrokid"` (link, albumUuid, UPC, dates, label, status, each track's ISRC), so the pack can later be saved or synced to its MediaMake Library record. A release the Done page didn't record is found by title and artist on My Music.
+- `distrokid_sync_links` saves a release's store links (with its DistroKid link, UPC and dates in the `distrokid` group, and the ISRC and release date where the record has none) to the MediaMake Library Songs records linked to it: those whose `distrokid.link` holds the release link. On DistroKid's release pages the same is a **Sync links to MediaMake** button in Delivered to, shown only when a record is linked.
+
 ## 0.18.0
 
 - Tripo 3D models (studio.tripo3d.ai), with Browse Hack 0.22.0. `tripo_status` shows the account in this Chrome profile: plan, credits (and when some expire), the Free plan's exports left this month, which model versions Tripo exports only to paying members, and the current generate jobs with their progress. `tripo_list_models` lists your own models (version, prompt, T-pose, texture and PBR settings) and `tripo_search_gallery` searches Tripo's community gallery, both through Tripo's own API with your sign-in.
