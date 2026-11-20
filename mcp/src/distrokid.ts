@@ -449,3 +449,46 @@ export async function recordDistrokidPacks(
   }
   return { results }
 }
+
+// --- Song details already saved -------------------------------------------------------------
+
+/**
+ * The albumUuids of releases whose song JSONs `distrokid_song_details` already
+ * saved in Downloads/DistroKid/<artist>/ (any artist folder): a release counts
+ * once every one of its tracks has its JSON there (trackCount).
+ */
+export async function savedDistrokidReleases(home = homedir()): Promise<string[]> {
+  const root = join(home, "Downloads", "DistroKid")
+  let artists: string[]
+  try {
+    artists = (await readdir(root, { withFileTypes: true })).filter((entry) => entry.isDirectory()).map((entry) => entry.name)
+  } catch {
+    return []
+  }
+  const tracks = new Map<string, { count: number; numbers: Set<number> }>()
+  for (const artist of artists) {
+    if (ignoredName(artist)) continue
+    let names: string[]
+    try {
+      names = await readdir(join(root, artist))
+    } catch {
+      continue
+    }
+    for (const name of names) {
+      if (ignoredName(name) || extname(name).toLowerCase() !== ".json") continue
+      let song: any
+      try {
+        song = JSON.parse((await readFile(join(root, artist, name), "utf8")).replace(/^﻿/, ""))
+      } catch {
+        continue
+      }
+      const uuid = typeof song?.albumUuid === "string" ? song.albumUuid.trim().toUpperCase() : ""
+      if (!uuid) continue
+      const seen = tracks.get(uuid) ?? { count: 0, numbers: new Set<number>() }
+      seen.count = Math.max(seen.count, Number(song.trackCount) || 1)
+      seen.numbers.add(Number(song.trackNumber) || 1)
+      tracks.set(uuid, seen)
+    }
+  }
+  return [...tracks].filter(([, seen]) => seen.numbers.size >= seen.count).map(([uuid]) => uuid)
+}

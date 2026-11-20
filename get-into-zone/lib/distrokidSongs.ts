@@ -1,7 +1,9 @@
 // DistroKid song details, in the background worker: reads release pages in a
 // background tab (closed when done), adds the primary genre from Apple Music,
 // saves one JSON per song under Downloads/DistroKid/<artist>/, and syncs the
-// store links to the MediaMake Library records linked to a release.
+// store links to the MediaMake Library records linked to a release. A release
+// that fails is read again once in a fresh tab, so one slow page doesn't stop
+// an artist's run.
 
 import { downloadFile } from "./downloads"
 import { downloadFinished, saveJsonFile } from "./libraryFiles"
@@ -57,6 +59,8 @@ export type DetailsJob = {
   current: string
   saved: string[]
   errors: string[]
+  /** Releases left out because their JSON is already saved (skip). */
+  skipped: number
   startedAt: number
   finishedAt?: number
 }
@@ -87,23 +91,37 @@ export function albumUuidOf(input: string): string {
 
 // --- Reading pages in a tab of our own -------------------------------------------------
 
-/** One background tab, reused for every page of a run, closed at the end. */
-class WorkerTab {
+/** DistroKid wants a sign-in: every later page would too, so a run stops here. */
+class SignInError extends Error {}
+
+/**
+ * One background tab, reused for every page of a run, closed at the end. When
+ * it is gone (closed, or replaced by Chrome after a slow load) the next page
+ * opens a new one.
+ */
+export class WorkerTab {
   private tabId: number | null = null
 
   async open(url: string) {
+    if (this.tabId != null) {
+      try {
+        await chrome.tabs.update(this.tabId, { url })
+      } catch {
+        this.tabId = null
+      }
+    }
     if (this.tabId == null) {
       const tab = await chrome.tabs.create({ url, active: false })
       this.tabId = tab.id ?? null
       if (this.tabId == null) throw new Error("Chrome did not open a DistroKid tab.")
-    } else {
-      await chrome.tabs.update(this.tabId, { url })
     }
     // Let the navigation start before waiting for it to finish.
     await new Promise((resolve) => setTimeout(resolve, 300))
     const tab = await waitForTabLoad(this.tabId, 45_000)
     if (/\/(signin|login)/i.test(tab.url || "")) {
-      throw new Error("DistroKid asked to sign in. Sign in at https://distrokid.com in this Chrome profile, then try again.")
+      throw new SignInError(
+        "DistroKid asked to sign in. Sign in at https://distrokid.com in this Chrome profile, then try again."
+      )
     }
     return this.tabId
   }
@@ -126,6 +144,26 @@ class WorkerTab {
   }
 }
 
+/**
+ * Runs `work` in the tab; when it fails (a page that took too long, a tab that
+ * is gone), closes the tab and runs it once more in a fresh one. A sign-in
+ * page is not retried.
+ */
+export async function withRetry<T>(tab: WorkerTab, work: () => Promise<T>): Promise<T> {
+  try {
+    return await work()
+  } catch (error) {
+    if (error instanceof SignInError) throw error
+    await tab.close()
+    try {
+      return await work()
+    } catch (again) {
+      if (again instanceof SignInError) throw again
+      throw new Error(`${message(again)} (tried twice, the second time in a fresh tab)`)
+    }
+  }
+}
+
 async function readAlbumIn(
   tab: WorkerTab,
   albumUuid: string,
@@ -143,8 +181,10 @@ async function readAlbumIn(
 export async function listDistrokidReleases(artist?: string): Promise<DistrokidReleaseRow[]> {
   const tab = new WorkerTab()
   try {
-    await tab.open(MY_MUSIC)
-    const rows = (await tab.run(readDistrokidReleases)) || []
+    const rows = await withRetry(tab, async () => {
+      await tab.open(MY_MUSIC)
+      return (await tab.run(readDistrokidReleases)) || []
+    })
     return artist ? rows.filter((row) => sameName(row.artist, artist)) : rows
   } finally {
     await tab.close()
@@ -258,29 +298,57 @@ const AUDIO_EXT: Record<string, string> = {
   "audio/x-aiff": "aiff"
 }
 
-/** Saves the release's cover once, as DistroKid/<artist>/<release>.<ext>. */
+const folderOf = (path: string) => {
+  const parts = path.replace(/\\/g, "/").split("/")
+  parts.pop()
+  return parts.join("/")
+}
+
+/** The saved file is in the folder asked for (relative to Downloads), whatever its name. */
+export function inAskedFolder(saved: string, asked: string) {
+  const want = folderOf(asked)
+  const got = folderOf(saved)
+  return !want || got === want || got.endsWith(`/${want}`)
+}
+
+/**
+ * Downloads `url` to `filename` (relative to Downloads) and waits for it. If
+ * Chrome still saved it elsewhere (loose in Downloads under the server's
+ * name), downloads it once more and deletes the stray copy, so the file ends
+ * up where it was asked for.
+ */
+async function saveDownload(url: string, filename: string, { extensionFromMime = false } = {}) {
+  const once = async () => {
+    const id = await downloadFile({ url, filename, conflictAction: "overwrite", saveAs: false }, { extensionFromMime })
+    return { id, path: await downloadFinished(id) }
+  }
+  const first = await once()
+  if (inAskedFolder(first.path, filename)) return first.path
+  const second = await once()
+  if (!inAskedFolder(second.path, filename)) {
+    throw new Error(`Chrome saved it as ${first.path} instead of Downloads/${filename}`)
+  }
+  await chrome.downloads.removeFile(first.id).catch(() => {})
+  await chrome.downloads.erase({ id: first.id }).catch(() => {})
+  return second.path
+}
+
+/**
+ * Saves the release's cover once, as DistroKid/<artist>/<release>.<ext>, with
+ * the extension of the type DistroKid serves (a cover can be a PNG behind a
+ * .jpg link).
+ */
 async function saveArtwork(album: DistrokidAlbum) {
-  const ext = /\.(jpe?g|png|gif|webp)$/i.exec(decodeURIComponent(new URL(album.artworkUrl).pathname))?.[1]?.toLowerCase() || "jpg"
-  const id = await downloadFile({
-    url: album.artworkUrl,
-    filename: `DistroKid/${safePart(album.artist)}/${safePart(album.title)}.${ext === "jpeg" ? "jpg" : ext}`,
-    conflictAction: "overwrite",
-    saveAs: false
+  return saveDownload(album.artworkUrl, `DistroKid/${safePart(album.artist)}/${safePart(album.title)}.jpg`, {
+    extensionFromMime: true
   })
-  return downloadFinished(id)
 }
 
 /** Saves the track's audio from DistroKid's Download link, beside its JSON. */
 async function saveAudio(song: DistrokidSong, url: string, served: { name: string; type: string }) {
   const fromName = /\.([a-z0-9]{2,5})$/i.exec(served.name)?.[1]?.toLowerCase()
   const ext = AUDIO_EXT[served.type.toLowerCase()] || fromName || "wav"
-  const id = await downloadFile({
-    url,
-    filename: `${songName(song)}.${ext}`,
-    conflictAction: "overwrite",
-    saveAs: false
-  })
-  return downloadFinished(id)
+  return saveDownload(url, `${songName(song)}.${ext}`)
 }
 
 // --- A details run: one release or a whole artist ----------------------------------------
@@ -312,6 +380,8 @@ export type DetailsRequest = {
   artwork?: boolean
   /** Save one JSON per song in Downloads/DistroKid/<artist>/ (default true). */
   save?: boolean
+  /** albumUuids to leave out: releases whose JSON is already saved (the MCP's skipExisting). */
+  skip?: string[]
 }
 
 /**
@@ -330,6 +400,7 @@ export async function distrokidSongDetails(request: DetailsRequest) {
     current: "Reading DistroKid…",
     saved: [],
     errors: [],
+    skipped: 0,
     startedAt: Date.now()
   }
   const tab = new WorkerTab()
@@ -346,8 +417,10 @@ export async function distrokidSongDetails(request: DetailsRequest) {
       job.label = request.artist ? `${request.artist}'s releases` : "every release"
       job.current = "Reading My Music…"
       await setJob(job)
-      await tab.open(MY_MUSIC)
-      const rows = (await tab.run(readDistrokidReleases)) || []
+      const rows = await withRetry(tab, async () => {
+        await tab.open(MY_MUSIC)
+        return (await tab.run(readDistrokidReleases)) || []
+      })
       const picked = request.artist ? rows.filter((row) => sameName(row.artist, request.artist!)) : rows
       if (!picked.length) {
         const artists = [...new Set(rows.map((row) => row.artist))].join(", ")
@@ -359,6 +432,12 @@ export async function distrokidSongDetails(request: DetailsRequest) {
       }
       targets = picked.map((row) => ({ albumUuid: row.albumUuid, title: row.title }))
     }
+    const skip = new Set((request.skip || []).map((uuid) => uuid.toUpperCase()))
+    const skipped = targets.filter((target) => skip.has(target.albumUuid.toUpperCase()))
+    if (skipped.length) {
+      targets = targets.filter((target) => !skip.has(target.albumUuid.toUpperCase()))
+      job.skipped = skipped.length
+    }
     job.total = targets.length
     await setJob(job)
 
@@ -366,12 +445,14 @@ export async function distrokidSongDetails(request: DetailsRequest) {
       job.current = target.title || "Reading the release…"
       await setJob(job)
       try {
-        const album = await readAlbumIn(tab, target.albumUuid, {
-          lyrics: request.lyrics !== false,
-          credits: request.credits !== false,
-          audio: save && request.audio !== false,
-          artwork: save && request.artwork !== false
-        })
+        const album = await withRetry(tab, () =>
+          readAlbumIn(tab, target.albumUuid, {
+            lyrics: request.lyrics !== false,
+            credits: request.credits !== false,
+            audio: save && request.audio !== false,
+            artwork: save && request.artwork !== false
+          })
+        )
         const genre = request.genre === false ? "" : await appleGenre(album.storeLinks)
         const found = songsOf(album, genre)
         let artworkFile = ""
@@ -415,12 +496,19 @@ export async function distrokidSongDetails(request: DetailsRequest) {
           }
         }
       } catch (error) {
+        // Signed out: every release after this one would fail the same way.
+        if (error instanceof SignInError) throw error
         job.errors.push(`${target.title || target.albumUuid}: ${message(error)}`)
       }
       job.done += 1
       await setJob(job)
     }
-    return { songs, saved: job.saved, errors: job.errors }
+    return {
+      songs,
+      saved: job.saved,
+      errors: job.errors,
+      ...(skipped.length ? { skipped: skipped.map((target) => target.title || target.albumUuid) } : {})
+    }
   } catch (error) {
     job.errors.push(message(error))
     throw error
@@ -438,7 +526,7 @@ export async function distrokidSongDetails(request: DetailsRequest) {
 export async function readRelease(albumUuid: string, options: { lyrics?: boolean; credits?: boolean; artwork?: boolean } = {}) {
   const tab = new WorkerTab()
   try {
-    return await readAlbumIn(tab, albumUuid, options)
+    return await withRetry(tab, () => readAlbumIn(tab, albumUuid, options))
   } finally {
     await tab.close()
   }

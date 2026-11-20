@@ -161,7 +161,8 @@ export const distrokidCommands: Record<string, (params: any) => Promise<unknown>
       genre: params?.genre !== false,
       audio: params?.audio !== false,
       artwork: params?.artwork !== false,
-      save: params?.save !== false
+      save: params?.save !== false,
+      skip: Array.isArray(params?.skip) ? params.skip.map(String) : undefined
     }),
 
   "distrokid.releases": async ({ artist }) => ({

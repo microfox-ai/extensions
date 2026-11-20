@@ -254,7 +254,9 @@ export async function readDistrokidAlbum(
       for (const name of [`3000x3000-${bare}`, bare]) {
         if (name === file) continue
         const url = folder + encodeURIComponent(name)
-        const size = await load(url)
+        // Once more when it doesn't load: on a slow network the 3000×3000 can
+        // time out, and the cover saved was the 800×800 or the original.
+        const size = (await load(url)) || (await load(url))
         if (size && Number(size.split("x")[0]) > (Number(artworkSize.split("x")[0]) || 0)) {
           artworkUrl = url
           artworkSize = size

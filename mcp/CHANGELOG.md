@@ -7,6 +7,14 @@ last release; see `.github/workflows/release-browse-hack-mcp.yml`). They show
 on Browse Hack's page on MediaMake and in `get_status` / `update_browse_hack`
 after an update.
 
+## 0.21.0
+
+- `distrokid_song_details` no longer stops working partway through an artist's or `all` run, with Browse Hack 0.25.0. When one release's page took too long ("The tab took too long to load.") Chrome could drop the background tab, and every release after it failed with "No tab with id". Now a release that fails is read once more in a fresh tab and the run goes on; its error is listed only if the second try fails too (it says "tried twice"). A sign-in page still stops the run, since every release after it would ask too.
+- Covers (and audio) always land in `Downloads/DistroKid/<artist>/`. A download Chrome resumed after a network timeout asked Browse Hack for its name a second time and got none, so it was saved loose in `Downloads/` under DistroKid's own file name (`3000x3000-…--mod-….jpg`, 7 of 107 covers in one run). The name now stays with the download through a resume, and a file Chrome still saves elsewhere is downloaded again into the artist folder and the stray copy deleted.
+- Each cover is saved as `<release>.<ext>` with the extension of the type DistroKid serves: `.jpg` usually, `.png` for a PNG behind a `.jpg` link, as the song JSON's `artworkFile` says.
+- The 3000×3000 cover is looked for twice before settling for a smaller one: on a slow network its first try could time out, and 4 of 107 covers were saved at 800 or 1000 px although DistroKid had the 3000×3000.
+- `skipExisting: true` leaves out releases whose song JSONs are already in `Downloads/DistroKid/<artist>/` (every track's, matched by `albumUuid`), so a rerun of an artist or `all` fetches only what is missing. The answer lists them as `skipped`.
+
 ## 0.20.0
 
 - `distrokid_song_details` also downloads each song's audio, with Browse Hack 0.24.0: DistroKid's own Download button (the file as uploaded, usually WAV), saved beside the song's JSON in `Downloads/DistroKid/<artist>/` with the same name. Its path is recorded in the JSON as `audioFile`. `audio: false` skips it.
