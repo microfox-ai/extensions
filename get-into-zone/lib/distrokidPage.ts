@@ -19,6 +19,11 @@ export type DistrokidTrack = {
   isrc: string
   plainLyrics: string
   credits: DistrokidCredit[]
+  /** The track's Download link (DistroKid Vault): the audio as uploaded. */
+  audioUrl: string
+  /** The file name and type DistroKid serves it under, when audio was asked for. */
+  audioName: string
+  audioType: string
 }
 
 export type DistrokidAlbum = {
@@ -51,10 +56,11 @@ export type DistrokidReleaseRow = {
 
 /** Reads the album page this runs in (https://distrokid.com/dashboard/album/?albumuuid=…). */
 export async function readDistrokidAlbum(
-  options: { lyrics?: boolean; credits?: boolean } = {}
+  options: { lyrics?: boolean; credits?: boolean; audio?: boolean } = {}
 ): Promise<DistrokidAlbum> {
   const wantLyrics = options.lyrics !== false
   const wantCredits = options.credits !== false
+  const wantAudio = options.audio === true
   const clean = (value: string | null | undefined) => (value || "").replace(/\s+/g, " ").trim()
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
   const isoDate = (text: string) => {
@@ -146,7 +152,37 @@ export async function readDistrokidAlbum(
     )
     const number = Number(clean(row.querySelector(".track-num")?.textContent)) || index + 1
     const isrc = clean(row.querySelector(".isrc-value")?.textContent)
-    const track: DistrokidTrack = { number, title: name, isrc, plainLyrics: "", credits: [] }
+    const downloadLink = row.querySelector<HTMLAnchorElement>(".track-download a[href*='/vault/download']")
+    const track: DistrokidTrack = {
+      number,
+      title: name,
+      isrc,
+      plainLyrics: "",
+      credits: [],
+      audioUrl: downloadLink?.href || "",
+      audioName: "",
+      audioType: ""
+    }
+    if (wantAudio && downloadLink) {
+      // Only the headers: the file name and type DistroKid serves, then stop.
+      const stop = new AbortController()
+      try {
+        const response = await fetch(downloadLink.href, { credentials: "include", signal: stop.signal })
+        track.audioType = (response.headers.get("content-type") || "").split(";")[0].trim()
+        const disposition = response.headers.get("content-disposition") || ""
+        const star = /filename\*\s*=\s*[^']*''([^;]+)/i.exec(disposition)
+        const plain = /filename\s*=\s*"?([^";]+)"?/i.exec(disposition)
+        track.audioName = star ? decodeURIComponent(star[1]) : plain ? plain[1].trim() : ""
+        if (/text\/html/i.test(track.audioType)) {
+          warnings.push(`Track ${number}: Download opened a page, not the audio. Nothing was downloaded for it.`)
+          track.audioUrl = ""
+        }
+      } catch (error) {
+        warnings.push(`Track ${number}: could not reach its Download link (${String(error)}).`)
+      } finally {
+        stop.abort()
+      }
+    }
 
     const lyricsLink = row.querySelector<HTMLAnchorElement>(".track-lyrics a[href*='/lyrics/track']")
     if (wantLyrics && lyricsLink) {
