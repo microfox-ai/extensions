@@ -37,6 +37,9 @@ export type DistrokidSong = {
   credits: DistrokidCredit[]
   /** Where the song's audio (DistroKid's Download) was saved, when it was downloaded. */
   audioFile: string
+  /** Where the release's cover was saved, and DistroKid's copy of it (largest it keeps). */
+  artworkFile: string
+  artworkUrl: string
   distrokidLink: string
   albumUuid: string
   /** Apple Music's primary genre for the release (iTunes lookup). */
@@ -126,7 +129,7 @@ class WorkerTab {
 async function readAlbumIn(
   tab: WorkerTab,
   albumUuid: string,
-  options: { lyrics?: boolean; credits?: boolean; audio?: boolean } = {}
+  options: { lyrics?: boolean; credits?: boolean; audio?: boolean; artwork?: boolean } = {}
 ) {
   await tab.open(`https://distrokid.com/dashboard/album/?albumuuid=${albumUuid}`)
   const album = await tab.run(readDistrokidAlbum, [options])
@@ -213,6 +216,8 @@ export function songsOf(album: DistrokidAlbum, primaryGenre: string): DistrokidS
     plainLyrics: track.plainLyrics,
     credits: track.credits,
     audioFile: "",
+    artworkFile: "",
+    artworkUrl: album.artworkUrl,
     distrokidLink: album.distrokidLink,
     albumUuid: album.albumUuid,
     primaryGenre,
@@ -253,6 +258,18 @@ const AUDIO_EXT: Record<string, string> = {
   "audio/x-aiff": "aiff"
 }
 
+/** Saves the release's cover once, as DistroKid/<artist>/<release>.<ext>. */
+async function saveArtwork(album: DistrokidAlbum) {
+  const ext = /\.(jpe?g|png|gif|webp)$/i.exec(decodeURIComponent(new URL(album.artworkUrl).pathname))?.[1]?.toLowerCase() || "jpg"
+  const id = await downloadFile({
+    url: album.artworkUrl,
+    filename: `DistroKid/${safePart(album.artist)}/${safePart(album.title)}.${ext === "jpeg" ? "jpg" : ext}`,
+    conflictAction: "overwrite",
+    saveAs: false
+  })
+  return downloadFinished(id)
+}
+
 /** Saves the track's audio from DistroKid's Download link, beside its JSON. */
 async function saveAudio(song: DistrokidSong, url: string, served: { name: string; type: string }) {
   const fromName = /\.([a-z0-9]{2,5})$/i.exec(served.name)?.[1]?.toLowerCase()
@@ -291,6 +308,8 @@ export type DetailsRequest = {
   genre?: boolean
   /** Also download each song's audio with DistroKid's Download button (default true). */
   audio?: boolean
+  /** Also download the release's cover, the largest DistroKid keeps (default true). */
+  artwork?: boolean
   /** Save one JSON per song in Downloads/DistroKid/<artist>/ (default true). */
   save?: boolean
 }
@@ -350,10 +369,23 @@ export async function distrokidSongDetails(request: DetailsRequest) {
         const album = await readAlbumIn(tab, target.albumUuid, {
           lyrics: request.lyrics !== false,
           credits: request.credits !== false,
-          audio: save && request.audio !== false
+          audio: save && request.audio !== false,
+          artwork: save && request.artwork !== false
         })
         const genre = request.genre === false ? "" : await appleGenre(album.storeLinks)
         const found = songsOf(album, genre)
+        let artworkFile = ""
+        if (save && request.artwork !== false && album.artworkUrl) {
+          job.current = `Downloading the cover of ${album.title}…`
+          await setJob(job)
+          try {
+            artworkFile = await saveArtwork(album)
+            job.saved.push(artworkFile)
+          } catch (error) {
+            job.errors.push(`${album.title}: the cover download failed (${message(error)}).`)
+          }
+        }
+        for (const song of found) song.artworkFile = artworkFile
         for (const warning of album.warnings) job.errors.push(`${album.title}: ${warning}`)
         for (let index = 0; index < found.length; index++) {
           const song = found[index]
@@ -403,7 +435,7 @@ export async function distrokidSongDetails(request: DetailsRequest) {
 }
 
 /** Details of one release without saving files, for the pack record and Sync links. */
-export async function readRelease(albumUuid: string, options: { lyrics?: boolean; credits?: boolean } = {}) {
+export async function readRelease(albumUuid: string, options: { lyrics?: boolean; credits?: boolean; artwork?: boolean } = {}) {
   const tab = new WorkerTab()
   try {
     return await readAlbumIn(tab, albumUuid, options)

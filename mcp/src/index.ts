@@ -1269,8 +1269,8 @@ tool(
   "distrokid_song_details",
   "Downloads DistroKid song details: for each song its DistroKid UPC, release and upload dates, record label, ISRC, store " +
     "links from Delivered to (Spotify, Apple Music, iTunes, Amazon and the rest), plain lyrics, credits, DistroKid link and " +
-    "the primary genre from its Apple Music link, and downloads each song's audio with DistroKid's Download button. One release (album), every release of an artist on My Music (artist; " +
-    "it clicks Show all releases first), or all. Saves the audio and one JSON per song in Downloads/DistroKid/<artist>/ " +
+    "the primary genre from its Apple Music link, and downloads each song's audio with DistroKid's Download button and the release's cover (3000×3000 when DistroKid has it). One release (album), every release of an artist on My Music (artist; " +
+    "it clicks Show all releases first), or all. Saves the audio, the cover and one JSON per song in Downloads/DistroKid/<artist>/ " +
     "unless save is false, and returns the songs. WAVs are large: an artist's whole catalogue can take a while and several GB. Reads them in a background tab that is closed when done; about 3 s per release.",
   {
     album: z.string().optional().describe("A release link (…/dashboard/album/?albumuuid=…) or its albumuuid: that release only."),
@@ -1283,6 +1283,10 @@ tool(
       .boolean()
       .optional()
       .describe("Also download each song's audio with DistroKid's Download button (the file as uploaded, usually WAV). Default true; needs save."),
+    artwork: z
+      .boolean()
+      .optional()
+      .describe("Also download each release's cover, the largest DistroKid keeps (3000×3000 when it has one), as <release>.jpg. Default true; needs save."),
     save: z.boolean().optional().describe("Save files to Downloads (default true). false only returns the details.")
   },
   "distrokid.details",

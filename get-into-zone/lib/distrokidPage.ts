@@ -42,6 +42,9 @@ export type DistrokidAlbum = {
   aiTagged: boolean
   storeLinks: DistrokidStoreLink[]
   tracks: DistrokidTrack[]
+  /** The largest cover DistroKid keeps (3000×3000 when it has one), and its size. */
+  artworkUrl: string
+  artworkSize: string
   warnings: string[]
 }
 
@@ -56,7 +59,7 @@ export type DistrokidReleaseRow = {
 
 /** Reads the album page this runs in (https://distrokid.com/dashboard/album/?albumuuid=…). */
 export async function readDistrokidAlbum(
-  options: { lyrics?: boolean; credits?: boolean; audio?: boolean } = {}
+  options: { lyrics?: boolean; credits?: boolean; audio?: boolean; artwork?: boolean } = {}
 ): Promise<DistrokidAlbum> {
   const wantLyrics = options.lyrics !== false
   const wantCredits = options.credits !== false
@@ -219,6 +222,50 @@ export async function readDistrokidAlbum(
   }
   if (!tracks.length) warnings.push("No tracks were found on this release page.")
 
+  // The page shows an 800×800 cover on S3 ("800x800-<name>"). Beside it DistroKid
+  // keeps the store copy ("3000x3000-<name>") and the cover without a size
+  // prefix; take the largest that loads.
+  let artworkUrl = ""
+  let artworkSize = ""
+  const shown = document.querySelector<HTMLImageElement>("img.album-image")
+  const shownSrc = shown?.currentSrc || shown?.src || ""
+  if (shownSrc) {
+    artworkUrl = shownSrc
+    artworkSize = shown?.naturalWidth ? `${shown.naturalWidth}x${shown.naturalHeight}` : ""
+    if (options.artwork !== false) {
+      const cut = shownSrc.lastIndexOf("/") + 1
+      const folder = shownSrc.slice(0, cut)
+      const file = decodeURIComponent(shownSrc.slice(cut))
+      const bare = file.replace(/^\d+x\d+-/, "")
+      const load = (url: string) =>
+        new Promise<string>((resolve) => {
+          const probe = new Image()
+          const timer = setTimeout(() => resolve(""), 15_000)
+          probe.onload = () => {
+            clearTimeout(timer)
+            resolve(`${probe.naturalWidth}x${probe.naturalHeight}`)
+          }
+          probe.onerror = () => {
+            clearTimeout(timer)
+            resolve("")
+          }
+          probe.src = url
+        })
+      for (const name of [`3000x3000-${bare}`, bare]) {
+        if (name === file) continue
+        const url = folder + encodeURIComponent(name)
+        const size = await load(url)
+        if (size && Number(size.split("x")[0]) > (Number(artworkSize.split("x")[0]) || 0)) {
+          artworkUrl = url
+          artworkSize = size
+          break
+        }
+      }
+    }
+  } else {
+    warnings.push("No cover art was found on this release page.")
+  }
+
   return {
     albumUuid,
     distrokidLink: albumUuid
@@ -236,6 +283,8 @@ export async function readDistrokidAlbum(
     aiTagged: !!document.querySelector(".release-ai-badge, .release-section-has-ai"),
     storeLinks,
     tracks,
+    artworkUrl,
+    artworkSize,
     warnings
   }
 }
