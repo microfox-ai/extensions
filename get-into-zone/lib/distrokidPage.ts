@@ -19,6 +19,11 @@ export type DistrokidTrack = {
   isrc: string
   plainLyrics: string
   credits: DistrokidCredit[]
+  /** The track's Download link (DistroKid Vault): the audio as uploaded. */
+  audioUrl: string
+  /** The file name and type DistroKid serves it under, when audio was asked for. */
+  audioName: string
+  audioType: string
 }
 
 export type DistrokidAlbum = {
@@ -37,6 +42,9 @@ export type DistrokidAlbum = {
   aiTagged: boolean
   storeLinks: DistrokidStoreLink[]
   tracks: DistrokidTrack[]
+  /** The largest cover DistroKid keeps (3000×3000 when it has one), and its size. */
+  artworkUrl: string
+  artworkSize: string
   warnings: string[]
 }
 
@@ -51,10 +59,11 @@ export type DistrokidReleaseRow = {
 
 /** Reads the album page this runs in (https://distrokid.com/dashboard/album/?albumuuid=…). */
 export async function readDistrokidAlbum(
-  options: { lyrics?: boolean; credits?: boolean } = {}
+  options: { lyrics?: boolean; credits?: boolean; audio?: boolean; artwork?: boolean } = {}
 ): Promise<DistrokidAlbum> {
   const wantLyrics = options.lyrics !== false
   const wantCredits = options.credits !== false
+  const wantAudio = options.audio === true
   const clean = (value: string | null | undefined) => (value || "").replace(/\s+/g, " ").trim()
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
   const isoDate = (text: string) => {
@@ -146,7 +155,37 @@ export async function readDistrokidAlbum(
     )
     const number = Number(clean(row.querySelector(".track-num")?.textContent)) || index + 1
     const isrc = clean(row.querySelector(".isrc-value")?.textContent)
-    const track: DistrokidTrack = { number, title: name, isrc, plainLyrics: "", credits: [] }
+    const downloadLink = row.querySelector<HTMLAnchorElement>(".track-download a[href*='/vault/download']")
+    const track: DistrokidTrack = {
+      number,
+      title: name,
+      isrc,
+      plainLyrics: "",
+      credits: [],
+      audioUrl: downloadLink?.href || "",
+      audioName: "",
+      audioType: ""
+    }
+    if (wantAudio && downloadLink) {
+      // Only the headers: the file name and type DistroKid serves, then stop.
+      const stop = new AbortController()
+      try {
+        const response = await fetch(downloadLink.href, { credentials: "include", signal: stop.signal })
+        track.audioType = (response.headers.get("content-type") || "").split(";")[0].trim()
+        const disposition = response.headers.get("content-disposition") || ""
+        const star = /filename\*\s*=\s*[^']*''([^;]+)/i.exec(disposition)
+        const plain = /filename\s*=\s*"?([^";]+)"?/i.exec(disposition)
+        track.audioName = star ? decodeURIComponent(star[1]) : plain ? plain[1].trim() : ""
+        if (/text\/html/i.test(track.audioType)) {
+          warnings.push(`Track ${number}: Download opened a page, not the audio. Nothing was downloaded for it.`)
+          track.audioUrl = ""
+        }
+      } catch (error) {
+        warnings.push(`Track ${number}: could not reach its Download link (${String(error)}).`)
+      } finally {
+        stop.abort()
+      }
+    }
 
     const lyricsLink = row.querySelector<HTMLAnchorElement>(".track-lyrics a[href*='/lyrics/track']")
     if (wantLyrics && lyricsLink) {
@@ -183,6 +222,50 @@ export async function readDistrokidAlbum(
   }
   if (!tracks.length) warnings.push("No tracks were found on this release page.")
 
+  // The page shows an 800×800 cover on S3 ("800x800-<name>"). Beside it DistroKid
+  // keeps the store copy ("3000x3000-<name>") and the cover without a size
+  // prefix; take the largest that loads.
+  let artworkUrl = ""
+  let artworkSize = ""
+  const shown = document.querySelector<HTMLImageElement>("img.album-image")
+  const shownSrc = shown?.currentSrc || shown?.src || ""
+  if (shownSrc) {
+    artworkUrl = shownSrc
+    artworkSize = shown?.naturalWidth ? `${shown.naturalWidth}x${shown.naturalHeight}` : ""
+    if (options.artwork !== false) {
+      const cut = shownSrc.lastIndexOf("/") + 1
+      const folder = shownSrc.slice(0, cut)
+      const file = decodeURIComponent(shownSrc.slice(cut))
+      const bare = file.replace(/^\d+x\d+-/, "")
+      const load = (url: string) =>
+        new Promise<string>((resolve) => {
+          const probe = new Image()
+          const timer = setTimeout(() => resolve(""), 15_000)
+          probe.onload = () => {
+            clearTimeout(timer)
+            resolve(`${probe.naturalWidth}x${probe.naturalHeight}`)
+          }
+          probe.onerror = () => {
+            clearTimeout(timer)
+            resolve("")
+          }
+          probe.src = url
+        })
+      for (const name of [`3000x3000-${bare}`, bare]) {
+        if (name === file) continue
+        const url = folder + encodeURIComponent(name)
+        const size = await load(url)
+        if (size && Number(size.split("x")[0]) > (Number(artworkSize.split("x")[0]) || 0)) {
+          artworkUrl = url
+          artworkSize = size
+          break
+        }
+      }
+    }
+  } else {
+    warnings.push("No cover art was found on this release page.")
+  }
+
   return {
     albumUuid,
     distrokidLink: albumUuid
@@ -200,6 +283,8 @@ export async function readDistrokidAlbum(
     aiTagged: !!document.querySelector(".release-ai-badge, .release-section-has-ai"),
     storeLinks,
     tracks,
+    artworkUrl,
+    artworkSize,
     warnings
   }
 }

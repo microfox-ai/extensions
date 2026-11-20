@@ -159,6 +159,8 @@ export const distrokidCommands: Record<string, (params: any) => Promise<unknown>
       lyrics: params?.lyrics !== false,
       credits: params?.credits !== false,
       genre: params?.genre !== false,
+      audio: params?.audio !== false,
+      artwork: params?.artwork !== false,
       save: params?.save !== false
     }),
 
@@ -170,7 +172,7 @@ export const distrokidCommands: Record<string, (params: any) => Promise<unknown>
   "distrokid.release": async ({ album, genre }) => {
     const uuid = albumUuidOf(String(album || ""))
     if (!uuid) throw new Error("Pass a DistroKid release link or its albumuuid.")
-    const found = await readRelease(uuid, { lyrics: false, credits: false })
+    const found = await readRelease(uuid, { lyrics: false, credits: false, artwork: false })
     return { ...found, primaryGenre: genre ? await appleGenre(found.storeLinks) : "" }
   },
 
@@ -182,7 +184,7 @@ export const distrokidCommands: Record<string, (params: any) => Promise<unknown>
     const records = await linkedRecords(uuid)
     if (!records.length) return { synced: false, records, message: "No MediaMake Library record is linked to this release." }
     if (dryRun) return { synced: false, records }
-    const found = await readRelease(uuid, { lyrics: false, credits: false })
+    const found = await readRelease(uuid, { lyrics: false, credits: false, artwork: false })
     return { synced: true, results: await syncLinks(found) }
   },
 

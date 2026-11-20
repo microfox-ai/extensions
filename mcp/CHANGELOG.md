@@ -7,6 +7,12 @@ last release; see `.github/workflows/release-browse-hack-mcp.yml`). They show
 on Browse Hack's page on MediaMake and in `get_status` / `update_browse_hack`
 after an update.
 
+## 0.20.0
+
+- `distrokid_song_details` also downloads each song's audio, with Browse Hack 0.24.0: DistroKid's own Download button (the file as uploaded, usually WAV), saved beside the song's JSON in `Downloads/DistroKid/<artist>/` with the same name. Its path is recorded in the JSON as `audioFile`. `audio: false` skips it.
+- It also downloads each release's cover: the largest copy DistroKid keeps (3000×3000 when it has one, else the cover it was given, else the 800×800 on the page), saved as `<release>.jpg` beside the songs and recorded as `artworkFile` and `artworkUrl` in each song's JSON. `artwork: false` skips it.
+- The popup's Song details buttons download the audio and covers too.
+
 ## 0.19.0
 
 - DistroKid song details, with Browse Hack 0.23.0. `distrokid_song_details` reads releases on DistroKid and saves one JSON per song in `Downloads/DistroKid/<artist>/`: DistroKid UPC, release and upload dates, record label, ISRC, the store links in Delivered to (Spotify, Apple Music, iTunes, Amazon and any others shown), plain lyrics, credits, the DistroKid link, and the primary genre from the release's Apple Music link. One release (`album`), every release of an `artist` on My Music (after Show all releases), or `all`. Pages are read in a background tab that is closed when the run ends. `distrokid_list_releases` lists My Music.

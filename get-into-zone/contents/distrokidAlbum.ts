@@ -82,7 +82,7 @@ async function mount() {
     note.style.color = "#555"
     note.textContent = "Reading this release…"
     try {
-      const album = await readDistrokidAlbum({ lyrics: false, credits: false })
+      const album = await readDistrokidAlbum({ lyrics: false, credits: false, artwork: false })
       if (!album.storeLinks.length) {
         note.textContent = "No store links on this page yet. Nothing was synced."
         return

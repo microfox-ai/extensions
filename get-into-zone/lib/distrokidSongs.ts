@@ -3,7 +3,8 @@
 // saves one JSON per song under Downloads/DistroKid/<artist>/, and syncs the
 // store links to the MediaMake Library records linked to a release.
 
-import { saveJsonFile } from "./libraryFiles"
+import { downloadFile } from "./downloads"
+import { downloadFinished, saveJsonFile } from "./libraryFiles"
 import { mediamakeFetch } from "./mediamake"
 import {
   readDistrokidAlbum,
@@ -34,6 +35,11 @@ export type DistrokidSong = {
   storeLinks: DistrokidStoreLink[]
   plainLyrics: string
   credits: DistrokidCredit[]
+  /** Where the song's audio (DistroKid's Download) was saved, when it was downloaded. */
+  audioFile: string
+  /** Where the release's cover was saved, and DistroKid's copy of it (largest it keeps). */
+  artworkFile: string
+  artworkUrl: string
   distrokidLink: string
   albumUuid: string
   /** Apple Music's primary genre for the release (iTunes lookup). */
@@ -120,7 +126,11 @@ class WorkerTab {
   }
 }
 
-async function readAlbumIn(tab: WorkerTab, albumUuid: string, options: { lyrics?: boolean; credits?: boolean } = {}) {
+async function readAlbumIn(
+  tab: WorkerTab,
+  albumUuid: string,
+  options: { lyrics?: boolean; credits?: boolean; audio?: boolean; artwork?: boolean } = {}
+) {
   await tab.open(`https://distrokid.com/dashboard/album/?albumuuid=${albumUuid}`)
   const album = await tab.run(readDistrokidAlbum, [options])
   if (!album || (!album.title && !album.tracks?.length)) {
@@ -205,6 +215,9 @@ export function songsOf(album: DistrokidAlbum, primaryGenre: string): DistrokidS
     storeLinks: album.storeLinks,
     plainLyrics: track.plainLyrics,
     credits: track.credits,
+    audioFile: "",
+    artworkFile: "",
+    artworkUrl: album.artworkUrl,
     distrokidLink: album.distrokidLink,
     albumUuid: album.albumUuid,
     primaryGenre,
@@ -221,10 +234,53 @@ const safePart = (value: string) =>
     .replace(/^[.\s]+|[.\s]+$/g, "")
     .slice(0, 120) || "Untitled"
 
-async function saveSong(song: DistrokidSong) {
+function songName(song: DistrokidSong) {
   const name = song.trackCount > 1 ? `${song.release} - ${String(song.trackNumber).padStart(2, "0")} ${song.title}` : song.title
-  const path = `DistroKid/${safePart(song.artist)}/${safePart(name)}.json`
-  return saveJsonFile(path, JSON.stringify(song, null, 2))
+  return `DistroKid/${safePart(song.artist)}/${safePart(name)}`
+}
+
+async function saveSong(song: DistrokidSong) {
+  return saveJsonFile(`${songName(song)}.json`, JSON.stringify(song, null, 2))
+}
+
+const AUDIO_EXT: Record<string, string> = {
+  "audio/wav": "wav",
+  "audio/x-wav": "wav",
+  "audio/wave": "wav",
+  "audio/vnd.wave": "wav",
+  "audio/mpeg": "mp3",
+  "audio/mp3": "mp3",
+  "audio/flac": "flac",
+  "audio/x-flac": "flac",
+  "audio/mp4": "m4a",
+  "audio/x-m4a": "m4a",
+  "audio/aiff": "aiff",
+  "audio/x-aiff": "aiff"
+}
+
+/** Saves the release's cover once, as DistroKid/<artist>/<release>.<ext>. */
+async function saveArtwork(album: DistrokidAlbum) {
+  const ext = /\.(jpe?g|png|gif|webp)$/i.exec(decodeURIComponent(new URL(album.artworkUrl).pathname))?.[1]?.toLowerCase() || "jpg"
+  const id = await downloadFile({
+    url: album.artworkUrl,
+    filename: `DistroKid/${safePart(album.artist)}/${safePart(album.title)}.${ext === "jpeg" ? "jpg" : ext}`,
+    conflictAction: "overwrite",
+    saveAs: false
+  })
+  return downloadFinished(id)
+}
+
+/** Saves the track's audio from DistroKid's Download link, beside its JSON. */
+async function saveAudio(song: DistrokidSong, url: string, served: { name: string; type: string }) {
+  const fromName = /\.([a-z0-9]{2,5})$/i.exec(served.name)?.[1]?.toLowerCase()
+  const ext = AUDIO_EXT[served.type.toLowerCase()] || fromName || "wav"
+  const id = await downloadFile({
+    url,
+    filename: `${songName(song)}.${ext}`,
+    conflictAction: "overwrite",
+    saveAs: false
+  })
+  return downloadFinished(id)
 }
 
 // --- A details run: one release or a whole artist ----------------------------------------
@@ -250,6 +306,10 @@ export type DetailsRequest = {
   lyrics?: boolean
   credits?: boolean
   genre?: boolean
+  /** Also download each song's audio with DistroKid's Download button (default true). */
+  audio?: boolean
+  /** Also download the release's cover, the largest DistroKid keeps (default true). */
+  artwork?: boolean
   /** Save one JSON per song in Downloads/DistroKid/<artist>/ (default true). */
   save?: boolean
 }
@@ -308,13 +368,44 @@ export async function distrokidSongDetails(request: DetailsRequest) {
       try {
         const album = await readAlbumIn(tab, target.albumUuid, {
           lyrics: request.lyrics !== false,
-          credits: request.credits !== false
+          credits: request.credits !== false,
+          audio: save && request.audio !== false,
+          artwork: save && request.artwork !== false
         })
         const genre = request.genre === false ? "" : await appleGenre(album.storeLinks)
         const found = songsOf(album, genre)
+        let artworkFile = ""
+        if (save && request.artwork !== false && album.artworkUrl) {
+          job.current = `Downloading the cover of ${album.title}…`
+          await setJob(job)
+          try {
+            artworkFile = await saveArtwork(album)
+            job.saved.push(artworkFile)
+          } catch (error) {
+            job.errors.push(`${album.title}: the cover download failed (${message(error)}).`)
+          }
+        }
+        for (const song of found) song.artworkFile = artworkFile
         for (const warning of album.warnings) job.errors.push(`${album.title}: ${warning}`)
-        for (const song of found) {
+        for (let index = 0; index < found.length; index++) {
+          const song = found[index]
+          const track = album.tracks[index]
           songs.push(song)
+          if (save && request.audio !== false && track?.audioUrl) {
+            job.current = `Downloading ${song.title}…`
+            await setJob(job)
+            try {
+              song.audioFile = await saveAudio(song, track.audioUrl, {
+                name: track.audioName,
+                type: track.audioType
+              })
+              job.saved.push(song.audioFile)
+            } catch (error) {
+              job.errors.push(`${song.title}: the audio download failed (${message(error)}).`)
+            }
+          } else if (save && request.audio !== false) {
+            job.errors.push(`${song.title}: no Download link on DistroKid, so no audio.`)
+          }
           if (save) {
             try {
               job.saved.push(await saveSong(song))
@@ -344,7 +435,7 @@ export async function distrokidSongDetails(request: DetailsRequest) {
 }
 
 /** Details of one release without saving files, for the pack record and Sync links. */
-export async function readRelease(albumUuid: string, options: { lyrics?: boolean; credits?: boolean } = {}) {
+export async function readRelease(albumUuid: string, options: { lyrics?: boolean; credits?: boolean; artwork?: boolean } = {}) {
   const tab = new WorkerTab()
   try {
     return await readAlbumIn(tab, albumUuid, options)
