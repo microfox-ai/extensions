@@ -533,8 +533,9 @@ function SongDetails() {
     <div style={{ marginBottom: 18, paddingBottom: 14, borderBottom: "1px solid #e5e5e5" }}>
       <h2 style={{ margin: "0 0 8px", fontSize: 16 }}>Song details</h2>
       <p style={{ margin: "0 0 10px", fontSize: 12, lineHeight: 1.45, color: "#444" }}>
-        Saves each song's UPC, release and upload dates, store links, ISRC, plain lyrics,
-        credits, DistroKid link and Apple Music genre as JSON in Downloads/DistroKid/&lt;artist&gt;/.
+        Downloads each song's audio (DistroKid's Download button) and a JSON beside it with its
+        UPC, release and upload dates, store links, ISRC, plain lyrics, credits, DistroKid link
+        and Apple Music genre, in Downloads/DistroKid/&lt;artist&gt;/.
         The tab it reads them in closes when it is done.
       </p>
       {page?.kind === "album" && (
@@ -586,7 +587,7 @@ function SongDetails() {
           <div>
             {job.running
               ? `Downloading ${job.label}: ${job.done} of ${job.total || "?"}${job.current ? ` · ${job.current}` : ""}`
-              : `Last run (${job.label}): ${job.saved.length} song file${job.saved.length === 1 ? "" : "s"} saved.`}
+              : `Last run (${job.label}): ${job.saved.length} file${job.saved.length === 1 ? "" : "s"} saved (audio and JSON).`}
           </div>
           {job.errors.length > 0 && (
             <ul style={{ color: "#9a3412", paddingLeft: 18, margin: "4px 0" }}>

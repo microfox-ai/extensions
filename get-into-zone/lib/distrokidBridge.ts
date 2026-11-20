@@ -159,6 +159,7 @@ export const distrokidCommands: Record<string, (params: any) => Promise<unknown>
       lyrics: params?.lyrics !== false,
       credits: params?.credits !== false,
       genre: params?.genre !== false,
+      audio: params?.audio !== false,
       save: params?.save !== false
     }),
 
