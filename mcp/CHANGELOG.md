@@ -7,9 +7,13 @@ last release; see `.github/workflows/release-browse-hack-mcp.yml`). They show
 on Browse Hack's page on MediaMake and in `get_status` / `update_browse_hack`
 after an update.
 
+## 0.20.0
+
+- `distrokid_song_details` also downloads each song's audio, with Browse Hack 0.24.0: DistroKid's own Download button (the file as uploaded, usually WAV), saved beside the song's JSON in `Downloads/DistroKid/<artist>/` with the same name. Its path is recorded in the JSON as `audioFile`. `audio: false` skips it. The popup's Song details buttons download the audio too.
+
 ## 0.19.0
 
-- DistroKid song details, with Browse Hack 0.23.0. `distrokid_song_details` reads releases on DistroKid and saves one JSON per song in `Downloads/DistroKid/<artist>/`: DistroKid UPC, release and upload dates, record label, ISRC, the store links in Delivered to (Spotify, Apple Music, iTunes, Amazon and any others shown), plain lyrics, credits, the DistroKid link, and the primary genre from the release's Apple Music link, beside the song's audio from DistroKid's Download button (the file as uploaded, usually WAV). One release (`album`), every release of an `artist` on My Music (after Show all releases), or `all`. Pages are read in a background tab that is closed when the run ends. `distrokid_list_releases` lists My Music.
+- DistroKid song details, with Browse Hack 0.23.0. `distrokid_song_details` reads releases on DistroKid and saves one JSON per song in `Downloads/DistroKid/<artist>/`: DistroKid UPC, release and upload dates, record label, ISRC, the store links in Delivered to (Spotify, Apple Music, iTunes, Amazon and any others shown), plain lyrics, credits, the DistroKid link, and the primary genre from the release's Apple Music link. One release (`album`), every release of an `artist` on My Music (after Show all releases), or `all`. Pages are read in a background tab that is closed when the run ends. `distrokid_list_releases` lists My Music.
 - The last step of a pack upload: when a release filled by `distrokid_fill_releases` reaches DistroKid's Done page, the extension records it with its folder, and `distrokid_record_packs` writes DistroKid's own details back into that folder's `info.json` under `"distrokid"` (link, albumUuid, UPC, dates, label, status, each track's ISRC), so the pack can later be saved or synced to its MediaMake Library record. A release the Done page didn't record is found by title and artist on My Music.
 - `distrokid_sync_links` saves a release's store links (with its DistroKid link, UPC and dates in the `distrokid` group, and the ISRC and release date where the record has none) to the MediaMake Library Songs records linked to it: those whose `distrokid.link` holds the release link. On DistroKid's release pages the same is a **Sync links to MediaMake** button in Delivered to, shown only when a record is linked.
 
