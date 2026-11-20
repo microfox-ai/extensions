@@ -9,7 +9,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
 
 import { Bridge } from "./bridge.js"
-import { fillDistrokidReleases, recordDistrokidPacks } from "./distrokid.js"
+import { fillDistrokidReleases, recordDistrokidPacks, savedDistrokidReleases } from "./distrokid.js"
 import { bulkUploadShorts, fillYoutubeUploads } from "./youtubeUpload.js"
 import { downloadMidjourneyImages, instagramDownload, startGoogleImagesBulk, startPinterestBulk, youtubeDownload } from "./downloads.js"
 import { saveGoogleAiAnswers } from "./googleAiAnswers.js"
@@ -1271,7 +1271,9 @@ tool(
     "links from Delivered to (Spotify, Apple Music, iTunes, Amazon and the rest), plain lyrics, credits, DistroKid link and " +
     "the primary genre from its Apple Music link, and downloads each song's audio with DistroKid's Download button and the release's cover (3000×3000 when DistroKid has it). One release (album), every release of an artist on My Music (artist; " +
     "it clicks Show all releases first), or all. Saves the audio, the cover and one JSON per song in Downloads/DistroKid/<artist>/ " +
-    "unless save is false, and returns the songs. WAVs are large: an artist's whole catalogue can take a while and several GB. Reads them in a background tab that is closed when done; about 3 s per release.",
+    "unless save is false, and returns the songs. WAVs are large: an artist's whole catalogue can take a while and several GB. Reads them in a background tab that is closed when done; about 3 s per release. " +
+    "A release whose page fails (too slow to load, tab gone) is read once more in a fresh tab and the run goes on; its error is listed only if that fails too. " +
+    "skipExisting leaves out releases whose JSONs are already in Downloads/DistroKid/<artist>/, so a rerun only fetches the rest.",
   {
     album: z.string().optional().describe("A release link (…/dashboard/album/?albumuuid=…) or its albumuuid: that release only."),
     artist: z.string().optional().describe("Every release of this artist, as My Music names it."),
@@ -1286,11 +1288,24 @@ tool(
     artwork: z
       .boolean()
       .optional()
-      .describe("Also download each release's cover, the largest DistroKid keeps (3000×3000 when it has one), as <release>.jpg. Default true; needs save."),
-    save: z.boolean().optional().describe("Save files to Downloads (default true). false only returns the details.")
+      .describe(
+        "Also download each release's cover, the largest DistroKid keeps (3000×3000 when it has one), as <release>.<ext> with the extension of the type DistroKid serves (.jpg, or .png for a PNG). Default true; needs save."
+      ),
+    save: z.boolean().optional().describe("Save files to Downloads (default true). false only returns the details."),
+    skipExisting: z
+      .boolean()
+      .optional()
+      .describe(
+        "Leave out releases whose song JSONs are already saved in Downloads/DistroKid/<artist>/ (every track's), so a rerun of an artist or all fetches only the rest. Default false."
+      )
   },
   "distrokid.details",
-  { readOnly: true, timeoutMs: (p) => (p.album ? 10 * 60_000 : 120 * 60_000) }
+  {
+    readOnly: true,
+    timeoutMs: (p) => (p.album ? 10 * 60_000 : 120 * 60_000),
+    prepare: async ({ skipExisting, ...params }) =>
+      skipExisting ? { ...params, skip: await savedDistrokidReleases() } : params
+  }
 )
 tool(
   "distrokid_list_releases",
